@@ -26,7 +26,7 @@ def read_data(data_directory):
 # --------------------------------
 # Given a dictionary of the form element -> weight, selects an element
 # randomly based on distribution proportional to the weights. Weights can sum
-# up to be more than 1. 
+# up to be more than 1.
 def weightedRandomChoice(weightDict):
     weights = []
     elems = []
@@ -43,7 +43,6 @@ def weightedRandomChoice(weightDict):
         if runningTotal > key:
             chosenIndex = i
             return elems[chosenIndex]
-    t()
     raise Exception('Should not reach here')
 
 class LDA:
@@ -54,10 +53,10 @@ class LDA:
         """
         print "Initializing LDA object."
         self.data = data
-        self.num_iterations = 1
+        self.num_iterations = 5
         self.corpus = [] # list of all words, length N
         self.doc_pointers = [] # list of document each word belongs to, length N
-        self.num_topics = 5 # K
+        self.num_topics = 7 # K
         # TODO don't know what these superparameters should be
         self.alpha = 0.5
         self.beta = 0.5
@@ -115,6 +114,27 @@ class LDA:
                 n_kw[topic, jj] += 1
                 n_k[topic] += 1
         return assignments, n_dk, n_kw, n_k
+
+
+        self.assignments = assignments
+        self.n_dk = n_dk
+        self.n_kw = n_kw
+        self.n_k = n_k
+
+    def get_topics(self, assignments, n_dk):
+        """
+        Returns a dict of {}
+
+        """
+        print "Retrieving results."
+        topics = collections.defaultdict(list)
+        for i in range(len(self.corpus)):
+            topics[assignments[i]].append(self.corpus[i])
+        assigns = {}
+        for row_index in range(len(n_dk)):
+            assigns[row_index] = np.argmax(n_dk[row_index])
+        return topics, assigns
+
 if __name__ == "__main__":
     print
     data = read_data(DATA_DIRECTORY)
@@ -122,6 +142,7 @@ if __name__ == "__main__":
     lda.generate_corpus()
     # lda.generate_document_corpus()
     assignments, n_dk, n_kw, n_k = lda.run()
+    topics, assigns = lda.get_topics(assignments, n_dk)
     print "done."
-    #  lda.get_topics()
+    print
 
