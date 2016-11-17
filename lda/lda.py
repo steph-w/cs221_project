@@ -43,6 +43,7 @@ def weightedRandomChoice(weightDict):
         if runningTotal > key:
             chosenIndex = i
             return elems[chosenIndex]
+    t()
     raise Exception('Should not reach here')
 
 class LDA:
@@ -82,10 +83,18 @@ class LDA:
         # n_dk[k][d] = number of words from doc d assigned to topic k
         # n_kw[w][k] = number of times word w is assigned to topic k
         # n_k = number of times any word assigned to topic k
+        # initialize
+        n_dk = np.zeros((len(data), self.num_topics))
+        n_kw = np.zeros((self.num_topics, len(self.corpus)))
+        n_k = np.zeros(self.num_topics)
 
-        n_dk = np.ones((len(data), self.num_topics))
-        n_kw = np.ones((self.num_topics, len(self.corpus)))
-        n_k = np.ones(self.num_topics)
+        for i, w in enumerate(self.corpus):
+            topic = np.random.randint(self.num_topics)
+            doc = self.doc_pointers[i]
+            n_dk[doc, topic] += 1
+            n_kw[topic, i] += 1
+            n_k[topic] += 1
+
         for ii in range(self.num_iterations):
             for jj in range(len(self.corpus)):
                 word = self.corpus[jj]
@@ -113,8 +122,6 @@ if __name__ == "__main__":
     lda.generate_corpus()
     # lda.generate_document_corpus()
     assignments, n_dk, n_kw, n_k = lda.run()
-    print assignments
     print "done."
-    print
     #  lda.get_topics()
 
