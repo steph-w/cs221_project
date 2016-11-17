@@ -2,6 +2,7 @@
 import os, collections
 import random
 from pdb import set_trace as t
+import numpy as np
 
 ROOT = '../'
 DATA_DIRECTORY = os.path.join(ROOT, "data/journal_ai_research_abstracts/cleaned/")
@@ -44,6 +45,12 @@ def weightedRandomChoice(weightDict):
             return elems[chosenIndex]
     raise Exception('Should not reach here')
 
+def sample_index(p):
+    """
+    sample from a multinomial distribution and return the sample sample_index
+    """
+    return np.random.multinomial(1, p).argmax()
+
 class LDA:
     def __init__(self, data):
         """
@@ -81,25 +88,31 @@ class LDA:
         # n_dk[k][d] = number of words from doc d assigned to topic k
         # n_kw[w][k] = number of times word w is assigned to topic k
         # n_k = number of times any word assigned to topic k
-        n_dk = [[1 for i in range(len(data))] for j in range(self.num_topics)]
-        n_kw = [[1 for i in range(self.num_topics)] for j in range(len(self.corpus))]
-        n_k =  [1 for i in range(self.num_topics)]
+
+        # n_dk = [[1 for i in range(len(data))] for j in range(self.num_topics)]
+        # n_kw = [[1 for i in range(self.num_topics)] for j in range(len(self.corpus))]
+        # n_k =  [1 for i in range(self.num_topics)]
+        n_dk = np.ones((len(data), self.num_topics))
+        n_kw = np.ones((self.num_topics, len(self.corpus)))
+        n_k = np.ones(self.num_topics)
         for ii in range(self.num_iterations):
             for jj in range(len(self.corpus)):
-                weights = collections.defaultdict(float)
                 word = self.corpus[jj]
                 doc = self.doc_pointers[jj]
                 topic = assignments[jj]
-                n_dk[topic][doc] -= 1
-                n_kw[jj][topic] -=1
+                n_dk[doc, topic] -= 1
+                n_kw[topic, jj] -=1
                 n_k[topic] -= 1
-                for kk in range(self.num_topics):
-                    # TODO: Check this weight assignment
-                    weights[topic] = (n_dk[kk][doc]+self.alpha)*((n_kw[jj][kk]+self.beta)/(n_k[kk]+self.beta))
+
+                left = (n_dk[doc, :]+self.alpha)
+                right = (n_kw[:,jj]+self.beta)/(n_k+self.beta)
+                topic_weights = left * right
+                weights = {i: weight for i, weight in enumerate(topic_weights)}
+
                 topic = weightedRandomChoice(weights)
                 assignments[jj] = topic
-                n_dk[topic][doc] +=1
-                n_kw[jj][topic] += 1
+                n_dk[doc, topic] +=1
+                n_kw[topic, jj] += 1
                 n_k[topic] += 1
         return assignments, n_dk, n_kw, n_k
 if __name__ == "__main__":
@@ -108,7 +121,8 @@ if __name__ == "__main__":
     lda = LDA(data)
     lda.generate_corpus()
     # lda.generate_document_corpus()
-    topics = lda.run()
+    assignments, n_dk, n_kw, n_k = lda.run()
+    print assignments
     print "done."
     print
     #  lda.get_topics()
