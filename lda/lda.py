@@ -45,12 +45,6 @@ def weightedRandomChoice(weightDict):
             return elems[chosenIndex]
     raise Exception('Should not reach here')
 
-def sample_index(p):
-    """
-    sample from a multinomial distribution and return the sample sample_index
-    """
-    return np.random.multinomial(1, p).argmax()
-
 class LDA:
     def __init__(self, data):
         """
@@ -89,9 +83,6 @@ class LDA:
         # n_kw[w][k] = number of times word w is assigned to topic k
         # n_k = number of times any word assigned to topic k
 
-        # n_dk = [[1 for i in range(len(data))] for j in range(self.num_topics)]
-        # n_kw = [[1 for i in range(self.num_topics)] for j in range(len(self.corpus))]
-        # n_k =  [1 for i in range(self.num_topics)]
         n_dk = np.ones((len(data), self.num_topics))
         n_kw = np.ones((self.num_topics, len(self.corpus)))
         n_k = np.ones(self.num_topics)
