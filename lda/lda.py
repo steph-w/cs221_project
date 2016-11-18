@@ -5,7 +5,7 @@ from pdb import set_trace as t
 import numpy as np
 
 ROOT = '../'
-DATA_DIRECTORY = os.path.join(ROOT, "data/journal_ai_research_abstracts/cleaned/")
+DATA_DIRECTORY = os.path.join(ROOT, "data/simple/")
 
 def read_data(data_directory):
     """
@@ -53,10 +53,10 @@ class LDA:
         """
         print "Initializing LDA object."
         self.data = data
-        self.num_iterations = 5
+        self.num_iterations = 100
         self.corpus = [] # list of all words, length N
         self.doc_pointers = [] # list of document each word belongs to, length N
-        self.num_topics = 7 # K
+        self.num_topics = 3 # K
         # TODO don't know what these superparameters should be
         self.alpha = 0.5
         self.beta = 0.5
