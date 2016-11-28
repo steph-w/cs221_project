@@ -1,13 +1,10 @@
 # Latent Dirichlet Allocation Implementation, using Gibbs Sampling
-import os, collections
-import random
+from collections import OrderedDict
 from pdb import set_trace as t
 import numpy as np
+import os, collections
+import random
 import sys
-from collections import OrderedDict
-
-ROOT = '../'
-DATA_DIRECTORY = os.path.join(ROOT, "data/trivial/")
 
 def read_data(data_directory):
     """
@@ -15,7 +12,7 @@ def read_data(data_directory):
     returns: dict of {document_name: text}
     """
     data = OrderedDict()  # Need to remember the order in which items were inserted
-    for r, ds, fs in os.walk(DATA_DIRECTORY):
+    for r, ds, fs in os.walk(data_directory):
         for f in sorted(fs):  # TODO Need to make sure inputs are in alphebetical order chronilogically
             fullpath = os.path.join(r, f)
             with open(fullpath, "r") as fr:
@@ -23,29 +20,6 @@ def read_data(data_directory):
                 data[f] = lines
         break
     return data
-
-# Function: Weighted Random Choice
-# --------------------------------
-# Given a dictionary of the form element -> weight, selects an element
-# randomly based on distribution proportional to the weights. Weights can sum
-# up to be more than 1.
-def weightedRandomChoice(weightDict):
-    weights = []
-    elems = []
-    for elem in weightDict:
-        weights.append(weightDict[elem])
-        elems.append(elem)
-    total = sum(weights)
-    key = random.uniform(0, total)
-    runningTotal = 0.0
-    chosenIndex = None
-    for i in range(len(weights)):
-        weight = weights[i]
-        runningTotal += weight
-        if runningTotal > key:
-            chosenIndex = i
-            return elems[chosenIndex]
-    raise Exception('Should not reach here')
 
 class LDA:
     def __init__(self, data):
@@ -58,11 +32,7 @@ class LDA:
         self.corpus = [] # list of all words
         self.terms = [] # list of all unique words; i.e. the vocabulary
         self.doc_pointers = [] # list of document each word belongs to
-        self.num_topics = 3 # K
         self.num_documents = len(data)
-        # TODO don't know what these superparameters should be
-        self.alpha = 0.5
-        self.beta = 0.5
 
     def generate_corpus(self):
         """
@@ -78,18 +48,18 @@ class LDA:
         self.num_corpus_words = len(self.corpus)
         self.num_terms = len(self.terms)
 
-    def run(self, iterations=10, alpha_init=0.01, beta_init=0.01):
+    def run(self, num_topics, iterations=10, alpha_init=0.01, beta_init=0.01):
         """
         Another attempt, using: http://www.arbylon.net/publications/text-est.pdf#page=20
 
         """
-        n_mk = np.zeros( (self.num_documents, self.num_topics), dtype=np.int ) #size?
+        n_mk = np.zeros( (self.num_documents, num_topics), dtype=np.int )
         n_m = np.zeros( (self.num_documents), dtype=np.int )
-        n_kt = np.zeros( (self.num_topics, self.num_terms), dtype=np.int )
-        n_k = np.zeros( (self.num_topics), dtype=np.int )
+        n_kt = np.zeros( (num_topics, self.num_terms), dtype=np.int )
+        n_k = np.zeros( (num_topics), dtype=np.int )
         z = np.zeros( (self.num_documents, self.num_corpus_words), dtype=np.int )
         # TODO: these parameters could also be non-uniform
-        alphas = np.full((self.num_topics), alpha_init)
+        alphas = np.full((num_topics), alpha_init)
         betas = np.full((self.num_terms), beta_init)
 
         # Converts index of self.corpus to index of self.terms
@@ -97,12 +67,12 @@ class LDA:
             t = self.terms.index(self.corpus[n])
             return t
 
-        # initialization
+        # Initialization
         n = 0
         for m, doc_id in enumerate(self.data): # for each document
             while n < self.num_corpus_words and self.doc_pointers[n] == m:  # for each word in the doc
                 # Sample random topic from multinomial
-                dist = np.random.multinomial(1, [1./self.num_topics]*self.num_topics)
+                dist = np.random.multinomial(1, [1./num_topics]*num_topics)
                 k = np.where(dist==1)[0]
                 # assign topic to word in document
                 z[m, n] = k
@@ -128,14 +98,14 @@ class LDA:
                     # Multinomial sample using equation (79), note there is a typo
                     # There is a typo in this equation in the paper;
                     # t in the numerator of second fraction should be k, as below
-                    probabilities = np.zeros( (self.num_topics) )
-                    for topic in range(self.num_topics):
+                    probabilities = np.zeros( (num_topics) )
+                    for topic in range(num_topics):
                         numerator1 = n_kt[topic,n_to_t(n)] * 1.0 + betas[n_to_t(n)]
                         denominator1 = sum(n_kt[topic, n_to_t(cur_n)] * 1.0 + betas[n_to_t(cur_n)] \
                                 for cur_n in range(self.num_corpus_words))
                         numerator2 = n_mk[m,k] * 1.0 + alphas[k]
                         denominator2 = sum( n_mk[m, cur_k] * 1.0 + alphas[cur_k] \
-                                for cur_k in range(self.num_topics)) - 1
+                                for cur_k in range(num_topics)) - 1
                         probabilities[topic] = (numerator1 / denominator1) * (numerator2 / denominator2)
                     # normalize
                     p_total = sum(probabilities)
@@ -155,7 +125,7 @@ class LDA:
 
         # read out phi, probability of a topic given a word
         # TODO: not using phi currently, but may be useful later
-        for k in range(self.num_topics):
+        for k in range(num_topics):
             denominator = sum(n_kt[k, topic] + betas[topic] for term in range(self.num_terms))
             for t in range(self.num_terms):
                 phi_kt = (n_kt[k, t] + betas[t]) / denominator
@@ -163,9 +133,9 @@ class LDA:
         # read out theta, probability of a paper given a topic
         assignments = OrderedDict()
         for m, filename in enumerate(self.data):  # for each document
-            denominator = sum(n_mk[m,cur_k] + alphas[cur_k] for cur_k in range(self.num_topics))
-            theta_mks = np.zeros(self.num_topics)
-            for k in range(self.num_topics):
+            denominator = sum(n_mk[m,cur_k] + alphas[cur_k] for cur_k in range(num_topics))
+            theta_mks = np.zeros(num_topics)
+            for k in range(num_topics):
                 theta_mk = (n_mk[m,k] + alphas[k]) / denominator
                 theta_mks[k] = theta_mk
             assignments[filename] = np.argmax(theta_mks) # Just taking max probability
@@ -189,10 +159,10 @@ class LDA:
 
 if __name__ == "__main__":
     print
-    data = read_data(DATA_DIRECTORY)
+    data = read_data("../data/trivial/")
     lda = LDA(data)
     lda.generate_corpus()
-    assignments = lda.run(iterations=10, alpha_init=0.01, beta_init=0.01)
+    assignments = lda.run(num_topics=3, iterations=10, alpha_init=0.01, beta_init=0.01)
     print
     print "ASSIGNMENTS: "
     for k in assignments:
