@@ -5,7 +5,7 @@ import os
 import numpy as np
 from sklearn import feature_extraction, cluster
 
-FILE_DIRECTORY = '../data/simple/'
+FILE_DIRECTORY = '../data/trivial/'
 TEST_FILE_DIRECTORY = 'test_data_clean/'
 
 
@@ -42,7 +42,7 @@ print prediction
 
 ## Get Categories for each Mean ##
 # Determine top words of each cluster
-NUM_TOP_WORDS = 10
+NUM_TOP_WORDS = 1
 cluster_top_words = {}
 for i in range(len(centers)):
     c = centers[i]

@@ -6,7 +6,7 @@ import numpy as np
 import sys
 
 ROOT = '../'
-DATA_DIRECTORY = os.path.join(ROOT, "data/simple/")
+DATA_DIRECTORY = os.path.join(ROOT, "data/trivial_more_files/")
 
 def read_data(data_directory):
     """
@@ -15,7 +15,8 @@ def read_data(data_directory):
     """
     data = {}
     for r, ds, fs in os.walk(DATA_DIRECTORY):
-        for f in fs:
+        for f in sorted(fs):
+            print f
             fullpath = os.path.join(r, f)
             with open(fullpath, "r") as fr:
                 lines = fr.read()
@@ -54,9 +55,10 @@ class LDA:
         """
         print "Initializing LDA object."
         self.data = data
-        self.num_iterations = 1
-        self.corpus = [] # list of all words, length N
-        self.doc_pointers = [] # list of document each word belongs to, length N
+        self.num_iterations = 25
+        self.corpus = [] # list of all words
+        self.terms = [] # list of all unique words; i.e. the vocabulary
+        self.doc_pointers = [] # list of document each word belongs to
         self.num_topics = 3 # K
         self.num_documents = len(data)
         # TODO don't know what these superparameters should be
@@ -73,7 +75,9 @@ class LDA:
             for word in text.split():
                 self.corpus.append(word)
                 self.doc_pointers.append(doc_id)
+        self.terms = list(set(self.corpus))
         self.num_corpus_words = len(self.corpus)
+        self.num_terms = len(self.terms)
 
     def run2(self):
         """
@@ -82,13 +86,17 @@ class LDA:
         """
         n_mk = np.zeros( (self.num_documents, self.num_topics), dtype=np.int ) #size?
         n_m = np.zeros( (self.num_documents), dtype=np.int )
-        n_kt = np.zeros( (self.num_topics, self.num_corpus_words), dtype=np.int )
+        n_kt = np.zeros( (self.num_topics, self.num_terms), dtype=np.int )
         n_k = np.zeros( (self.num_topics), dtype=np.int )
         z = np.zeros( (self.num_documents, self.num_corpus_words), dtype=np.int )
 
-        alphas = np.full( (self.num_topics), 0 )
-        betas = np.full( (self.num_corpus_words), 0 )
+        alphas = np.full( (self.num_topics), 0.01 )
+        betas = np.full( (self.num_terms), 0.01 )
 
+        # Convert index of self.corpus to index of self.terms
+        def n_to_t(n):
+            t = self.terms.index(self.corpus[n])
+            return t
 
         # initialization
         n = 0
@@ -102,63 +110,79 @@ class LDA:
                 # increment counters based on assignment
                 n_mk[m, k] += 1
                 n_m[m] += 1
-                n_kt[k, n] += 1
+                n_kt[k, n_to_t(n)] += 1
                 n_k[k] += 1
 
                 n += 1
 
         # Gibbs sampling over burn-in period and sampling period
-        i = 0
+        i = 1
         while True:
             n = 0
             for m, doc_id in enumerate(self.data): # for each document
                 while n < self.num_corpus_words and self.doc_pointers[n] == m:
-                    # decrement word
+                    # address assignment of (document m, word n) to topic k
                     k = z[m, n]
                     n_mk[m, k] -= 1
                     n_m[m] -= 1
-                    n_kt[k, n] -= 1
+                    n_kt[k, n_to_t(n)] -= 1
                     n_k[k] -= 1
 
-                    # Multinomial sample
+                    # Multinomial sample using equation (79), note there is a typo
+                    # There is a typo in this equation in the paper;
+                    # t in the numerator of second fraction should be k, as below
                     probabilities = np.zeros( (self.num_topics) )
                     for topic in range(self.num_topics):
-                        numerator1 = n_kt[topic,n] * 1.0 + betas[n]
+                        numerator1 = n_kt[topic,n_to_t(n)] * 1.0 + betas[n_to_t(n)]
 
-                        denominator1 = sum(n_kt[topic, cur_n] * 1.0 + betas[cur_n] \
+
+                        denominator1 = sum(n_kt[topic, n_to_t(cur_n)] * 1.0 + betas[n_to_t(cur_n)] \
                                 for cur_n in range(self.num_corpus_words))
 
-
-                        print m
-                        print n
-                        print topic
-                        numerator2 = n_mk[m,n] * 1.0 + alphas[topic]
+                        numerator2 = n_mk[m,k] * 1.0 + alphas[k]
 
                         denominator2 = sum( n_mk[m, cur_k] * 1.0 + alphas[cur_k] \
                                 for cur_k in range(self.num_topics)) - 1
 
-                        #  print numerator1, denominator1, numerator2, denominator2
-
                         probabilities[topic] = (numerator1 / denominator1) * (numerator2 / denominator2)
-                        print probabilities
 
-                    #  print probabilities
-                    #  print np.sum(probabilities)
-                    dist = np.random.multinomial(1, [1./self.num_topics]*self.num_topics)
+                    # normalize
+                    p_total = sum(probabilities)
+                    probabilities = [p / p_total for p in probabilities]
+                    dist = np.random.multinomial(1, probabilities)
                     k = np.where(dist==1)[0]
 
-                    # TODO: maybe not using correct variables for t
                     z[m,n] = k
                     n_mk[m,k] +=1
                     n_m[m] += 1
-                    n_kt[k, n] += 1
+                    n_kt[k, n_to_t(n)] += 1
                     n_k[k] += 1
 
                     n += 1
+            print "Iteration %d complete" % i
 
-            if True and i >= self.num_iterations:
+            # Check for completion / convergence
+            # TODO: add convergence check if necessary
+            if True and i == self.num_iterations:
                 # read out phi
+                for k in range(self.num_topics):
+                    denominator = sum(n_kt[k, topic] + betas[topic] for term in range(self.num_terms))
+                    for t in range(self.num_terms):
+                        phi_kt = (n_kt[k, t] + betas[t]) / denominator
+                # TODO: not using this phi currently, but may be useful later
+
                 # read out theta
+                assignments = np.zeros(len(self.data))
+                for m in range(len(self.data)):  # for each document
+                    denominator = sum(n_mk[m,cur_k] + alphas[cur_k] for cur_k in range(self.num_topics))
+                    theta_mks = np.zeros(self.num_topics)
+                    for k in range(self.num_topics):
+                        theta_mk = (n_mk[m,k] + alphas[k]) / denominator
+                        theta_mks[k] = theta_mk
+                    # TODO: not positive I can simply take the max
+                    print theta_mks
+                    assignments[m] = np.argmax(theta_mks)
+                print assignments
                 break
             i += 1
 
