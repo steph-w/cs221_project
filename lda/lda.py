@@ -4,19 +4,19 @@ import random
 from pdb import set_trace as t
 import numpy as np
 import sys
+from collections import OrderedDict
 
 ROOT = '../'
-DATA_DIRECTORY = os.path.join(ROOT, "data/trivial_more_files/")
+DATA_DIRECTORY = os.path.join(ROOT, "data/trivial/")
 
 def read_data(data_directory):
     """
     data_directory: path to directory with all documents
     returns: dict of {document_name: text}
     """
-    data = {}
+    data = OrderedDict()  # Need to remember the order in which items were inserted
     for r, ds, fs in os.walk(DATA_DIRECTORY):
-        for f in sorted(fs):
-            print f
+        for f in sorted(fs):  # TODO Need to make sure inputs are in alphebetical order chronilogically
             fullpath = os.path.join(r, f)
             with open(fullpath, "r") as fr:
                 lines = fr.read()
@@ -180,7 +180,6 @@ class LDA:
                         theta_mk = (n_mk[m,k] + alphas[k]) / denominator
                         theta_mks[k] = theta_mk
                     # TODO: not positive I can simply take the max
-                    print theta_mks
                     assignments[m] = np.argmax(theta_mks)
                 print assignments
                 break
