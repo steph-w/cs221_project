@@ -55,7 +55,6 @@ class LDA:
         """
         print "Initializing LDA object."
         self.data = data
-        self.num_iterations = 25
         self.corpus = [] # list of all words
         self.terms = [] # list of all unique words; i.e. the vocabulary
         self.doc_pointers = [] # list of document each word belongs to
@@ -79,7 +78,7 @@ class LDA:
         self.num_corpus_words = len(self.corpus)
         self.num_terms = len(self.terms)
 
-    def run2(self):
+    def run(self, iterations=10, alpha_init=0.01, beta_init=0.01):
         """
         Another attempt, using: http://www.arbylon.net/publications/text-est.pdf#page=20
 
@@ -89,11 +88,11 @@ class LDA:
         n_kt = np.zeros( (self.num_topics, self.num_terms), dtype=np.int )
         n_k = np.zeros( (self.num_topics), dtype=np.int )
         z = np.zeros( (self.num_documents, self.num_corpus_words), dtype=np.int )
+        # TODO: these parameters could also be non-uniform
+        alphas = np.full((self.num_topics), alpha_init)
+        betas = np.full((self.num_terms), beta_init)
 
-        alphas = np.full( (self.num_topics), 0.01 )
-        betas = np.full( (self.num_terms), 0.01 )
-
-        # Convert index of self.corpus to index of self.terms
+        # Converts index of self.corpus to index of self.terms
         def n_to_t(n):
             t = self.terms.index(self.corpus[n])
             return t
@@ -112,78 +111,66 @@ class LDA:
                 n_m[m] += 1
                 n_kt[k, n_to_t(n)] += 1
                 n_k[k] += 1
-
+                # Move to next corpus word index
                 n += 1
 
         # Gibbs sampling over burn-in period and sampling period
-        i = 1
-        while True:
+        for i in range(iterations):  # TODO could also check for convergence instead
             n = 0
             for m, doc_id in enumerate(self.data): # for each document
                 while n < self.num_corpus_words and self.doc_pointers[n] == m:
-                    # address assignment of (document m, word n) to topic k
+                    # remove topic k from (doc m, word n) and decrement counters
                     k = z[m, n]
                     n_mk[m, k] -= 1
                     n_m[m] -= 1
                     n_kt[k, n_to_t(n)] -= 1
                     n_k[k] -= 1
-
                     # Multinomial sample using equation (79), note there is a typo
                     # There is a typo in this equation in the paper;
                     # t in the numerator of second fraction should be k, as below
                     probabilities = np.zeros( (self.num_topics) )
                     for topic in range(self.num_topics):
                         numerator1 = n_kt[topic,n_to_t(n)] * 1.0 + betas[n_to_t(n)]
-
-
                         denominator1 = sum(n_kt[topic, n_to_t(cur_n)] * 1.0 + betas[n_to_t(cur_n)] \
                                 for cur_n in range(self.num_corpus_words))
-
                         numerator2 = n_mk[m,k] * 1.0 + alphas[k]
-
                         denominator2 = sum( n_mk[m, cur_k] * 1.0 + alphas[cur_k] \
                                 for cur_k in range(self.num_topics)) - 1
-
                         probabilities[topic] = (numerator1 / denominator1) * (numerator2 / denominator2)
-
                     # normalize
                     p_total = sum(probabilities)
                     probabilities = [p / p_total for p in probabilities]
+                    # sample from distribution
                     dist = np.random.multinomial(1, probabilities)
                     k = np.where(dist==1)[0]
-
+                    # reassign counters based on sample
                     z[m,n] = k
                     n_mk[m,k] +=1
                     n_m[m] += 1
                     n_kt[k, n_to_t(n)] += 1
                     n_k[k] += 1
-
+                    # increment corpus word index
                     n += 1
-            print "Iteration %d complete" % i
+            print "Iteration %d complete" % (i+1)
 
-            # Check for completion / convergence
-            # TODO: add convergence check if necessary
-            if True and i == self.num_iterations:
-                # read out phi
-                for k in range(self.num_topics):
-                    denominator = sum(n_kt[k, topic] + betas[topic] for term in range(self.num_terms))
-                    for t in range(self.num_terms):
-                        phi_kt = (n_kt[k, t] + betas[t]) / denominator
-                # TODO: not using this phi currently, but may be useful later
+        # read out phi, probability of a topic given a word
+        # TODO: not using phi currently, but may be useful later
+        for k in range(self.num_topics):
+            denominator = sum(n_kt[k, topic] + betas[topic] for term in range(self.num_terms))
+            for t in range(self.num_terms):
+                phi_kt = (n_kt[k, t] + betas[t]) / denominator
 
-                # read out theta
-                assignments = np.zeros(len(self.data))
-                for m in range(len(self.data)):  # for each document
-                    denominator = sum(n_mk[m,cur_k] + alphas[cur_k] for cur_k in range(self.num_topics))
-                    theta_mks = np.zeros(self.num_topics)
-                    for k in range(self.num_topics):
-                        theta_mk = (n_mk[m,k] + alphas[k]) / denominator
-                        theta_mks[k] = theta_mk
-                    # TODO: not positive I can simply take the max
-                    assignments[m] = np.argmax(theta_mks)
-                print assignments
-                break
-            i += 1
+        # read out theta, probability of a paper given a topic
+        assignments = OrderedDict()
+        for m, filename in enumerate(self.data):  # for each document
+            denominator = sum(n_mk[m,cur_k] + alphas[cur_k] for cur_k in range(self.num_topics))
+            theta_mks = np.zeros(self.num_topics)
+            for k in range(self.num_topics):
+                theta_mk = (n_mk[m,k] + alphas[k]) / denominator
+                theta_mks[k] = theta_mk
+            assignments[filename] = np.argmax(theta_mks) # Just taking max probability
+
+        return assignments
 
 
     def get_topics(self, assignments, n_dk):
@@ -205,9 +192,10 @@ if __name__ == "__main__":
     data = read_data(DATA_DIRECTORY)
     lda = LDA(data)
     lda.generate_corpus()
-    # lda.generate_document_corpus()
-    lda.run2()
-    #  topics, assigns = lda.get_topics(assignments, n_dk)
-    print "done."
+    assignments = lda.run(iterations=10, alpha_init=0.01, beta_init=0.01)
+    print
+    print "ASSIGNMENTS: "
+    for k in assignments:
+        print k, ":", assignments[k]
     print
 
