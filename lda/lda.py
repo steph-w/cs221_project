@@ -124,21 +124,47 @@ class LDA:
             print "Iteration %d complete" % (i+1)
 
         # read out phi, probability of a topic given a word
-        # TODO: not using phi currently, but may be useful later
+        # used to compute the perplexity of LDA with changing parameters
+        phi_kt = np.zeros((num_topics, self.num_terms), dtype = np.float)
         for k in range(num_topics):
-            denominator = sum(n_kt[k, topic] + betas[topic] for term in range(self.num_terms))
+            denominator = sum(n_kt[k, term] + betas[term] for term in range(self.num_terms))
             for t in range(self.num_terms):
-                phi_kt = (n_kt[k, t] + betas[t]) / denominator
+                phi_kt[k, t] = (n_kt[k, t] + betas[t]) / denominator
 
         # read out theta, probability of a paper given a topic
         assignments = OrderedDict()
-        for m, filename in enumerate(self.data):  # for each document
-            denominator = sum(n_mk[m,cur_k] + alphas[cur_k] for cur_k in range(num_topics))
-            theta_mks = np.zeros(num_topics)
+        theta_mk = np.zeros((self.num_documents, num_topics), dtype = np.float)
+        for m, doc_id in enumerate(self.data):
+            denominator = sum(n_mk[m, k] + alphas[k] for k in range(num_topics))
             for k in range(num_topics):
-                theta_mk = (n_mk[m,k] + alphas[k]) / denominator
-                theta_mks[k] = theta_mk
-            assignments[filename] = np.argmax(theta_mks) # Just taking max probability
+                theta_mk[m, k] = (n_mk[m, k] + alphas[k]) / denominator
+
+        for m, doc_id in enumerate(self.data):
+            assignments[doc_id] = np.argmax(theta_mk[m])
+
+        def perplexity():
+            """
+            Returns the perplexity of the model, lower the better
+            Used for tuning the number of topics, alpha and beta
+            see http://qpleple.com/perplexity-to-evaluate-topic-models/
+
+            """
+            log_per = 0
+            docs_len = 0
+            for m, doc_id in enumerate(self.data): # for each document
+                likelihood = 0
+                for t in range(self.num_terms): # for each term 
+                    # num times term t appears in doc m
+                    n_mt = sum([1 for n in range(self.num_corpus_words) if self.doc_pointers[n]==m and n_to_t(n)==t]) 
+                    inner_product = 0
+                    for k in range(num_topics):
+                        inner_product += np.inner(phi_kt[k, t], theta_mk[m, k])
+                    likelihood += n_mt * np.log(inner_product)
+                    docs_len += n_mt
+                log_per -= likelihood
+            return np.exp(log_per / docs_len)
+
+        print "Model perplexity %f" % (perplexity())
 
         return assignments
 
@@ -157,12 +183,15 @@ class LDA:
             assigns[row_index] = np.argmax(n_dk[row_index])
         return topics, assigns
 
+
+
+
 if __name__ == "__main__":
     print
-    data = read_data("../data/trivial/")
+    data = read_data("../data/simple/")
     lda = LDA(data)
     lda.generate_corpus()
-    assignments = lda.run(num_topics=3, iterations=10, alpha_init=0.01, beta_init=0.01)
+    assignments = lda.run(num_topics=10, iterations=10, alpha_init=0.01, beta_init=0.01)
     print
     print "ASSIGNMENTS: "
     for k in assignments:
