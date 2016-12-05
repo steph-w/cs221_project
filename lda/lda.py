@@ -51,7 +51,6 @@ class LDA:
     def run(self, num_topics, iterations=10, alpha_init=0.01, beta_init=0.01):
         """
         Another attempt, using: http://www.arbylon.net/publications/text-est.pdf#page=20
-
         """
         n_mk = np.zeros( (self.num_documents, num_topics), dtype=np.int )
         n_m = np.zeros( (self.num_documents), dtype=np.int )
@@ -68,6 +67,7 @@ class LDA:
             return t
 
         # Initialization
+        print "Initializing."
         n = 0
         for m, doc_id in enumerate(self.data): # for each document
             while n < self.num_corpus_words and self.doc_pointers[n] == m:  # for each word in the doc
@@ -83,6 +83,7 @@ class LDA:
                 n_k[k] += 1
                 # Move to next corpus word index
                 n += 1
+            print "Here document: %s" %(doc_id)
 
         # Gibbs sampling over burn-in period and sampling period
         for i in range(iterations):  # TODO could also check for convergence instead
@@ -101,8 +102,9 @@ class LDA:
                     probabilities = np.zeros( (num_topics) )
                     for topic in range(num_topics):
                         numerator1 = n_kt[topic,n_to_t(n)] * 1.0 + betas[n_to_t(n)]
-                        denominator1 = sum(n_kt[topic, n_to_t(cur_n)] * 1.0 + betas[n_to_t(cur_n)] \
-                                for cur_n in range(self.num_corpus_words))
+                        denominator1 = n_k[topic] + beta_init 
+                        # sum(n_kt[topic, n_to_t(cur_n)] * 1.0 + betas[n_to_t(cur_n)] \
+                                # for cur_n in range(self.num_corpus_words))
                         numerator2 = n_mk[m,k] * 1.0 + alphas[k]
                         denominator2 = sum( n_mk[m, cur_k] * 1.0 + alphas[cur_k] \
                                 for cur_k in range(num_topics)) - 1
@@ -147,7 +149,6 @@ class LDA:
             Returns the perplexity of the model, lower the better
             Used for tuning the number of topics, alpha and beta
             see http://qpleple.com/perplexity-to-evaluate-topic-models/
-
             """
             log_per = 0
             docs_len = 0
@@ -172,7 +173,6 @@ class LDA:
     def get_topics(self, assignments, n_dk):
         """
         Returns a dict of {}
-
         """
         print "Retrieving results."
         topics = collections.defaultdict(list)
@@ -184,17 +184,14 @@ class LDA:
         return topics, assigns
 
 
-
-
 if __name__ == "__main__":
     print
-    data = read_data("../data/simple/")
+    data = read_data("../data/trivial/")
     lda = LDA(data)
     lda.generate_corpus()
-    assignments = lda.run(num_topics=10, iterations=10, alpha_init=0.01, beta_init=0.01)
+    assignments = lda.run(num_topics=4, iterations=20, alpha_init=0.01, beta_init=0.01)
     print
     print "ASSIGNMENTS: "
     for k in assignments:
         print k, ":", assignments[k]
     print
-
