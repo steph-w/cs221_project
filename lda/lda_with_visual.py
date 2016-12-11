@@ -7,6 +7,10 @@ import random
 import sys
 import pyLDAvis
 
+# import utilites
+import imp
+plotter = imp.load_source('plotter', '../utils/plotter.py')
+
 def read_data(data_directory):
     """
     data_directory: path to directory with all documents
@@ -136,7 +140,6 @@ class LDA:
                     self.n_k[k] += 1
                     # increment corpus word index
                     n += 1
-                print 'here'
             print "Iteration %d complete" % (i+1)
 
     def output_paper_topic_dist(self):
@@ -149,7 +152,7 @@ class LDA:
 
         # read out theta, probability of a paper given a topic
         assignments = OrderedDict()
-        
+
         for m, doc_id in enumerate(self.data):
             denominator = sum(self.n_mk[m, k] + self.alphas[k] for k in range(self.num_topics))
             for k in range(self.num_topics):
@@ -171,9 +174,9 @@ class LDA:
         docs_len = 0
         for m, doc_id in enumerate(self.data): # for each document
             likelihood = 0
-            for t in range(self.num_terms): # for each term 
+            for t in range(self.num_terms): # for each term
                 # num times term t appears in doc m
-                n_mt = sum([1 for n in range(self.num_corpus_words) if self.doc_pointers[n]==m and self.n_to_t(n)==t]) 
+                n_mt = sum([1 for n in range(self.num_corpus_words) if self.doc_pointers[n]==m and self.n_to_t(n)==t])
                 inner_product = 0
                 for k in range(self.num_topics):
                     inner_product += np.inner(self.phi_kt[k, t], self.theta_mk[m, k])
@@ -213,16 +216,16 @@ class LDA:
 
 if __name__ == "__main__":
     print
-    data = read_data("../data/simple/")
-    lda = LDA(data, num_topics=5, alpha_init=0.01, beta_init=0.01)
-    lda.inference(iterations=20)
+    data = read_data("../data/journal_ai_research_abstracts/cleaned/")
+    lda = LDA(data, num_topics=10, alpha_init=3, beta_init=0.01)
+    lda.inference(iterations=5)
     assignments = lda.output_paper_topic_dist()
-    lda.launch_visualization()
-    print 
+    print
     print "Model perplexity %f" % (lda.perplexity())
     print
     print "ASSIGNMENTS: "
     for k in assignments:
         print k, ":", assignments[k]
-    print
+    plotter.plot_trends_over_time(dict(assignments), data.keys())
+    lda.launch_visualization()
 
