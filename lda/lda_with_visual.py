@@ -6,6 +6,7 @@ import os, collections
 import random
 import sys
 import pyLDAvis
+import json
 
 def read_data(data_directory):
     """
@@ -116,8 +117,6 @@ class LDA:
                     for topic in range(self.num_topics):
                         numerator1 = self.n_kt[topic, self.n_to_t(n)] * 1.0 + self.betas[self.n_to_t(n)]
                         denominator1 = self.n_k[topic] + self.beta_init
-                        # sum(self.n_kt[topic, self.n_to_t(cur_n)] * 1.0 + self.betas[self.n_to_t(cur_n)] \
-                               # for cur_n in range(self.num_corpus_words))
                         numerator2 = self.n_mk[m,k] * 1.0 + self.alphas[k]
                         denominator2 = sum( self.n_mk[m, cur_k] * 1.0 + self.alphas[cur_k] \
                                 for cur_k in range(self.num_topics)) - 1
@@ -136,7 +135,6 @@ class LDA:
                     self.n_k[k] += 1
                     # increment corpus word index
                     n += 1
-                print 'here'
             print "Iteration %d complete" % (i+1)
 
     def output_paper_topic_dist(self):
@@ -182,20 +180,6 @@ class LDA:
             log_per -= likelihood
         return np.exp(log_per / docs_len)
 
-    def get_topics(self, assignments, n_dk):
-        """
-        Returns a dict of {}
-
-        """
-        print "Retrieving results."
-        topics = collections.defaultdict(list)
-        for i in range(len(self.corpus)):
-            topics[assignments[i]].append(self.corpus[i])
-        assigns = {}
-        for row_index in range(len(n_dk)):
-            assigns[row_index] = np.argmax(n_dk[row_index])
-        return topics, assigns
-
     def launch_visualization(self):
         """
         Creates an interactive visual in the browser
@@ -207,22 +191,27 @@ class LDA:
         'doc_lengths': self.doc_lengths,
         'vocab': self.terms,
         'term_frequency': self.term_freq}
-
         vis_data = pyLDAvis.prepare(**data)
         pyLDAvis.show(vis_data)
 
 if __name__ == "__main__":
     print
-    data = read_data("../data/simple/")
-    lda = LDA(data, num_topics=5, alpha_init=0.01, beta_init=0.01)
+    data = read_data("../data/journal_ai_research_abstracts/cleaned/")
+    lda = LDA(data, num_topics=20, alpha_init=4, beta_init=0.01)
     lda.inference(iterations=20)
     assignments = lda.output_paper_topic_dist()
-    lda.launch_visualization()
     print 
-    print "Model perplexity %f" % (lda.perplexity())
+    #print "Model perplexity %f" % (lda.perplexity())
+    target = open('output.txt', 'w')
     print
     print "ASSIGNMENTS: "
     for k in assignments:
         print k, ":", assignments[k]
+        target.write(str(assignments[k]))
+        target.write('\n')
+    target.close()
     print
+    lda.launch_visualization()
+    
+
 
