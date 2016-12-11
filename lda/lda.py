@@ -6,6 +6,10 @@ import os, collections
 import random
 import sys
 
+# import utilites
+import imp
+plotter = imp.load_source('plotter', '../utils/plotter.py')
+
 def read_data(data_directory):
     """
     data_directory: path to directory with all documents
@@ -102,7 +106,7 @@ class LDA:
                     probabilities = np.zeros( (num_topics) )
                     for topic in range(num_topics):
                         numerator1 = n_kt[topic,n_to_t(n)] * 1.0 + betas[n_to_t(n)]
-                        denominator1 = n_k[topic] + beta_init 
+                        denominator1 = n_k[topic] + beta_init
                         # sum(n_kt[topic, n_to_t(cur_n)] * 1.0 + betas[n_to_t(cur_n)] \
                                 # for cur_n in range(self.num_corpus_words))
                         numerator2 = n_mk[m,k] * 1.0 + alphas[k]
@@ -154,9 +158,9 @@ class LDA:
             docs_len = 0
             for m, doc_id in enumerate(self.data): # for each document
                 likelihood = 0
-                for t in range(self.num_terms): # for each term 
+                for t in range(self.num_terms): # for each term
                     # num times term t appears in doc m
-                    n_mt = sum([1 for n in range(self.num_corpus_words) if self.doc_pointers[n]==m and n_to_t(n)==t]) 
+                    n_mt = sum([1 for n in range(self.num_corpus_words) if self.doc_pointers[n]==m and n_to_t(n)==t])
                     inner_product = 0
                     for k in range(num_topics):
                         inner_product += np.inner(phi_kt[k, t], theta_mk[m, k])
@@ -194,4 +198,3 @@ if __name__ == "__main__":
     print "ASSIGNMENTS: "
     for k in assignments:
         print k, ":", assignments[k]
-    print
