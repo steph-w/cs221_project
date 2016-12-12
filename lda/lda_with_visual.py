@@ -57,7 +57,6 @@ class LDA:
         self.theta_mk = np.zeros((self.num_documents, self.num_topics), dtype = np.float)
 
         # Initialization
-        print "Initializing."
         n = 0
         for m, doc_id in enumerate(self.data): # for each document
             while n < self.num_corpus_words and self.doc_pointers[n] == m:  # for each word in the doc
@@ -160,7 +159,7 @@ class LDA:
         for m, doc_id in enumerate(self.data):
             assignments[doc_id] = np.argmax(self.theta_mk[m])
 
-        return assignments
+        return assignments, self.phi_kt, self.terms
 
     def perplexity(self):
         """
@@ -200,35 +199,26 @@ class LDA:
 
 if __name__ == "__main__":
     print
-    data = read_data("../data/journal_ai_research_abstracts/cleaned/")
-<<<<<<< HEAD
-    lda = LDA(data, num_topics=20, alpha_init=4, beta_init=0.01)
-    lda.inference(iterations=20)
-    assignments = lda.output_paper_topic_dist()
-    print 
-    #print "Model perplexity %f" % (lda.perplexity())
-    target = open('output.txt', 'w')
-=======
+    data = read_data("../data/simple/")
     lda = LDA(data, num_topics=10, alpha_init=3, beta_init=0.01)
     lda.inference(iterations=5)
-    assignments = lda.output_paper_topic_dist()
+    assignments, phi_kt, terms = lda.output_paper_topic_dist()
     print
     print "Model perplexity %f" % (lda.perplexity())
->>>>>>> 2e2ba95d338b1784af04d8ab636a8f9d848a5f36
     print
     print "ASSIGNMENTS: "
     for k in assignments:
         print k, ":", assignments[k]
-<<<<<<< HEAD
-        target.write(str(assignments[k]))
-        target.write('\n')
-    target.close()
-    print
-    lda.launch_visualization()
-    
-
-=======
     plotter.plot_trends_over_time(dict(assignments), data.keys())
-    lda.launch_visualization()
->>>>>>> 2e2ba95d338b1784af04d8ab636a8f9d848a5f36
+
+    # plot the terms with the highest probability of association with topic
+    topic_top_terms= {}
+    for k in range(phi_kt.shape[0]):
+        n=10 # number of top topic terms to display
+        term_indices = np.argsort(phi_kt[k])[::-1][:n]
+        top_terms = {terms[ind]: phi_kt[k, ind] for ind in term_indices}
+        topic_top_terms[k] = top_terms
+
+    plotter.plot_topic_top_terms(topic_top_terms)
+    #lda.launch_visualization()
 
