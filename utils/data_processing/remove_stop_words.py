@@ -17,8 +17,8 @@ for r,ds,fs in os.walk(IF):
 		with open(os.path.join(r,f), 'r') as fr:
 			text = fr.readlines()
 		print "removing stop words: " + f
-		goodtext = [' '.join(filter(lambda x: x.lower() not in cachedStopWords, line.split())) for line in text]
-		
+		goodtext = [' '.join(filter(lambda x: x.lower() not in cachedStopWords, line.split())) + '\n' for line in text]
 		of_name = os.path.join(OF, f)
 		with open(of_name, 'w') as fw:
 			fw.writelines(goodtext)
+
