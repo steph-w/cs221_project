@@ -5,7 +5,10 @@ from nltk.corpus import stopwords
 IF = './split_by_article'
 OF = './articles_no_stopwords'
 CUSTOM_WORDS = ('the', 'if', 'this', 'but', 'in', 'at', 'that', 
-	'by', 'these', 'we', 'as', 'also', 'like', 'fi', 'ff')
+	'by', 'these', 'we', 'as', 'also', 'like', 'fi', 'ff', 
+	'problem', 'volume', 'algorithm', 'pages', 'planning', 'show',
+	'paper', 'results', 'publish', 'research', 'result', 'find', 
+	)
 cachedStopWords = set(stopwords.words("english"))
 cachedStopWords.update(CUSTOM_WORDS)
 

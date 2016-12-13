@@ -146,6 +146,7 @@ class LDA:
                     self.n_k[k] += 1
                     # increment corpus word index
                     n += 1
+                print 'here document %s' % (doc_id)
             print "Iteration %d complete" % (i+1)
 
     def output_paper_topic_dist(self):
@@ -207,7 +208,7 @@ class LDA:
 
 if __name__ == "__main__":
     print
-    data = read_data("../data/journal_ai_research_papers/articles_no_stopwords")
+    data = read_data("../data/journal_ai_research_abstracts/papers_no_stopwords")
     lda = LDA(data, num_topics=10, alpha_init=3, beta_init=0.01)
     lda.inference(iterations=1)
     assignments, phi_kt, terms = lda.output_paper_topic_dist()
