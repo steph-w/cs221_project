@@ -229,5 +229,5 @@ if __name__ == "__main__":
         topic_top_terms[k] = top_terms
 
     plotter.plot_topic_top_terms(topic_top_terms)
-    #lda.launch_visualization()
+    lda.launch_visualization()
 

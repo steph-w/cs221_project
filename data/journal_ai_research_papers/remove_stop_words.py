@@ -2,10 +2,14 @@ import os
 import re
 from nltk.corpus import stopwords
 
-IF = './split_by_article'
+IF = './just_letters'
 OF = './articles_no_stopwords'
 CUSTOM_WORDS = ('the', 'if', 'this', 'but', 'in', 'at', 'that', 
-	'by', 'these', 'we', 'as', 'also', 'like', 'fi', 'ff')
+	'by', 'these', 'we', 'as', 'also', 'like', 'fi', 'ff', 
+	'problem', 'problems', 'volume', 'algorithm', 'pages', 'planning', 'show',
+	'paper', 'results', 'publish', 'research', 'result', 'results', 'find', 
+	'algorithms', 'based', 'models', 'approach', 'using', 'new', 'either', 'various', 'wellknown',
+	'always')
 cachedStopWords = set(stopwords.words("english"))
 cachedStopWords.update(CUSTOM_WORDS)
 
@@ -13,9 +17,7 @@ if not os.path.exists(OF):
 	os.mkdir(OF)
 
 for r,ds,fs in os.walk(IF):
-	print fs
 	for f in fs:
-		print f
 		text = []
 		with open(os.path.join(r,f), 'r') as fr:
 			text = fr.readlines()

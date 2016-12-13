@@ -6,9 +6,9 @@ IF = './split_by_paper'
 OF = './papers_no_stopwords'
 CUSTOM_WORDS = ('the', 'if', 'this', 'but', 'in', 'at', 'that', 
 	'by', 'these', 'we', 'as', 'also', 'like', 'fi', 'ff', 
-	'problem', 'volume', 'algorithm', 'pages', 'planning', 'show',
+	'problem', 'problems', 'volume', 'algorithm', 'pages', 'planning', 'show',
 	'paper', 'results', 'publish', 'research', 'result', 'results', 'find', 
-	'algorithms', 'based', 'models', 'approach')
+	'algorithms', 'based', 'models', 'approach', 'using', 'new', 'programs', 'program')
 cachedStopWords = set(stopwords.words("english"))
 cachedStopWords.update(CUSTOM_WORDS)
 
