@@ -9,10 +9,11 @@ CUSTOM_WORDS = ('the', 'if', 'this', 'but', 'in', 'at', 'that',
 cachedStopWords = set(stopwords.words("english"))
 cachedStopWords.update(CUSTOM_WORDS)
 
-# if not os.path.exists(OF):
-# 	os.mkdir(OF)
+if not os.path.exists(OF):
+	os.mkdir(OF)
 
 for r,ds,fs in os.walk(IF):
+	print fs
 	for f in fs:
 		print f
 		text = []
@@ -24,6 +25,7 @@ for r,ds,fs in os.walk(IF):
 
 		if not os.path.exists(of_path_name):
 			os.mkdir(of_path_name)
+
 		f_name = re.sub('.txt', '', f)
 		of_name = os.path.join(of_path_name, f_name)
 		with open(of_name,'w') as fw:

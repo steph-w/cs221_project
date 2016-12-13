@@ -18,7 +18,15 @@ def read_data(data_directory):
     returns: dict of {document_name: text}
     """
     data = OrderedDict()  # Need to remember the order in which items were inserted
+
     for r, ds, fs in os.walk(data_directory):
+        # weird hacky thing to get all the files 
+        if not fs:
+            for d in ds:
+                path = os.path.join(r,d)
+                files = os.listdir(path)
+                fs.extend([os.path.join(d, f) for f in files])
+
         for f in sorted(fs):  # TODO Need to make sure inputs are in alphebetical order chronilogically
             fullpath = os.path.join(r, f)
             with open(fullpath, "r") as fr:
@@ -199,12 +207,12 @@ class LDA:
 
 if __name__ == "__main__":
     print
-    data = read_data("../data/simple/")
+    data = read_data("../data/journal_ai_research_papers/articles_no_stopwords")
     lda = LDA(data, num_topics=10, alpha_init=3, beta_init=0.01)
-    lda.inference(iterations=5)
+    lda.inference(iterations=1)
     assignments, phi_kt, terms = lda.output_paper_topic_dist()
     print
-    print "Model perplexity %f" % (lda.perplexity())
+    #print "Model perplexity %f" % (lda.perplexity())
     print
     print "ASSIGNMENTS: "
     for k in assignments:
