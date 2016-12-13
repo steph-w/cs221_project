@@ -1,0 +1,3909 @@
+Journal of Artificial Intelligence Research 52 (2015) 543-600
+
+Submitted 09/14; published 04/15
+
+Distributed Evaluation of Nonmonotonic Multi-context Systems
+Minh Dao-Tran
+Thomas Eiter
+Michael Fink
+Thomas Krennwallner
+
+DAO @ KR . TUWIEN . AC . AT
+EITER @ KR . TUWIEN . AC . AT
+FINK @ KR . TUWIEN . AC . AT
+TKREN @ KR . TUWIEN . AC . AT
+
+Institute fur Informationssysteme, TU Wien
+Favoritenstrasse 9-11, A-1040 Vienna, Austria
+
+Abstract
+Multi-context Systems (MCSs) are a formalism for systems consisting of knowledge bases
+(possibly heterogeneous and non-monotonic) that are interlinked via bridge rules, where the global
+system semantics emerges from the local semantics of the knowledge bases (also called contexts)
+in an equilibrium. While MCSs and related formalisms are inherently targeted for distributed settings, no truly distributed algorithms for their evaluation were available. We address this shortcoming and present a suite of such algorithms which includes a basic algorithm DMCS, an advanced version DMCSOPT that exploits topology-based optimizations, and a streaming algorithm
+DMCS-STREAMING that computes equilibria in packages of bounded size. The algorithms behave quite differently in several respects, as experienced in thorough experimental evaluation of a
+system prototype. From the experimental results, we derive a guideline for choosing the appropriate
+algorithm and running mode in particular situations, determined by the parameter settings.
+
+1. Introduction
+In the last decade, there has been an increasing interest in systems that comprise information from
+multiple knowledge bases. This includes a wide range of application fields such as data integration, multi-agent systems, argumentation and many others. To picture a more concrete real-world
+application, we may consider METIS (Velikova et al., 2014), an industrial prototype system for facilitating timely human decision making in maritime control. In this application, human operators
+need support to determine whether a ship entering a port might hide its identity for illegal activities or might be a high risk for environmental hazard. To access such risks, METIS relies on a
+number of heterogeneous external information sources such as the commercial ship database IHS
+Fairplay,1 ship tracking websites,2 and news items for history of pollution events the ship may have
+been involved in.
+The rise of the Word Wide Web and distributed systems has propelled this development, and
+to date several AI-based formalisms are available to host multiple, possibly distributed knowledge
+bases in a compound system. Well-known such formalisms are distributed SAT solving (Hirayama
+& Yokoo, 2005), distributed constraint satisfaction (Faltings & Yokoo, 2005; Yokoo & Hirayama,
+2000), distributed ontologies in different flavors (Homola, 2010), MWeb (Analyti, Antoniou, &
+Damasio, 2011), and different approaches to multi-context systems (Giunchiglia & Serafini, 1994;
+Ghidini & Giunchiglia, 2001; Brewka, Roelofsen, & Serafini, 2007; Brewka & Eiter, 2007; Bikakis
+1. www.ihs.com/products/maritime-information/
+2. marinetraffic.com, myship.com
+c
+2015
+AI Access Foundation. All rights reserved.
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+Figure 1: Pinpointing Joker
+& Antoniou, 2010) rooted in McCarthys (1993) work; among them, we focus here on Heterogeneous Nonmonotonic Multi-context Systems (MCSs) (Brewka & Eiter, 2007).
+As a generalization of previous proposals, MCSs are a powerful formalism to specify systems
+of knowledge bases that may have different formats and reasoning powers, ranging from simple
+query answering over a relational database to reasoning over description logic knowledge bases (see
+Baader et al., 2003), as well as to nonmonotonic formalisms such as default logic (Reiter, 1980) or
+answer set programs (Gelfond & Lifschitz, 1991). To allow for heterogeneous knowledge bases and
+to deal with the impedance mismatch between them, MCSs abstract knowledge bases to plain mathematical structures; on top, special bridge rules interlink the knowledge bases, where a bridge rule
+adds a formula to a knowledge base, depending on certain beliefs at other knowledge bases. Hence
+the semantics of a knowledge base with associated bridge rules, which forms a context, depends on
+the other contexts, possibly in a cyclic manner. Based on this, MCSs have an equilibrium semantics
+in terms of global states in which every context adopts an abstract local model, called belief set,
+that is conformant with the local models adopted by the other contexts and in addition obeys the
+bridge rules. The following simple example, which is a paraphrase of Ghidini and Giunchiglias
+(2001) Magic Box, illustrates the power of this idea,
+Example 1 Suppose that in a computer game, players Batman and Robin chased player Joker to
+a partially occluded area, as shown in Figure 1; Robin is wounded and cannot read his distance to
+objects. Neither Batman nor Robin can tell Jokers exact position on the 33 box: Batman can only
+assure that he is not in columns 2 and 3, while Robin can only tell that he is on row 1. However, if
+they exchange their partial knowledge, they can pinpoint Joker to row 1 and column 1.
+We can model Batman and Robin as contexts whose local knowledge bases include their information about Jokers position, which is exchanged using bridge rules, such as at row (X)  (2 :
+at row (X)). for Batman, which informally imports Robins knowledge (context 2) about row
+positions; a full encoding is given in Example 2. The equilibrium of the emerging MCS discloses
+then Jokers position to both Batman and Robin.
+544
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+Although MCSs and related formalisms inherently target distributed systems, no truly distributed algorithms for computing equilibria of MCSs were available. Brewka and Eiter (2007)
+encoded equilibria into HEX-programs (Eiter, Ianni, Schindlauer, & Tompits, 2005), which can be
+evaluated using the dlvhex solver. However, while this approach elegantly offers full heterogeneity, it is fully centralized and needs technical assumptions. Roelofsen, Serafini, and Cimatti (2004)
+had proposed earlier an algorithm to check satisfiability of homogeneous, monotonic MCS with a
+centralized control that accesses contexts in parallel (hence is not truly distributed). Bikakis and
+Antoniou (2010) instead gave a distributed algorithm for their defeasible multi-context systems;
+however, the latter have homogeneous (possibly nonmonotonic) contexts with a particular type of
+semantics, and the algorithm serves query answering but not model building.
+The lack of distributed algorithms for evaluating MCSs based on local context handlers is due
+to several obstacles:
+ The abstract view of local semantics as belief sets limits for an algorithm at the global level
+interference with the knowledge bases and the evaluation process at each context.
+ Towards real life applications, certain levels of information hiding and security are required
+(e.g. for information exchange between knowledge bases of companies) such that only selected
+information is transferred between contexts via well-defined interfaces. This prevents a context
+from getting more insight about its neighbors for optimization, for instance to learn conflicts (i.e.,
+joint beliefs leading to contradiction) across contexts.
+ The MCS system topology, i.e., the structure of context linkage, might be unknown at a context;
+this disables decomposing the system for more efficient, modular evaluation.
+ The bridge rules might fuel a cyclic information flow through a group of contexts. Even if each
+context is easy to evaluate (e.g., all knowledge bases are acyclic logic programs), such global cycles
+require nontrivial care.
+In this article, we address these obstacles and present results towards efficient distributed evaluation of MCSs. Our main contributions are a suite of generic algorithms DMCS, DMCSOPT, and
+DMCS-STREAMING which work truly distributed, and their implementation in a system prototype.
+In more detail, the contributions are as follows.
+1.1 Algorithms and Optimization Techniques
+(1) Our first, basic algorithm DMCS aims at a fully distributed setting and we deal with the obstacles
+above in a generic way: contexts just exchange belief sets and the call history (i.e., the access path
+traversing bridge rules), but no further information. At the global level, belief states are formed
+as tuples of belief sets; each context with bridge rules must respect the belief sets of its neighbors
+when computing its own belief sets using a local solver for its knowledge base. Cycles are detected
+from the call history, if a context gets a request and finds itself in the call history; to break a cycle,
+a guessing technique is used with checks on the return path.
+(2) By localizing a contexts knowledge about the system and information exchange, DMCS
+can fairly easily adapt to context changes (additions or deletions), but at the same time faces some
+scalability issues. To enhance the performance in an optimized version DMCSOPT, we disclose
+meta-level information to contexts, viz. (i) the topology of context dependencies, which is exploited
+for decomposing the MCS into sub-MCSs (blocks) that are linked in a block-tree, and (ii) the interface between contexts, for optimizing the data transfer between blocks. Here (i) breaks cycles in
+545
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+advance and (ii) significantly reduces duplicate local evaluation; each yields a remarkable performance gain.
+(3) Still as DMCS and DMCSOPT compute all equilibria of an MCS, they can not escape from
+scalability and memory issues, as multiple local belief sets can lead to combinatorial explosion at the
+global level. We thus consider computing equilibria in a streaming mode; to this end, contexts pass
+their belief sets not in one shot to their parents but gradually in small packages. Memory blowup
+can be thus avoided and moreover contexts can continue earlier than when they wait for all answers
+from all neighbors. This approach seems more user-friendly as equilibria gradually appear rather
+than all at once, possibly after long time; and one may quit the computation after seeing sufficiently
+many results (i.e., equilibria).
+1.2 Implementation and Experiments
+We have implemented the algorithms in a system prototype. To assess the effects of the optimization techniques, we have set up a benchmarking system and conducted comprehensive experiments
+with MCSs of various topologies and interlinking. The results confirm our expectation of the optimization techniques in general; in a nutshell, (i) the decomposition technique clearly improves the
+performance in the non-streaming mode; (ii) streaming is worthwhile as it may still find answers
+while non-streaming times out; (iii) for streaming, choosing the package size is very important;
+(iv) the system topology is important as some optimization techniques show drastic improvements
+for specific topologies; (v) sometimes, the techniques yield no gain but incur overhead.
+The results of this work provide not only truly distributed algorithms for evaluating MCSs, but
+through this also for distributed versions of non-monotonic knowledge base formalisms as such
+(e.g., for distributed answer set programs), and the underlying principles and techniques might be
+exploited in related contexts. Furthermore, they may provide a basis for the evaluation of extensions and generalizations of MCSs, such as non-ground MCSs (Fink, Ghionna, & Weinzierl, 2011),
+managed MCSs (Brewka, Eiter, Fink, & Weinzierl, 2011), supported MCS (Tasharrofi & Ternovska,
+2014), or reactive MCSs (Goncalves, Knorr, & Leite, 2014; Brewka, Ellmauthaler, & Puhrer, 2014).
+1.3 Organization
+The remainder of this article is organized as follows. The next section provides preliminaries on
+Multi-context Systems. Section 3 introduces the basic distributed algorithm DMCS, while Section 4 develops the optimized algorithm DMCSOPT; Section 5 presents then the streaming algorithm DMCS-STREAMING. Experimental results of the prototype implementation are reported in
+Section 6. In Section 7, we consider related works, and in Section 8 we summarize and address
+further and open issues. To increase readability, proofs have been moved to the Appendix.
+
+2. Preliminaries
+This sections briefly introduces the preliminaries needed for the rest of the article.
+2.1 Multi-context Systems
+First, we present the formalization of Heterogeneous Nonmonotonic Multi-context Systems (MCSs)
+proposed by Brewka and Eiter (2007) and further described by Brewka, Eiter, and Fink (2011),
+546
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+which serves as the base of this work. The idea behind MCSs is to allow different logics to be used
+in different contexts, and to model information flow among contexts via bridge rules. The notion of
+logic is defined as follows.
+Definition 1 (cf. Brewka & Eiter, 2007) A logic L = (KBL , BSL , ACCL ) is composed of the
+following components:
+1. KBL is the set of well-formed knowledge bases of L, each of which consists of a set of
+elements called formulas;
+2. BSL is the set of possible belief sets, where each S  BSL is a set of elements called beliefs;
+and
+3. ACCL : KBL  2BSL is a function describing the semantics of the logic, by assigning
+to each element of KBL a set of acceptable sets of beliefs.
+This notion of logic is very generic, and it abstracts the formation of an agents beliefs to a bare
+minimum. Structure of formulas (both in the knowledge base and the belief sets) is dismissed, and
+they are viewed as naked elements. Likewise no particular inference mechanism is associated
+with a knowledge base, nor are any logical properties imposed on belief sets; the term belief
+reflects that statements held by the agent might be on an epistemic basis, without going into further
+detail. The assignment of acceptable beliefs sets to a knowledge base, each of which is intuitively a
+set of beliefs that an agent is willing to adopt given the knowledge base, captures that in some logics
+(e.g., in nonmonotonic logics) multiple or even no acceptable belief sets are possible.
+This abstract model allows us to capture a range of different logics for knowledge representation
+and reasoning, including classical logic, modal logics, epistemic logics, spatial logics, description
+logics etc, but also nonmonotonic logics such as default logic (Reiter, 1980) or answer set programs
+(Gelfond & Lifschitz, 1991), in different varieties and settings. A comparison to other formalisms
+is given by Brewka et al. (2011). For example, classical (propositional or predicate logic) may be
+modeled as follows:
+ KB: the set of (well-formed) sentences over a signature ,
+ BS: the set of deductively closed sets S of -sentences, (i.e., Cn(S) = S, where Cn()
+denotes deductive closure),
+ ACC(kb): the singleton containing the deductive closure of kb, i.e., ACC(kb) = {Cn(kb)}.
+For an example of nonmonotonic logics, (disjunctive) logic programs under answer set semantics (Gelfond & Lifschitz, 1991) can be modeled by
+ KB: the set of logic programs over a signature ,
+ BS: the set of consistent sets of literals over ,
+ ACC(kb): the set AS (kb) of answer sets of kb according to Gelfond and Lifschitz (1991).3
+We refer to this setting, which will be used repeatedly in the sequel, as Answer Set Programming
+(ASP). Note that the answer sets of a knowledge base kb amount to particular 3-valued models of kb;
+intuitively, if a positive literal p is in an answer set S, then p is known to be true, and if a negative
+3. As common, we exclude inconsistent answer sets admitted by Gelfond and Lifschitz (1991).
+
+547
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+literal p is in S, then p is known to be false, where known means that the literal is present as a
+fact or derivable from rules; if neither p nor p is in S, then the truth value of p is unknown. The
+above MCS modeling is a possible worlds (scenarios) view via answer sets, which can be generated
+by an answer set solver. However, ASP and its implementations also capture inference (truth of a
+query in some respectively all answer sets) and further forms of belief set formation.
+Bridge rules. Based on logics, bridge rules are introduced to provide a uniform way of interlinking
+heterogeneous information sources as follows.
+Definition 2 (cf. Brewka & Eiter, 2007) Let L = {L1 , . . . , Ln } be a (multi-)set of logics. An Lk bridge rule over L, 1  k  n, is of the form
+s  (c1 : p1 ), . . . , (cj : pj ), not (cj+1 : pj+1 ), . . . , not (cm : pm )
+
+(1)
+
+where (i) for each 1  i  m, ci  {1, . . . , n} and pi is an element of some belief set of Lci , and
+(ii) for each kb  KBk , it holds that kb  {s}  KBk .
+Informally, bridge rules refer in their bodies to other contexts (identified by ci ) and can thus add
+information to a contexts knowledge base depending on what is believed or disbelieved in other
+contexts. In contrast to Giunchiglias (1992) multi-context systems, there is no single, global set of
+bridge rules; each context knows only its own bridge rules.
+Now that the means for connecting contexts is available, MCSs can be formally defined.
+Definition 3 (Brewka & Eiter, 2007) A multi-context system (MCS) M = (C1 , . . . , Cn ) consists
+of a collection of contexts Ci = (Li , kb i , br i ) where Li = (KBi , BSi , ACCi ) is a logic, kb i 
+KBi is a knowledge base, and br i is a set of Li -bridge rules over {L1 , . . . , Ln }.
+Example 2 (contd) The scenario from Example 1 can be formalized by an MCS M = (C1 , C2 ),
+where in both contexts L1 , L2 are instances of Answer Set Programming, and:
+
+
+at col (X)  see col (X).
+ kb 1 = F  F1 
+ R,
+at col (X)  see col (X).
+
+
+at row (X)  (2 : at row (X)).
+ br 1 =
+at row (X)  covered row (X)  not (2 : see row (X)), (1 : row (X)).
+
+
+at row (X)  see row (X).
+ kb 2 = F  F2 
+ R,
+at row (X)  see row (X).
+
+
+at col (X)  (1 : at col (X)).
+ br 2 =
+,
+at col (X)  covered col (X)  not (1 : see col (X)), (2 : col (X)).
+where
+ F = {row (1). row (2). row (3). col (1). col (2). col (3).},
+ F1 = {see col (2). see col (3).},
+ F2 = {see row (1).}, and
+548
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+
+ R=
+
+
+
+
+
+joker in  at row (X).
+joker in  at col (X).
+
+at row (X)  joker
+at row (X)  joker
+at col (X)  joker
+
+
+
+at col (X)  joker
+
+
+
+
+in, row (X), not at row (X).
+in, row (X), at row (Y ), X 6= Y.
+in, col (X), not at col (X).
+in, col (X), at col (Y ), X 6= Y.
+
+
+
+
+
+.
+
+
+
+
+Here, X and Y are variables used in schematic rules, and they range over rows resp. columns (i.e.,
+1,2,3). Intuitively, C1 formalizes Batmans knowledge about the scene and C2 that of Robin. In the
+knowledge bases kb 1 and kb 2 , the facts F represent the box of size 3  3, while F1 and F2 state
+what Batman and Robin see, viz. that Joker is not in columns 2 and 3 respectively that he is on
+row 1. The next two rules simply map sensed locations to respective facts. Informally, the rules in
+R make a guess on the row and the column where Joker is, if he is concluded to be in the box (first
+two rules); this may lead to multiple belief sets. Importantly, Batman adjusts his knowledge base
+depending on beliefs communicated by Robin (bridge rules br 1 ) and vice versa (bridge rules br 2 ).
+For convenience, we introduce the following notation and conventions. For an MCS M =
+(C1 , . . S
+. , Cn ), we denote by Bi the set S
+of all beliefs that can occur in belief sets of context Ci , i.e.,
+Bi = SBSi S, and we let BM = ni=1 Bi (simply B, if M is understood). Without loss of
+generality, we assume that for distinct contexts Ci and Cj , Bi  Bj = , and that for any bridge
+atom of the form (i : bi ) appearing in any bridge rule in M , it holds that bi  Bi .
+2.2 Semantics of Multi-context Systems
+The semantics of an MCS is defined in terms of special belief states, which are sequences S =
+(S1 , . . . , Sn ) such that each Si is an element of BSi . Intuitively, Si should be a belief set of the
+knowledge base kb i ; however, also the bridge rules must be respected. To this end, kb i is augmented
+with the conclusions of its bridge rules that are applicable. More precisely, a bridge rule r of form (1)
+is applicable in S, if pi  Sci , for 1  i  j, and pk 
+/ Sck , for j + 1  k  m. We denote by
+head (r) the head of r, and by app(R, S) the set of bridge rules r  R that are applicable in S.
+Then,
+Definition 4 (Brewka & Eiter, 2007) A belief state S = (S1 , . . . , Sn ) of an MCS M = (C1 , . . . ,
+Cn ) is an equilibrium, if Si  ACCi (kb i  {head (r) | r  app(br i , S)}), for all 1  i  n.
+An equilibrium thus is a belief state which contains for each context an acceptable belief set,
+given the belief sets of the other contexts.
+Example 3 (contd) The MCS M in Example 2 has the single equilibrium S = (S1 , S2 ) where
+S1 = F  F1  F3 and S2 = F  F2  F3 where F3 = {joker in, at row (1), at row (2),
+at row (3), at col (1), at col (2), at col (3)}. This equilibrium indeed reflects the intuition in
+the scenario in Example 1, where Batman and Robin together can infer the location of Joker, while
+any single one of them cannot accomplish this task without communication.
+Example 4 Let M = (C1 , C2 , C3 , C4 ) be an MCS such that all Li are ASP logics, with signatures
+1 = {a}, 2 = {b}, 3 = {c, d, e}, and 4 = {f, g}. Suppose
+ kb 1 = , br 1 = {a  (2 : b), (3 : c)};
+549
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+ kb 2 = , br 2 = {b  (4 : g)};
+ kb 3 = {c  d; d  c}, br 3 = {c  e  not (4 : f )};
+ kb 4 = {f  g }, br 4 = .
+One can check that S = ({a}, {b}, {c, d}, {g}) is an equilibrium of M .
+The computation of equilibria for a given MCS has been realized by a declarative implementation using HEX-programs (Eiter et al., 2005) which can be evaluated using the dlvhex system.4
+The idea is to translate an MCS into a HEX-program with (i) disjunctive facts for guessing the
+truth values of beliefs, (ii) HEX-rules for capturing bridge rules, and (iii) constraints with external
+atoms for capturing the acceptability functions. For further details on a concrete implementation
+of this approach, we refer the reader to the MCS-IE system (Bogl, Eiter, Fink, & Schuller, 2010).
+In this article, we pursue a more sophisticated approach, i.e., we design and implement distributed
+algorithms, to compute equilibria of MCSs. During evaluation, there is no centralized component
+that controls the communication between contexts. Each context independently runs an instance of
+the algorithm and communicates with each other to exchange beliefs as well as to detect and break
+cycles. These novel contributions are described in the next sections.
+
+3. Basic Algorithm (DMCS)
+This section introduces a very first, basic, truly distributed algorithm for evaluating equilibria of
+an MCS. The algorithm takes a general setting as input, that is, each context has only minimal
+knowledge about the whole system; or in other words, it just knows the interface with direct neighbors (parents and child contexts) but not the topological information or any further metadata of the
+system. Under this setting, we concentrate on distributeness. Section 4 shifts the focus towards
+optimization techniques when more metadata is provided.
+Taking a local stance, we consider a context Ck and compute those parts of (potential) equilibria
+of the system which contain coherent information from all contexts that are reachable from Ck .
+3.1 Basic Notions
+We start with some basic concepts. The import closure formally captures reachability.
+Definition 5 (Import Closure) Let M = (C1 , . . . , Cn ) be an MCS. The import neighborhood of
+context Ck , k  {1, . . . , n}, is the set
+In(k) = {ci | (ci : pi )  B(r), r  br k }.
+Furthermore, the import closure IC (k) of Ck is the smallest set S such that (i) k  S and (ii) for
+all i  S, In(i)  S.
+Equivalently, we can define the import closure constructively by IC (k) = {k} 
+S
+where IC 0 (k) = In(k), and IC j+1 (k) = iIC j (k) In(i).
+
+S
+
+j0 IC
+
+j
+
+(k),
+
+Example 5 Consider M in Example 4. Then In(1) = {2, 3}, In(2) = In(3) = {4}, and In(4) =
+; the import closure of C1 is IC (1) = {1, 2, 3, 4} (see Figure 2).
+4. www.kr.tuwien.ac.at/research/systems/dlvhex/
+
+550
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+C1
+
+C1
+
+IC (1)
+
+In(1)
+C2
+
+C2
+
+C3
+
+C3
+
+C4
+
+C4
+(a) Import neighborhood of C1
+
+(b) Import closure of C1
+
+Figure 2: Import neighborhood and Import closure
+S=
+
+S1
+
+...
+
+
+
+...
+
+
+
+...
+
+Sj
+
+...
+
+Sn
+
+T =
+
+
+
+...
+
+
+
+...
+
+Ti
+
+...
+
+Tj
+
+...
+
+Tn
+
+S ./ T =
+
+S1
+
+...
+
+
+
+...
+
+Ti
+
+...
+
+Sj (= Tj )
+
+...
+
+Figure 3: Joining partial belief states
+Based on the import closure we define partial equilibria.
+Definition
+6 (Partial Belief States and Equilibria) Let M = (C1 , . . . , Cn ) be an MCS, and let
+Sn
+
+/ i=1 BSi . Then a sequence S = (S1 , . . . , Sn ) such that Si  BSi  {}, for all 1  i  n, is
+a partial belief state (PBS) of M , and S is a partial equilibrium (PE) of M w.r.t. Ck , k  {1, . . . , n},
+if i  IC (k) implies Si  ACCi (kb i  {head (r) | r  app(br i , S)}), and i 6 IC (k) implies
+Si = , for all 1  i  n.
+Note that IC (k) essentially defines a subsystem M 0 of M that is connected by bridge rules. We use
+PEs of M instead of equilibria of M 0 to keep the original MCS M intact.
+For combining partial belief states S = (S1 , . . . , Sn ) and T = (T1 , . . . , Tn ), we define their
+join S ./ T as the partial belief state (U1 , . . . , Un ) such that
+
+Si , if Ti =  or Si = Ti ,
+Ui =
+, for all 1  i  n
+Ti , if Ti 6=  and Si = ,
+(see Figure 3). Note that S ./ T is void, if some couples Si , Ti are from BSi but different. Naturally,
+the join of two sets S and T of partial belief states is then S ./ T = {S ./ T | S  S, T  T }.
+Example 6 Consider two sets of partial belief states:
+S = { (, {b}, , {f, g}) , (, {b}, , {f, g}) } and
+T = {(, , {c, d, e}, {f, g}), (, , {c, d, e}, {f, g}), (, , {c, d, e}, {f, g})} .
+551
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+Their join is given by
+
+S ./ T =
+
+(, {b}, {c, d, e}, {f, g}), (, {b}, {c, d, e}, {f, g}),
+(, {b}, {c, d, e}, {f, g})
+
+
+.
+
+3.2 The Basic Algorithm
+Given an MCS M and a starting context Ck , we aim at finding all PEs of M w.r.t. Ck in a distributed
+way. To this end, we design an algorithm DMCS whose instances run independently at a node for
+each context and communicate with each other for exchanging sets of partial belief states. This
+provides a method for distributed model building, and the DMCS algorithm can be applied to any
+MCS provided that appropriate solvers for the respective context logics are available. As a main
+feature of DMCS, it can also compute projected partial equilibria, i.e., PEs projected to a relevant
+part of the beliefs showing up in Ck s import closure. This can be exploited for specific tasks
+like, e.g., local query answering or consistency checking. When computing projected PEs, the
+information communicated between contexts is minimized, keeping communication cost low.
+In the sequel, we present a basic version of the algorithm, abstracting from low-level implementation issues; the overall MCS structure is assumed to be unknown at context nodes. The idea is as
+follows: starting from context Ck , we visit its import closure by expanding the import neighborhood
+at each context Ci like in a depth-first search (DFS), until a leaf context is reached or a cycle is detected, by finding the current context in the set hist of already visited contexts. A leaf context simply
+computes its local belief sets, transforms them into partial belief states, and returns this result to its
+parent (invoking context, Figure 4a). In case of a cycle (Figure 4c), the context Ci which detects the
+cycle must also break it, by (i) guessing belief sets for its export interface, (ii) transforming the
+guesses into partial belief states, and (iii) returning them to the invoking context.
+An intermediate context Ci produces partial belief states that will be joined, i.e., consistently
+combined, with partial belief states of its neighbors; to enable this, Ci returns its local belief sets,
+joined with the results of its own neighbors (Figure 4b).
+For computing projected PEs, the algorithm offers a parameter V called the relevant interface
+which must fulfill some conditions w.r.t. import closure that we next discuss.
+Notation. Given a (partial) belief state S and set V  B of beliefs, we denote by S|V the restriction
+of S to V, i.e., the (partial) belief state S 0 = (S1 |V , . . . , Sn |V ), where Si |V = Si  V if Si 6= , and
+|V = ; for a set S of (partial) belief states, we let S|V = {S|V | S  S}. Next,
+Definition 7 (Recursive Import Interface) For an MCS M = (C1 , . . . , Cn ) and k  {1, . . . , n},
+we call V(k) = {pi | (ci : pi )  B(r), r  brk } the import interface of context Ck and V (k) =
+S
+iIC (k) V(i) the recursive import interface of context Ck .
+For a correct relevant interface V, we have two extremal cases: (1) V = V (k) and (2) V = VB = B.
+In (1), DMCS basically checks for consistency on the import closure of Ck by computing PEs
+projected to interface beliefs. In (2), it computes PEs w.r.t. Ck . In between, by providing a fixed
+interface V, problem-specific knowledge (such as query variables) and/or infrastructure information
+can be exploited to keep computations focused on relevant projections of partial belief states.
+The projections of partial belief states are cached in every context such that recomputation and
+recombination of belief states with local belief sets are kept at a minimum.
+We assume that each context Ck has a background process (or daemon in Unix terminology)
+that waits for incoming requests of the form (V, hist), upon which it starts the computation outlined
+552
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+Si =
+
+S
+
+SS` ./Sj
+
+lsolve(S)
+
+(V, hist)
+
+})
+{i
+
+
+(V, hist)
+
+Sj
+
+S
+
+`
+
+Ci
+
+C`
+
+(V
+
+,h
+
+is
+t
+
+S
+
+Cj
+
+C`
+lsolve((, . . . , )) = S
+(a) Leaf context
+
+(b) Intermediate context
+
+V
+Ci
+
+hi
+
+st
+
+=
+
+{.
+.
+
+.,
+
+i,
+
+Cj
+
+..
+
+.}
+
+C`
+Ct
+(c) Cycle breaking
+
+Figure 4: Basic distributed algorithm - casewise
+in Algorithm 1. This process also serves the purpose of keeping the cache c(k) persistent. We
+write Ci .DMCS(V, hist) to specify that we send (V, hist) to the process at context Ci and wait for
+its return message.
+Algorithm 1 uses the following primitives:
+ function lsolve(S) (Algorithm 2): augments the knowledge base kb of the current context
+with the heads of bridge rules in br that are applicable w.r.t. partial belief state S, computes
+local belief sets using function ACC, combines each local belief set with S, and returns the
+resulting set of partial belief states; and
+ function guess(V, Ck ): guesses all possible truth assignments for the relevant interface w.r.t.
+Ck , i.e., for Bk  V.5
+DMCS proceeds in the following way:
+
+(a) check the cache for an appropriate partial belief state;
+5. In order to relate beliefs in Bk , V can either be a vector of sets, or variables in V are prefixed with context ids; for
+simplicity, we kept V as a set without further assumptions.
+
+553
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+Algorithm 1: DMCS(V, hist) at Ck = (Lk , kb k , br k )
+Input: V: relevant interface, hist: visited contexts
+Data: c(k): static cache
+Output: set of accumulated partial belief states
+(a)
+
+if c(k) is not empty then return c(k)
+S := 
+
+(b)
+(c)
+
+(d)
+
+if k  hist then
+S := guess(V, Ck )
+else
+T := {(, . . . , )} and hist := hist  {k}
+foreach i  In(k) do
+if for some T  T , Ti =  then
+T := T ./ Ci .DMCS(V, hist)
+
+(e)
+
+foreach T  T do S := S  lsolve(T )
+
+(f)
+
+c(k) := S|V
+
+// cyclic: guess local beliefs w.r.t. V
+// acyclic: collect neighbor beliefs and add local ones
+
+return S|V
+Algorithm 2: lsolve(S) at Ck = (Lk , kb k , br k )
+Input: S: partial belief state S = (S1 , . . . , Sn )
+Output: set of locally acceptable partial belief states
+T := ACCk (kb k  {head (r) | r  app(brk , S)})
+return {(S1 , , . . . , Sk1 , Tk , Sk+1 , . . . , Sn ) | Tk  T}
+
+(b) check for a cycle;
+(c) if a cycle is detected, then guess partial belief states of the relevant interface of the context
+running DMCS;
+(d) if no cycle is detected, but import from neighbor contexts is needed, then request partial belief
+states from all neighbors and join them;
+(e) compute local belief states given the partial belief states collected from neighbors;
+(f) cache the current (projected) partial belief state.
+The next examples illustrate evaluation runs of DMCS for finding all partial equilibria with
+different MCS. We start with an acyclic run.
+Example 7 Reconsider M from Example 4. Suppose the user invokes C1 .DMCS(V, ), where
+V = {a, b, c, f, g}, to trigger the evaluation process. Next, C1 forwards in (d) requests to C2
+and C3 , which both call C4 . When called for the first time, C4 calculates in (e) its own belief sets
+and assembles the set of partial belief states
+S4 = {(, , , {f, g}), (, , , {f, g})} .
+554
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+V
+
+c(1) : S1
+C1
+S10 |V
+
+S 2 |V
+
+c(3) : S3
+
+c(2) : S2
+C2
+
+C3
+S 3 |V
+
+Figure 5: A cyclic topology
+After caching S4 |V in (f), C4 returns S4 |V = S4 to one of the contexts C2 , C3 whose request arrived
+first. On second call, C4 simply returns S4 |V to the other context from the cache.
+C2 and C3 next call lsolve (in (e)) two times each, which results in S2 = S resp. S3 = T with
+S, T from Example 6.
+S = { (, {b}, , {f, g}) , (, {b}, , {f, g}) } and
+T = {(, , {c, d, e}, {f, g}), (, , {c, d, e}, {f, g}), (, , {c, d, e}, {f, g})} .
+Thus,
+S2 |V
+
+= { (, {b}, , {f, g}) , (, {b}, , {f, g}) } and
+
+S3 |V
+
+= {(, , {c}, {f, g}), (, , {c}, {f, g}), (, , {c}, {f, g})} .
+
+C1 , after computing in (d)
+S2 |V ./ S3 |V = {(, {b}, {c}, {f, g}), (, {b}, {c}, {f, g}), (, {b}, {c}, {f, g})}
+calls lsolve in (e) thrice to compute the final result:
+S1 |V = {({a}, {b}, {c}, {f, g}), ({a}, {b}, {c}, {f, g}), ({a}, {b}, {c}, {f, g})} .
+The next example illustrates the run of DMCS on a cyclic topology.
+Example 8 Let M = (C1 , C2 , C3 ) be an MCS such that each Li is an ASP logic, and
+ kb 1 = , br 1 = {a  not (2 : b)};
+ kb 2 = , br 2 = {b  (3 : c)}; and
+ kb 3 = , br 3 = {c  d  not (1 : a)}.
+Figure 5 shows the cyclic topology of M . Suppose that the user sends a request to C1 by calling C1 .DMCS(V, ) with V = {a, b, c}. In step (d) of Algorithm 1, C1 calls C2 .DMCS(V, {1}),
+then context C2 issues a call C3 .DMCS(V, {1, 2}), thus C3 invokes C1 .DMCS(V, {1, 2, 3}). At
+this point, the instance of DMCS at C1 detects a cycle in (b) and guesses the partial belief states
+S10 = {({a}, , ), ({a}, , )}
+555
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+for 1  V. Then, following the dotted lines in Figure 5, the set S10 |V = S10 is the return value for
+the request from C3 , which joins it with an initial empty belief state (, , ), gives us T and then
+calls lsolve(T ) for each T  T in (e), resulting in
+S3 = {({a}, , {c, d}), ({a}, , {c, d}), ({a}, , {c, d})} .
+The next step of C3 is to return S3 |V back to C2 , which will proceed as C3 before. The result is
+the set of belief states
+S2 = {({a}, {b}, {c}), ({a}, {b}, {c}), ({a}, {b}, {c})} ,
+which will be sent back to C1 as S2 |V . Notice that belief state ({a}, {b}, {c}) is inconsistent in
+C1 , but will be eventually eliminated once C1 evaluates S2 |V with lsolve.
+Next, C1 will join S2 |V with (, , ), which yields S2 |V , and then use this result to call lsolve.
+The union gives us
+S1 = {({a}, {b}, {c}), ({a}, {b}, {c})} ,
+which is also sent back to the user as final result.
+Given an MCS M = (C1 , . . . , Cn ) and a context Ck , using the recursive import interface of Ck ,
+i.e., V (k), as the relevant interface is a safe (lower) bound for the correctness of Algorithm 1. In
+what follows, let M , Ck , and V (k) as above.
+Theorem 1 (Correctness of DMCS with partial equilibrium) For every V  V (k), it holds that
+S 0  Ck .DMCS(V, ) iff M has some partial equilibrium S w.r.t. Ck such that S 0 = S|V .
+We can compute partial equilibria at Ck if we use VB . This holds because using VB preserves
+all belief sets returned from step (e), as the projection at step (f) takes no effect.
+Corollary 2 S is a partial equilibrium of M w.r.t. Ck iff S  Ck .DMCS(VB , ).
+Under the assumption that M has a single root context C1 , i.e., such that i  IC (1) for all
+2  i  n, DMCS computes equilibria.
+Corollary 3 If an MCS M has a single root context C1 , then S is an equilibrium of M iff S 
+C1 .DMCS(VB , ).
+An analysis of the algorithm yields the following upper bound on the computational complexity
+and communication activity.
+Proposition 4 Let M = (C1 , . . . , Cn ) be an MCS. In each run of DMCS at a context Ck with an
+interface V, it holds that
+(1) the total number of calls to lsolve is exponentially bound by n  |V|, i.e., O(2n|V| ).
+(2) the number of messages exchanged between contexts Ci , where i  IC (k), is bounded by
+2  |E(k)|, where E(k) = {(i, cj ) | i  IC (k), r  bri , (cj : pj )  B(r)}.
+556
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+3.3 Discussion
+Algorithm DMCS naturally proceeds forward in the import direction of context Ck . Thus, starting
+from there, it computes partial equilibria which cover Ck and contexts in its import closure. All
+other contexts will be ignored; in fact, they are unknown to all contexts in the closure. While partial
+equilibria may exist for Ck and its import closure, the whole MCS could have no equilibrium,
+because, e.g., (P1) contexts that access beliefs from Ck or its closure get inconsistent, or (P2) an
+isolated context or subsystem is inconsistent.
+Enhancements of DMCS may deal with such situations: As for (P1), the context neighborhood
+may include both importing and supporting contexts. Intuitively, if Ci imports from Cj , then Ci
+must register to Cj . By carefully adapting DMCS, we can then solve (P1). However, (P2) remains;
+this needs knowledge about the global system topology.
+A suitable assumption is that a manager M exists which every context Ci in the system can
+reach and ask whether some isolated inconsistent context or subsystem exists; if M confirms this,
+Ci s DMCS instance simply returns , eliminating all partial equilibria.
+To improve decentralization and information hiding, we can weaken the manager assumption by
+introducing routers. Instead of asking M, a context Ci queries an assigned router R, which collects
+topology information needed by Ci or looks up a cache. The information exchange between Ci and
+R is flexible, depending on the system setting, and could contain contexts that import information
+from Ci , or isolated and inconsistent contexts.
+A further advantage of topological information is that Ci can recognize cyclic and acyclic
+branches upfront; the invocation order of the neighborhood can then be optimized, by starting with
+all acyclic branches before entering cyclic subsystems. The caching mechanism can be adapted
+for acyclic branches, as intermediate results are complete and the cache is meaningful even across
+different evaluation sessions.
+In our setting, we are safe assuming that V (k)  V. But this is not needed if M resp. Ck s
+import closure has no join-contexts, i.e., contexts having at least two parents. If we have access
+to path information in M at each context, we could calculate V on the fly and adjust it during
+MCS traversal. In particular, for a tree- or ring-shaped M , we can restrict V to the locally shared
+interface between Ck and its import neighbors, i.e., restricting V to the bridge atoms of br k . In
+presence of join-contexts, V must be made big enough, e.g. using path information. Furthermore,
+join-contexts may be eliminated by virtually splitting them, if orthogonal parts of the contexts are
+accessed. This way, scalability to many contexts can be achieved.
+Next, we present optimization techniques using topological information of the system.
+
+4. Topology-Based Optimization Algorithm (DMCSOPT)
+As a basic version, Algorithm DMCS uses no further metadata apart from the minimal information
+that each context must know: its interface with every neighboring context. There are scalability
+issues which can be tracked down to the following problems:
+(1) contexts are unaware of context dependencies in the system beyond their neighbors, and thus
+treat all neighbors equally. Specifically, cyclic dependencies remain undetected until a context,
+seeing the invocation chain, requests models from a context in the chain. Furthermore, a context
+Ci does not know whether a neighbor Cj already requested models from another neighbor Cj 0
+which then would be passed to Ci ; hence, Ci makes possibly a superfluous request to Cj 0 .
+557
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+(2) a context Ci returns its local models combined with the results from all its neighbors. In case of
+multiple models, the result size can become huge as the system size and number of neighbors
+increases. In fact, this is one of the main performance obstacles.
+In this section we address optimizations to increase the scalability of distributed MCS evaluation. Resorting to methods from graph theory, we aim at decomposing, pruning, and improved
+cycle breaking for dependencies in MCSs. Focusing on (1), we describe a decomposition method
+using biconnected components of inter-context dependencies. Based on it we can break cycles and
+prune acyclic parts ahead and create an acyclic query plan. To address (2), we foster a partial view
+of the system, which is often sufficient for a satisfactory answer, as a compromise between partial
+information and performance. We thus define a set of variables for each import dependency in the
+system to project the models in each context to a bare minimum such that they remain meaningful.
+In this manner, we can omit needless information and circumvent excessive model combinations.
+We proceed as follows. After introducing a running example and a superficial explanation of
+optimization on it, we present the details of the techniques in Section 4.2. Section 4.3 introduces
+the notion of query plans, which is used in Section 4.4 to describe the algorithm DMCSOPT that
+intertwines decomposition and pruning with variable projection for performance gains in MCS evaluation.
+4.1 Running Scenario
+We first present a scenario in Example 9 as a running example for this section.
+Example 9 (Scientists Group) A group of four scientists, Alice, Bob, Charlie, and Demi meets
+after a conference closing to arrange travel back home. The options are going by train or by car
+(which is slower); if they use the train, they should bring along some food. Alice as the group
+leader finally decides, based on the information she gets from Bob and Charlie.6
+Alice prefers to go by car, but she would not object if Bob and Charlie want to go by train.
+Charlie has a daughter, Fiona; he does not mind either option, but if Fiona is sick he wants the
+fastest transport to get home. Demi just got married, and her husband, Eddie, wants her to be back
+soon, and even sooner if she would come soon; Demi tries to yield to her husbands plea.
+Charlie is in charge of buying provisions if they go by train. He might choose either salad or
+peanuts; notably, Alice is allergic to nuts. The options for beverages are coke and juice. Bob is
+modest; he agrees to any choice of Charlie and Demi for transport but he dislikes coke. Charlie
+and Demi do not want to bother the others with their personal matters and just communicate their
+preferences, which is sufficient for reaching an agreement.
+
+Example 10 The scenario in Example 9 can be encoded as an MCS M = (C1 , . . . , C6 ), where
+Alice = 1, Bob = 2, etc in lexicographical order and all Li are ASP logics. The knowledge bases kbi
+and bridge rules bri are as follows:
+
+
+
+
+car 1  not train 1 .
+train 1  (2 : train 2 ), (3 : train 3 ).
+C1 : kb 1 =
+and br 1 =
+;
+  nuts 1 .
+nuts 1  (3 : peanuts 3 ).
+6. Similar scenarios have already been investigated in the realm of multi-agent systems (on social answer set programming see, e.g., Buccafurri & Caminiti, 2008). We do not aim at introducing a new semantics for such scenarios; our
+example serves as a plain MCS showcase for the algorithms.
+
+558
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+B1
+
+1
+2
+
+1
+2
+
+3
+4
+
+3
+4
+5
+
+4
+
+B2
+
+6
+
+3
+
+4
+
+B3
+3
+6
+
+5
+(b) Diamond-ring block tree
+
+(a) Diamond-ring
+
+Figure 6: Topologies and decomposition of the scientist group example
+
+C2 : kb 2
+
+C3 : kb 3
+
+C4 : kb 4
+C5 : kb 5
+C6 : kb 6
+
+
+
+ car 2  (3 : car 3 ), (4 : car 4 ). 
+= {  not car 2 , not train 2 .} and br 2 = train 2  (3 : train 3 ), (4 : train 4 ), ;
+
+
+not (3 : coke 3 ).
+
+
+car 3  train 3 . 
+
+
+
+
+
+
+
+
+train 3  urgent 3 .
+urgent 3  (6 : sick 6 ).
+=
+;
+and br 3 =
+salad 3  peanuts 3  train 3 . 
+train 3  (4 : train 4 )
+
+
+
+
+
+coke 3  juice 3  train 3
+
+	
+
+	
+= car 4  train 4  and br 4 = train 4  (5 : sooner 5 ) ;
+
+	
+
+	
+= sooner 5  soon 5 and br 5 = soon 5  (4 : train 4 ) ;
+
+	
+= sick 6  fit 6  and br 6 = .
+
+The context dependencies of M are shown in Fig. 6a. M has three equilibria, namely:
+ ({train 1 }, {train 2 }, {train 3 , urgent 3 , juice 3 , salad 3 }, {train 4 },
+{soon 5 , sooner 5 }, {sick 6 });
+ ({train 1 }, {train 2 }, {train 3 , juice 3 , salad 3 }, {train 4 }, {soon 5 , sooner 5 }, {fit 6 }); and
+ ({car 1 }, {car 2 }, {car 3 }, {car 4 }, , {fit 6 }).
+Example 11 Consider an MCS M = (C1 , . . . , C7 ) with context dependencies as drawn in Figure 7a. When the user queries C1 and just cares about the local belief sets in C1 , then in the
+evaluation process, C4 can discard all local belief sets of C5 and C6 when answering to a call from
+C2 or C3 . However, when C1 calls C2 (or C3 ), the invoked context must carry local belief sets of
+C4 in its answers to C1 . The reason is that belief sets of C4 can cause inconsistent joins at C1 for
+partial belief states returned from C2 and C3 , while those of C5 to C7 contribute only directly to
+computing local belief sets at C4 . Note that belief sets of C4 to C7 play no role in determining the
+applicability of bridge rules in C1 .
+559
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+query
+
+query
+C1
+C2
+
+C1
+C3
+
+C2
+
+C4
+
+C4
+
+,S
+
+C7
+(a) Original Topology
+
+C3
+
+C7
+
+(, , S3 )
+(b) Triangle
+
+C6
+
+)
+
+C2
+
+C5
+
+3
+
+(
+
+,S
+
+2,
+
+,
+
+C6
+
+S3
+
+)
+
+C1
+
+(
+
+C5
+
+C3
+
+(c) Transitive Reduction
+
+Figure 7: Topology of Example 11 (two stacked zig-zag diamonds)
+Now, take a sub-system including C1 , C2 , and C3 , assuming that C1 has bridge rules with atoms
+(2 : p2 ) and (3 : p3 ) in the body, and C2 with atoms (3 : p3 ). That is, C1 depends on both C2 and
+C3 , while C2 depends on C3 (see Fig. 7b). A straightforward approach to evaluate this MCS asks
+at C1 for the belief sets of C2 and C3 . But as C2 also depends on C3 , we would need another query
+from C2 to C3 to evaluate C2 w.r.t. the belief sets of C3 . This shows evident redundancy, as C3 will
+need to compute its belief sets twice. Simple caching strategies could mellow out the second belief
+state building at C3 ; nonetheless, when C1 asks C3 , the context will transmit its belief states back,
+thus consuming network resources.
+Moreover, when C2 asks for the PEs of C3 , it will receive a set of PEs that covers the belief sets
+of C3 and in addition of all contexts in C3 s import closure. This is excessive from C1 s view, as it
+only needs to know about (2 : p2 ) and (3 : p3 ). However, C1 needs the belief states of both C2 and
+C3 in reply of C2 : if C2 only reports its own belief sets (which are consistent w.r.t. C3 ), C1 cant
+align the belief sets received from C2 with those received from C3 . Realizing that C2 also reports
+the belief sets of C3 , no call to C3 must be made.
+4.2 Decomposition of Nonmonotonic MCS
+Based on the observations above, we present an optimization strategy that pursues two orthogonal
+goals: (i) to prune dependencies in an MCS and cut superfluous transmissions, belief state building,
+and joining of belief states; and (ii) to minimize content in transmissions. We start with defining the
+topology of an MCS.
+Definition 8 (Topology) The topology of an MCS M = (C1 , . . . , Cn ) is the directed graph GM =
+(V, E), where V = {C1 , . . . , Cn } resp. V = {1, . . . , n} and (i, j)  E iff some rule in br i has an
+atom (j:p) in the body.
+The first optimization technique is made up of three graph operations. We get a coarse view of the
+topology by splitting it into biconnected components, which form a tree representation of the MCS.
+Then, edge removal techniques yield acyclic structures.
+560
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+In the sequel, we will use standard terminology from graph theory (see Bondy & Murty, 2008);
+graphs are directed by default. We may view undirected graphs as directed graphs that have both
+edges (u, v), (v, u) for an undirected edge {u, v}.
+For any graph G and edges S  E(G), we denote by G\S the maximal subgraph of G having
+no edges from S. Suppose that V 0  V (G) is nonempty. Then the subgraph G0 = (V 0 , E 0 ) of G
+with vertex set V 0 and edge set E = {(u, v)  E(G) | u, v  V (G)} is the subgraph induced by
+V 0 , denoted by G[V 0 ]. The induced subgraph G[V \ V 0 ] is denoted by G\V 0 ; it results from G by
+deleting the vertices in V 0 together with their incident edges. If V 0 = {v}, we write G\v for G\{v}.
+Two vertices u and v of G are said to be connected, if there is a (directed) path from u to v
+in G, i.e., a sequence of vertices u = v1 , v2 , . . . , vn = v, such that (vi , vi+1 )  E(G), for each i =
+1, . . . , n1; the path is trivial if n = 1. For an undirected graph G, connectedness is an equivalence
+relation on V (G). Thus there is a partition of V (G) into nonempty subsets V1 , V2 , . . . , Vw such
+that two vertices u and v of G are connected iff both of them belong to the same set Vi . The
+subgraphs G[V1 ], G[V2 ], . . . , G[Vw ] are called the components of G. If w = 1 (i.e., G has exactly
+one component), then G is connected; otherwise, G is disconnected.
+A directed graph G is strongly connected, if for each vertices u, v  V (G) a path from u to v
+and vice versa exists. The strongly connected components of G are the subgraphs G[V1 ], . . . , G[Vm ]
+in the unique partition of the graph G into pairwise disjoint induced subgraphs (i.e., Vi  Vj = )
+that are strongly connected.
+Furthermore, a directed graph G is weakly connected, if turning all edges into undirected edges
+yields a connected graph. A vertex c of a weakly connected graph G is a cut vertex, if G\c is
+disconnected. A biconnected graph is a weakly connected graph without cut vertices.
+A block in a graph G is a maximal
+biconnected
+subgraph of G. Given a set of blocks B, the
+S
+S
+union of blocks in B is defined as B = BB B, where the union of two graphs G1 = (V1 , E1 )
+and G2 = (V2 , E2 ) is defined as G1  G2 = (V1  V2 , E1  E2 ).
+Let T (G) = (B  C, E) denote the undirected bipartite graph, called block tree of graph G,
+where
+(i) B is the set of blocks of G,
+(ii) C is the set of cut vertices of G,
+(iii) and (B, c)  E with B  B and c  C iff c  V (B).
+Note that T (G) is a forest for any graph G and a rooted tree if G is weakly connected.
+Example 12 Consider the graph in Figure 7a. One can check that 4 is the only cut vertex and there
+are two blocks, viz. the subgraphs induced by {1, 2, 3, 4} and {4, 5, 6, 7}.
+The next example shows the block tree of our scenario in Example 9.
+Example 13 The topology GM of M in Example 10 is shown in Figure 6a. It has two cut vertices,
+namely 3 and 4; thus the block tree T (GM ) (Figure 6b) contains the blocks B1 , B2 , and B3 , which
+are subgraphs of GM induced by {1, 2, 3, 4}, {4, 5}, and {3, 6}, respectively.
+A topological sort of a directed graph is a linear ordering of its vertices such that for every
+directed edge (u, v) from vertex u to vertex v, u comes before v in the ordering.
+561
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+Pruning. In acyclic topologies, like the triangle presented in Figure 7b, we can exploit a minimal
+graph representation to avoid unnecessary calls between contexts, namely, the transitive reduction
+of the graph GM . Recall from Aho, Garey, and Ullman (1972) that a graph G is a transitive
+reduction of the directed graph G whenever the following two conditions are satisfied:
+(i) there is a directed path from vertex u to vertex v in G iff there is a directed path from u to v
+in G, and
+(ii) there is no graph with fewer edges than G satisfying condition (i).
+Note that G is unique if G is acyclic. For instance, the graph in Figure 7c is the unique transitive
+reduction of the one in Figure 7a.
+Ear decomposition Another essential part of our optimization strategy is to break cycles by removing edges. To this end, we use ear decompositions of cyclic graphs. A block may have multiple
+cycles that are not necessarily strongly connected; thus we first decompose blocks into their strongly
+connected components. Using Tarjans algorithm (Tarjan, 1972) for this task, one gets as a byproduct a topological sort on the directed acyclic graph formed by the strongly connected components.
+This yield a sequence of nodes r1 , . . . , rs that are used as entry points to each component. The next
+step is to break cycles.
+An ear decomposition of a strongly connected graph G rooted at a node r is a sequence P =
+hP0 , . . . , Pm i of subgraphs of G such that
+(i) G = P0      Pm ,
+(ii) P0 is a simple cycle (i.e., has no repeated edges or vertices) with r  V (P0 ), and
+(iii) each Pi (i > 0) is a non-trivial path (without cycles) whose endpoint ti is in P0      Pi1 ,
+but the other nodes are not.
+Let cb(G, P ) be the set of edges containing (`0 , r) of P0 and the last edge (`i , ti ) of each Pi , i > 0.
+Here, `0 is the vertex belonging to the edge to the root node r in the simple cycle P0 .
+Example 14 Take, as an example, a strongly connected graph G in Figure 8a. An ear decomposition of G rooted at node 1 is P = hP0 , P1 , P2 , P3 i where
+VP0 = {1, 2, 3}, EP0 = {(1, 2), (2, 3), (3, 1)},
+
+VP1 = {2, 4, 3}, EP1 = {(2, 4), (4, 3)},
+
+VP2 = {2, 5, 3}, EP2 = {(2, 5), (5, 3)},
+
+VP3 = {1, 4}, EP4 = {(1, 4)}.
+
+The last edges of Pi are dashed. They form the set cb(G, P ) = {(3, 1), (4, 3), (5, 3), (1, 4)}.
+Removing these edges results in an acyclic topology as in Figure 8b.
+Intuitively, ear decomposition is used to remove cycles from the original system M . On the
+resulting acyclic topology, algorithms for evaluating MCSs can be designed more conveniently.
+The trade off is that for any edge (`, t) removed from M , context C` , despite being now a leaf
+context, has to guess values for variables from Ct . The following example shows the application of
+the optimization techniques above to our running scenario.
+Example 15 (contd) Block B1 of T (GM ) is acyclic, and the transitive reduction gives B1 with
+edges {(1, 2), (2, 3), (3, 4)}. B2 is cyclic, and hB2 i is the only ear decomposition rooted at 4;
+removing cb(B2 , hB2 i) = {(5, 4)}, we obtain B20 with edges {(4, 5)}. B3 is acyclic and already
+reduced. Fig. 6b shows the final result (dotted edges are removed).
+562
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+1
+
+2
+
+1
+
+3
+
+2
+
+3
+
+4
+
+4
+
+5
+
+5
+
+(a) A strongly connected component
+
+(b) Acyclic topology
+
+Figure 8: Ear decomposition example
+The graph-theoretic concepts introduced here, in particular the transitive reduction of acyclic blocks
+and the ear decomposition of cyclic blocks, are used to implement the first optimization of MCS
+evaluation outlined above. Intuitively, in each block, we apply ear decomposition to get rid of cycles (with the trade-off of guessing), and then use transitive reduction to minimize communication.
+Given the transitive reduction B  of an acyclic block B  B, and a total order on V (B  ) , one
+can evaluate the respective contexts in the reverse order of this total order for computing PEs at
+some context Ck : the first context simply computes its local belief sets whichrepresented as a
+set of partial belief states S0 constitutes an initial set of partial belief states T0 . In each iteration
+step i  1, Ti is computed by joining Ti1 with the local belief sets Si of the considered context Ci .
+Given the final Tk , we have that Tk |V (k) is the set of PEs at Ck (restricted to contexts in V (B  )).
+Refined recursive import. Next, we define the second part of our optimization strategy which
+handles minimization of information needed for transmission between two neighboring contexts
+Ci and Cj . For this purpose, we refine the notion of recursive import interface (Definition 7) in a
+context w.r.t. a particular neighbor and a given (sub-)graph.
+Definition 9 Given an MCS M = (C1 , . . . , Cn ) and a subgraph G of GM , for S
+an edge (i, j) 
+
+
+E(G), the recursive import interface of Ci to Cj w.r.t. G is V (i, j)G = V (i)  `G|j B` where
+G|j contains all nodes in G reachable from j.7
+Example 16 (contd) For the MCS in Example 10, we have V  (1) = {train 2 , train 3 , peanuts 3 ,
+car 3 , coke 3 , car 4 , train 4 , sooner 5 , sick 6 }. When we focus on block B1 , the refined recursive
+import interface V  (1, 2)B  can be obtained by removing bridge atoms from contexts in the other
+1
+blocks B2 and B3 , yielding {train 2 , train 3 , peanuts 3 , car 3 , coke 3 , car 4 , train 4 }.
+Algorithms. Algorithms 3 and 4 combine the optimization techniques outlined above. Intuitively,
+OptimizeTree takes as input a block tree T with parent cut vertex cp and root cut vertex cr . It traverses T in DFS manner and calls OptimizeBlock on every block. The call results are collected in a
+7. Note that V  (k) is defined in Definition 7.
+
+563
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+Algorithm 3: OptimizeTree(T = (B  C, E), cp , cr )
+Input: T : block tree, cp : identifiesSlevel in T , cr : identifies
+level above cp
+S
+Output: F : removed edges from B, v: labels for ( B)\F
+B 0 := , F := , v := 
+if cp = cr then
+B 0 := {B  B | cr  V (B)}
+else
+B 0 := {B  B | (B, cp )  E}
+
+(a)
+
+(b)
+
+// initialize siblings B0 and return values
+
+foreach sibling block B  B 0 do
+// sibling blocks B of parent cp
+E := OptimizeBlock(B, cp )
+// prune block
+0
+C := {c  C | (B, c)  E  c 6= cp }
+// children cut vertices of B
+B 0 := B\E, F := F  E
+foreach edge (i, j) of B 0 doS
+// setup interface of pruned B
+S
+v(i, j) := V (i, j)B 0  cC 0 V (cp )|Bc  (`,t)E V (cp )|Bt
+foreach child cut vertex c  C 0 do
+// accumulate children
+(F 0 , v 0 ) := OptimizeTree(T \B, c, cp )
+F := F  F 0 , v := v  v 0
+return (F, v)
+
+set F of removed edges; after all blocks have been processed, the final result of OptimizeTree is the
+pair (F, v) where v is a labeling for the remaining edges. OptimizeBlock takes a graph G and calls
+CycleBreaker for cyclic G, which decomposes G into its strongly connected components, creates
+an ear decomposition P for each component Gc , and breaks cycles by removing edges cb(Gc , P ).
+For the resulting acyclic subgraph of G, OptimizeBlock computes the transitive reduction G and
+returns all edges that have been removed from G. OptimizeTree continues by computing the labeling v for the remaining edges, building on the recursive import interface, but keeping relevant
+interface beliefs of child cut vertices and removed edges. Example 20 (Appendix B) illustrates
+Algorithms 3 and 4 with a detailed run on the MCS in Example 10.
+Formally, the following property holds.
+Proposition 5 Given an MCS M and a context Ck such that k is a cut vertex in the topology GM ,
+OptimizeTree(T (GM ), k, k) returns a pair (F, v) such that
+(i) the subgraph G of GM \F induced by IC (k) is acyclic, and
+(ii) in any block B of G and for all (i, j)  E(B), it holds that v(i, j)  V (i, j)B .
+Regarding the computational cost of computation, we obtain:
+Proposition 6 Given an MCS M and a context Ck such that k is a cut vertex in the topology GM ,
+OptimizeTree(T (GM ), k, k) runs in polynomial (quadratic) time in the size of T (GM ) resp. GM .
+
+564
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+Algorithm 4: OptimizeBlock(G : graph, r : context id)
+
+(c)
+(d)
+
+F := 
+if G is cyclic then
+F := CycleBreaker(G, r)
+
+// ear decomposition of strongly connected components
+
+Let G be the transitive reduction of G\F
+return E(G) \ E(G )
+
+// removed edges from G
+
+4.3 Query Plan
+Given the topology of an MCS, we need to represent a stripped version of it that contains both
+the minimal dependencies between contexts and interface beliefs that need to be transferred between contexts. This representation will be a query plan that can be used for execution processing.
+Syntactically, query plans have the following form.
+Definition 10 (Query Plan) A query plan of an MCS M w.r.t. context Ck is any labeled subgraph
+ of GM induced by IC (k) with E()  E(GM ), and edge labels v : E(G)  2 .
+For any MCS M and context Ck of M , not every query plan is suitable for evaluating M; however,
+the following query plan is in fact effective.
+Definition 11 (Effective Query Plan) Given an MCS M and a context Ck , the effective query plan
+of M with respect to Ck is k = (V (G), E(G)\F, v) where G is the subgraph of GM induced by
+IC (k) and (F, v) = OptimizeTree(T (GM ), k, k).
+We next use k for MCS evaluation, and tacitly assume that query plans are effective.
+4.4 Evaluation with Query Plans
+We now present the algorithm DMCSOPT, which is based on DMCS but exploits the optimization
+techniques from above. The idea of DMCSOPT is as follows: we start with context Ck and traverse
+a given query plan k by expanding the outgoing edges of k at each context, like in a DFS, until
+a leaf context Ci is reached. The context simply computes its local belief sets, transforms all belief
+sets into partial belief states, and returns the result to its parent. If Ci has (j : p) in bridge rules
+bodies but context Cj is not in the query plan (this means we broke a cycle by removing the last
+edge to Cj ), all possible truth assignments to the import interface to Cj are considered.
+The result of any context Ci is a set of partial belief states, which amounts to the join, i.e., the
+consistent combination, of its local belief sets with the results of its neighbors; the final result is
+obtained from Ck . To keep recomputation and recombination of belief states with local belief sets
+at a minimum, partial belief states are cached in every context.
+Algorithm 5 shows our distributed algorithm, DMCSOPT, with its instance at context Ck . On
+input of the id c of a predecessor context (which the process awaits), it proceeds based on an
+(acyclic) query plan r w.r.t. context Cr , i.e., the starting context of the system. The algorithm
+maintains in cache(k) a cache at Ck (which is kept persistent).
+ Ci .DMCSOPT(c): send id c to DMCSOPT at context Ci and wait for its result.
+ guess(V): guess all possible truth assignments for the interface beliefs V.
+565
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+Algorithm 5: DMCSOPT(c : context id of predecessor) at Ck = (Lk , kb k , br k )
+Data: r : query plan w.r.t. starting context Cr and label v, cache(k): cache
+Output: set of accumulated partial belief states
+(a)
+
+(b)
+(c)
+
+(d)
+
+(e)
+
+if cache(k) is not empty then
+S := cache(k)
+else
+T := {(, . . . , )}
+foreach (k, i)  E(r ) do T := T ./ Ci .DMCSOPT(k)
+
+// neighbor belief sets
+
+if there is i  In(k) s.t. (k, i) 
+/ E(r ) and Ti =  for T  T then
+T := guess(v(c, k)) ./ T
+// guess for removed dependencies in r
+S := 
+foreach T  T do S := S  lsolve(T )
+// get local beliefs w.r.t. T
+cache(k) := S
+if (c, k)  E(r ) (i.e., Ck is non-root) then
+return S|v(c,k)
+else
+return S
+
+ lsolve(S) (Algorithm 2): given a partial belief state S, augment kbk with all heads from
+bridge rules brk applicable w.r.t. S (=: kb0k ), compute local belief sets by ACC(kb0k ), and
+merge them with S; return the resulting set of partial belief states.
+The steps of Algorithm 5 are explained as follows:
+(a)+(b) check the cache, and if it is empty get neighbor contexts from the query plan, request
+partial belief states from all neighbors and join them;
+(c) if there are (i : p) in the bridge rules brk such that (k, i) 
+/ E(r ), and no neighbor delivered
+the belief sets for Ci in step (b) (i.e., Ti = ), we have to call guess on the interface v(c, k)
+and join the result with T (intuitively, this happens when edges have been removed from
+cycles);
+(d) compute local belief states given the partial belief states collected from neighbors; and
+(e) return the locally computed belief states and project them to the variables in v(c, k) for nonroot contexts; this is the point where we mask out parts of the belief states that are not needed
+in contexts lying in a different block of T (GM ).
+Theorem 7 shows that DMCSOPT is sound and complete.
+Theorem 7 Let Ck be a context of an MCS M , let k be the query plan as in Definition 11 and let
+b = {p  v(k, j) | (k, j)  E(k )}. Then,
+V
+(i) for each S 0  Ck .DMCSOPT(k), there exists a partial equilibrium S of M w.r.t. Ck such
+that S 0 = S|Vb ; and
+(ii) for each partial equilibrium S of M w.r.t. Ck , there exists an S 0  Ck .DMCSOPT(k) such
+that S 0 = S|Vb .
+566
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+5. Streaming Equilibria (DMCS-STREAMING)
+Algorithm DMCSOPT shows substantial improvements over DMCS; however, when the sizes of
+the local knowledge bases and the context interfaces increase, it also suffers from bottlenecks.
+This stems from the way in which models are exchanged between contexts. Suppose context C1
+accesses several neighbors C2 , . . . , Cm under an acyclic information flow, and that each Ci , i  n,
+has ni PEs. Before Ci computes in DMCS resp. DMCSOPT any local models, it must join all PEs
+from its neighbors; this may lead to n2  n3      nm many PEs, and each of them is an input
+to the local solver. This may not only take considerable time but also exhaust memory, even before
+local model computation starts.
+Note however that if instead each neighbor would transfer just a portion of its PEs, then the
+computation at C1 can avoid such a memory blowup. Moreover, this strategy also helps to reduce
+inactive running time at C1 while waiting for all neighbors to return all PEs, as C1 can already start
+local computing while the neighbors are producing more models.
+In general, it is indispensable to trade more computation time, due to recomputations, for less
+memory if eventually all partial equilibria at C1 shall be computed. This is the idea underlying a
+streaming evaluation method for distributed MCS. It is particularly useful when a user is interested
+in obtaining just some instead of all answers from the system, but also for other realistic scenarios
+where the current evaluation algorithm does not manage to output under resource constraints in
+practice any equilibrium at all.
+In this section, we turn this idea into a concrete streaming algorithm DMCS-STREAMING for
+computing partial equilibria. Its main features are briefly summarized as follows:
+ the algorithm is fully distributed, i.e., instances of its components run at every context and
+communicate, thus cooperating at the level of peers;
+ when invoked at a context Ci , the algorithm streams (i.e. computes) k  1 partial equilibria
+at Ci at a time; in particular, setting k = 1 allows for consistency checking of the MCS
+(sub-)system.
+ issuing follow-up invocations one may compute the next k partial equilibria at context C1
+until no further equilibria exist; i.e., this evaluation scheme is complete.
+ local buffers can be used for storing and exchanging local models (partial belief states) at
+contexts, avoiding the space explosion problem.
+As this section mainly studies the streaming aspect of the algorithm, we simplify the presentation and omit the interface between contexts. The principles presented here can be applied for
+both DMCS and DMCSOPT by adapting the interface and pruning the topology at preprocessing
+time. Furthermore, we assume to work with acyclic MCSs. Treatment of cyclic cases can be easily
+achieved by adding guessing code to the solving component as in DMCS and DMCSOPT.
+To the best of our knowledge, a similar streaming algorithm has neither been developed for
+the particular case of computing equilibria of a MCS, nor more generally for computing models of
+distributed knowledge bases. Thus, the results obtained here are not only of interest in the setting
+of heterogeneous MCS, but they are also relevant in general for model computation and reasoning
+over distributed (potentially homogeneous) knowledge bases like e.g. distributed SAT instances.
+567
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+request (k1 , k2 )
+
+ k belief states
+
+Handler
+
+Ci
+
+Cj1
+
+Solver
+
+Joiner
+
+..
+.
+
+Output
+
+Cjm
+
+Figure 9: DMCS-STREAMING architecture
+Algorithm 6: Handler(k1 , k2 : package range) at Ci
+Output.k1 := k1 , Output.k2 := k2 ,
+Solver.k2 := k2 , Joiner.k := k2  k1 + 1
+call Solver
+
+5.1 Basic Streaming Procedure
+The basic idea is as follows: each pair of neighboring contexts can communicate in multiple rounds,
+and each request has the effect to receive at most k PEs. Each communication window of k PEs
+ranges from the k1 -th PE to the k2 -th (= k1 + k  1) PE. A parent context Ci requests from a child
+context Cj a pair (k1 , k2 ) and will receive some time later a package of at most k PEs; receiving 
+indicates that Cj has fewer than k1 models. A parallelized version is discussed in Section 5.2.
+Important subroutines of the new algorithm DMCS-STREAMING take care of receiving the
+requests from parents, receiving and joining answers from neighbors, local solving and returning
+results to parents. They are reflected in four components: Handler, Solver, Output, and Joiner
+(only active in non-leaf contexts); see Figure 9 for an architectural overview.
+All components except Handler (shown in Algorithm 6) communicate using message queues:
+Joiner has j queues to store partial equilibria from j neighbors, Solver has one queue to hold joined
+PEs from Joiner, and Output has a queue to carry results from Solver. To bound space usage, each
+queue has a limit on the number of entries. When a queue is full (resp., empty), the enqueuing writer
+(resp., dequeuing reader) is automatically blocked. Furthermore, getting an element also removes
+it from the queue, which makes room for other PEs in the queue later. This property frees us from
+synchronization technicalities.
+Algorithms 7 and 8 show how Solver and Joiner work. They use the following primitives:
+ lsolve(S): works as lsolve in DMCS and DMCSOPT, but in addition may return only one
+answer at a time and may be able to tell whether there are models left. Moreover, we require that
+the results from lsolve are returned in a fixed order, regardless of when it is called. This property is
+the key to guarantee the correctness of our algorithm.
+ get first(`1 , `2 , k): send to each neighbor from c`1 to c`2 a request for the first k partial equilibria, i.e., k1 = 1 and k2 = k; if they all return some models, store them in the respective queues
+and return true; otherwise, return false (some neighbor is inconsistent).
+568
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+Algorithm 7: Solver() at Ci
+Data: Input queue: q, maximal number of models: k2
+
+(a)
+(b)
+
+count := 0
+while count < k2 do
+if Ci is a leaf then S := 
+else call Joiner and pop S from q
+if S =  then count := k2
+
+(c)
+
+while count < k2 do
+pick the next model S ? from lsolve(S)
+if S ? 6=  then
+push S ? to Output.q
+count := count + 1
+else break
+refresh() and push  to Output.q
+
+ get next(`, k): request the next k equilibria from neighbor Cc` ; if Cc` sends back some models, store them in the queue q` and return true; otherwise, return false as the neighbor already
+exhaustively returned its PEs from the previous request. Note that this subroutine needs to keep
+track of which range has been already asked for to what neighbor, by maintaining a set of counters.
+A counter w.r.t. a neighbor Cc` is initialized to 0 and increased each time get next(`, k) is called.
+When its value is t, the request to Cc` asks for the tth package of k models, i.e., models in the range
+given by k1 = (t  1)  k + 1 and k2 = t  k. When get first(`1 , `2 , k) is called, all counters in
+range [`1 , `2 ] are reset to 0.
+ refresh(): reset all counters and flags of Joiner to their starting states, e.g., first join to true,
+all counters to 0.
+The process at each context Ci is triggered when a message from a parent, which contains the
+range (k1 , k2 ) arrives at Handler. The latter notifies Solver to compute up to k2 models and Output
+to collect those in the range (k1 , k2 ) and return them to the parent. Furthermore, it sets the package
+size at Joiner to k = k2  k1 + 1 in case Ci needs to query further neighbors (cf. Algorithm 6).
+When Solver receives a notification from Handler, it first prepares the input for the local solver.
+If Ci is a leaf context, the input S gets the empty set assigned in Step (a); otherwise, Solver triggers
+Joiner (Step (b)) for input from neighbors. Fed with input from them, lsolve is used in Step (c) to
+compute at most k2 results and send them to the output queue.
+The Joiner, which is only activated for intermediate contexts as discussed, gathers partial equilibria from the neighbors in a fixed ordering and stores the joined, consistent input to a local buffer.
+It communicates just one input at a time to Solver upon request. The fixed joining order is guaranteed by always asking the first package of k models from all neighbors at the beginning in Step (d).
+In subsequent rounds, we begin with finding the first neighbor Cc` that can return further models
+(Step (e)), and reset the query to ask for first packs of k models from neighbors from Cc1 to Cc`1 .
+When all neighbors run out of models in Step (f), the joining process ends and sends  to Solver.
+Note that while the above procedure guarantees that no models are missed, it can lead to consider the same combinations (inputs to Solver) multiple times. Using a cache helps to mitigate
+569
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+Algorithm 8: Joiner() at Ci
+Data: Queue q1 , . . . , queue qj for In(i) = {c1 , . . . , cj }, buffer for partial equilibria: buf ,
+flag first join
+while true do
+if buf is not empty then
+pop S from buf , push S to Solver.q
+return
+
+(d)
+
+(e)
+
+(f)
+
+if first join then
+if get first(1, j, k) = false then
+push  to Solver.q
+return
+else first join := false
+else
+` := 1
+while get next(`, k) = false and `  j do ` := ` + 1
+if 1 < `  j then
+get first(1, `  1, k)
+else if ` > j then
+push  to Solver.q
+return
+for S1  q1 , . . . , Sj  qj do add S1 ./    ./ Sj to buf
+C1
+
+C2
+
+C4
+
+C3
+
+C5
+
+C6
+
+C7
+
+Figure 10: Binary tree MCS
+
+recomputation, but as unlimited buffering again quickly exceeds memory limits, recomputation is
+an inevitable part of trading computation time for less memory.
+The Output component simply reads from its queue until it receives  or reaches k2 models
+(cf. Algorithm 9). Upon reading, it throws away the first k1  1 models and only keeps the ones
+from k1 onwards. Eventually, if fewer than k1 models have been returned by Solver, then Output
+will return  to the parent.
+Example 17 Let M = (C1 , . . . , Cn ) be an MCS such that for a given integer m > 0, we have n =
+2m+1  1 contexts, and let ` > 0 be an integer. Let all contexts in M have ASP logics. For i < 2m ,
+570
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+Algorithm 9: Output() at Ci
+Data: Input queue: q, starting model: k1 , end model: k2
+buf :=  and count := 0
+while count < k1 do
+pick an S from Output.q
+if S =  then count := k2 + 1
+else count := count + 1
+while count < k2 + 1 do
+wait for an S from Output.q
+if S =  then count := k2 + 1
+else
+count := count + 1
+add S to buf
+if buf is empty then
+send  to parent
+else
+send content of buf to parent
+
+the context Ci = (Li , kbi , bri ) has
+(
+kbi =
+
+{aji
+
+
+
+aji
+
+ ti | 1  j  `} and bri =
+
+)
+fi
+fi
+ti  (2i : aj2i ),
+fi1j` ,
+ti  (2i + 1 : aj2i+1 ) fi
+
+(2)
+
+and for i  2m , we let Ci have
+kbi = {aji  aji | 1  j  `} and bri =  .
+
+(3)
+
+Intuitively, M is a binary tree-shaped MCS with depth m and `+1 is the size of the alphabet in each
+context. Figure 10 shows such an MCS with n = 7 contexts and depth m = 2; the internal contexts
+have knowledge bases and bridge rules as in (2), while the leaf contexts are as in (3). The directed
+edges show the dependencies of the bridge rules. Such a system M has equilibria S = (S1 , . . . , Sn )
+with Si = {aki , ti }, for 1  k  `.
+To compute one PE of M using DMCS or DMCSOPT, one needs to transfer packages of 2`
+PEs from each context to its parent (as each context Ci computes all subsets of {a1i , . . . , a`i }). Each
+intermediate context receives 2` results from each of its children, whose join leads to 22` inputs for
+lsolve; it invokes lsolve that often and only then returns its 2` models to the parent, which has to
+wait for this.
+On the other hand, DMCS-STREAMING only needs to transfer a single PE between each pair
+of connected contexts, which is a significant saving. Indeed, consider e.g. m = 1, ` = 5, i.e.,
+M = (C1 , C2 , C3 ). Querying C1 with package size k = 1 first causes the query to be forwarded to
+C2 as a pair k1 = k2 = 1. As C2 is a leaf context, it invokes the local solver and eventually gets five
+different models. However, it just returns one PE to C1 , say (, {a12 }, ). Note that t2 is projected
+off as it is not among the atoms of C2 accessed by C1 . The same happens at C3 , which we assume
+571
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+to return (, , {a23 }) to C1 . At the root context C1 , the two PEs from its neighbors are consistently
+combined into (, {a12 }, {a23 }). Feeding this to the local solver, C1 obtains five models, and returns
+one of them, say S = ({a11 , t1 }, {a12 }, {a23 }).
+The following proposition shows the correctness of our algorithm.
+Proposition 8 Let M = (C1 , . . . , Cn ) be an MCS, i  {1, . . . , n} and let k  1 be an integer. On
+input (1, k) to Ci .Handler, Ci .Output returns up to k different partial equilibria with respect to Ci ,
+and in fact k if at least k such partial equilibria exist.
+5.2 Parallelized Streaming
+As one might expect, the strategy of ignoring up to k1 models and then collecting the next k is
+not likely to be the most effective. The reason is that each context uses only one Solver, which in
+general has to serve more than one parent, i.e., requests for different ranges of models of size k.
+When a new parent context requests models, we have to refresh the state of Solver and Joiner and
+redo from scratch. This is unavoidable, unless a context satisfies the specific property that only one
+parent can call it.
+A way to address this problem is parallelization. The idea is to serve each parent with a suite
+of Handler, Joiner, Solver and Output. The basic interaction between units is still as shown in
+Figure 9, with the notable difference that each component now runs in an individual thread. The
+significant change is that Solver does not control Joiner but waits at its queue to get new input
+for the local solving process. The Joiner independently queries the neighbors, combines PEs from
+neighbors, and puts the results into the Solver queue.
+The effect is that we do not waste recomputation time for unused models. However, parallelization has its limits in practice. While DMCSOPT may run out of memory, unlimited parallel
+instances of the streaming algorithm can exceed the number of threads/processes that the operating
+system can support; this happens if contexts can reach others on many alternative paths, like in the
+stacked diamond topology: the number of threads is exponential in the number of connected contexts, which prohibits scaling to large system sizes. However, in real-world applications the number
+of paths might still be ok.
+A compromise between the two extremes is a bounded parallel algorithm. The idea is to create
+a fixed-size pool of multiple threads and components to share among the contexts; when incoming requests cannot be served with the resources available, the algorithm continues with the basic
+streaming procedure. A realization remains for future work.
+
+6. Experimental Evaluation
+We have implemented the algorithms above using C ++ in a system prototype called DMCS, which
+is available online.8 For space reasons, we omit a detailed presentation and refer for it to the work
+of Bairakdar, Dao-Tran, Eiter, Fink, and Krennwallner (2010b), Dao-Tran (2014, ch. 7). Briefly,
+the main components of the global architecture are (i) a command-line frontend dmcs for the user
+to access the system; (ii) demons daemon which represent nodes that contain (a set of) contexts;
+and (iii) a manager dmcsm containing meta-information about the MCS (topology, interfaces) with
+8. http://www.kr.tuwien.ac.at/research/systems/dmcs,
+https://github.com/DistributedMCS/dmcs/
+
+572
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+C1
+
+C2
+
+C1
+
+C3
+
+C2
+
+C3
+C2
+
+C1
+
+C4
+
+C2
+
+C5
+
+C3
+
+C4
+
+C6
+
+C5
+
+C3
+C1
+
+C6
+C4
+
+C4
+
+C5
+
+C6
+
+C7
+
+(a) Binary Tree (T)
+
+C7
+
+C7
+
+(b) Diamond (D)
+
+(c) Zig-Zag (Z)
+
+C4
+
+(d) Ring (R)
+
+Figure 11: Topologies for testing DMCS algorithms
+a helper dmcsgen for generating configurations with optimized components. Contexts are implemented as groups of threads that communicate with each other through concurrent message queues.
+The system has two main command-line tools, viz. for running the algorihms and for test case generation, respectively. It allows to switch between different algorithms and modes by simply changing
+the command-line arguments.
+We now turn to an experimental evaluation of DMCS under various aspects. Next we describe
+how the benchmarks were set up, and then we go into runs and results interpretation.
+6.1 Benchmark Setup
+The idea is to analyze strong and weak points of each algorithm with respect to different parameters,
+namely system topology, system size, local theory (i.e., knowledge base) size, and interface size.
+Specifically, we considered MCSs with topologies as in Figure 11, including:
+Binary Tree (T): Binary trees grow balanced, i.e., every level except the last one is complete.
+With this topology, no edge needs to be removed to form the optimal topology; as every
+intermediate node is a cut-vertex, the import interface in the query plan is drastically reduced,
+leading to an extreme performance improvement.
+(Stack of) Diamond(s) (D): a diamond consists of four nodes connecting as C1 to C4 in Figure 11b. A stack of diamonds combines multiple diamonds in a row, i.e., stacking m diamonds
+in a tower of 3m + 1 contexts. Similar to Binary Tree, no edge is removed in constructing
+the query plan. W.r.t. this topology, every context connecting two diamonds is a cut-vertex.
+As such, the import interface in the query plan is refined after every diamond; this avoids
+significantly repetition of partial PEs in evaluation.
+(Stack of) Zig-Zag Diamond(s) (Z): a zig-zag diamond is a diamond with a connection between
+the two middle contexts, as depicted by contexts C2 to C4 in Figure 11c. A stack of zigzag diamonds is built as above. This topology is interesting as after removing two edges per
+block, the query plan turns into a linear topology.
+Ring (R): ring (Figure 11d). The query plan removes the connection from context Cn to C1 and
+then carries the interface between them all the way back to C1 . This topology requires guess573
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+a1
+
+a2
+
+a3
+
+a4
+
+a5
+
+a6
+
+a7
+
+a8
+
+Figure 12: Local theory structure
+ing and checking in any DMCS algorithm; thus it is quite unpredictable which algorithm
+performs better in general.
+The other quantitative parameters are represented as tuple P = (n, s, b, r), where
+ n is the system size (number of contexts),
+ s is the local theory size (number of ground atoms in a local theory),
+ b is the number of local atoms that can be used as bridge atoms in other contexts, in other
+words, the number of interface atoms, and
+ r is the maximal number of bridge rules. The generator generates a bridge rule while iterating
+from 1 to r with 50% chance; hence on average r/2 bridge rules are generated. We allow
+bridge bodies of size 1 or 2.
+A test configuration is formulated as X/(n, s, b, r) where X  {T, D, Z, R} represents the topology and n, s, b, r are integers representing the quantitative (i.e., size-related) parameters. As we
+would like to run several instances over one configuration, the final formulation of a test instance is
+Xi /(n, s, b, r), where i is the index of the test instance.
+Inside each context, the local theories are structured as follows. Context Ci has s ground atoms
+indicated by ai,1 , . . . , ai,s . Rules are of the form ai,j  not ai,k where k = j + 1, if j is odd;
+otherwise, we randomly choose k to be j  1 or j + 1 with a probability of 50% for each possibility.
+In case if k > s then the rule does not exist. An example of a context with local theory size is 8 can
+be illustrated with the dependency graph as in Figure 12. Here, the bold arrows stand for the fixed
+rules while dashed arrows stands for the rules decided by randomization. The corresponding local
+theory of this figure is:
+
+
+a1  not a2
+a2  not a1
+
+a3  not a4
+a4  not a3
+
+a4  not a5
+a5  not a6
+
+a6  not a7
+a7  not a8
+
+
+.
+
+With this setting, a local context has 2m answer sets, where m  [0, s/2].
+Furthermore, one can obtain deterministic contexts (having just one answer set) by disallowing
+cycles in the structure of local theories.
+6.2 Experiments
+We conducted the experiments on a host system using 4-core Intel(R) Xeon(R) CPU 3.0GHz processor with 16GB RAM, running Ubuntu Linux 12.04.1. Furthermore, we used DLV [build BEN/Sep
+28 2011 gcc 4.3.3] as a back-end ASP solver.
+We ran a comprehensive set of benchmarks under the setup described in Section 6.1. As the
+parameter space P = (n, s, b, r) is huge, we singled out in an initial probing phase the following
+values for the experiments:
+574
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+1000
+
+DMCS
+DMCSOPT
+
+100
+
+10
+
+1
+
+0.1
+
+0.01
+-5
+
+T7,10,5,5
+0
+
+5
+
+D7,10,5,5
+10
+
+Z7,10,5,5
+15
+
+R7,10,5,5
+20
+
+T10,10,5,5
+25
+
+D10,10,5,5
+30
+
+35
+
+Z10,10,5,5
+40
+
+R10,10,5,5
+45
+
+50
+
+Figure 13: DMCS vs. DMCSOPT in non-streaming mode
+ for the system size n, depending on the topology:
+T:
+D:
+
+n  {7, 10, 15, 31, 70, 100}
+n  {4, 7, 10, 13, 25, 31}
+
+Z:
+R:
+
+n  {4, 7, 10, 13, 25, 31, 70}
+n  {4, 7, 10, 13, 70}
+
+ s, b, r are fixed to either 10, 5, 5 or 20, 10, 10, respectively.
+A combination of topology X and parameters P = (n, s, b, r) is denoted by X(n, s, b, r) or X n,s,b,r
+(used in figures). Each parameter setting has been tested on five instances. For each instance,
+we measured the total running time and the total number of returned partial equilibria on DMCS,
+DMCSOPT in non-streaming and streaming mode. For the latter mode, DMCS-STREAMING, we
+asked for k answers, where k  {1, 10, 100}. This parameter also influences the size of packages
+transferred between contexts (at most k partial equilibria are transferred in one message). As in
+streaming mode, asking for more than one PE may require multiple rounds to get all answers, it is
+of interest to see how fast the first answers arrive compared to having all answers. We thus compared
+the running time of these tasks for k = 10 and k = 100.
+6.3 Observations and Interpretations
+Figures 13-17 summarize the results of our experiments. Run times are in seconds and timeout
+is 600 seconds. From these data, several interesting properties can be observed. We organize
+our analysis along the following aspects: (1) comparing DMCS and DMCSOPT, (2) comparing
+streaming and non-streaming mode, (3) effect of the package size, (4) role of the topologies, and
+(5) the behavior of the algorithms on deterministic contexts.
+6.3.1 DMCS VS . DMCSOPT
+Figure 13 shows the running time of DMCS and DMCSOPT for computing all partial equilibria, i.e.,
+in non-streaming mode, of five instances of the respective parameter settings. Clearly DMCSOPT
+outperforms DMCS. This can be explained by the fact that when computing all answers, DMCS
+always produces more partial equilibria than DMCSOPT, as one PE returned by DMCSOPT can
+575
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+100
+
+100
+DMCS-1st
+DMCSOPT-1st
+DMCS-10
+DMCSOPT-10
+
+DMCS-1st
+DMCSOPT-1st
+DMCS-100
+DMCSOPT-100
+
+10
+
+10
+
+1
+
+1
+
+0.1
+
+T1
+
+T2
+
+T3
+
+T4
+
+T5
+
+D1
+
+(a) T (25, 10, 5, 5)
+
+D2
+
+D3
+
+D4
+
+D5
+
+(b) D(10, 10, 5, 5)
+
+1000
+
+100
+DMCS-1st
+DMCSOPT-1st
+DMCS-10
+DMCSOPT-10
+
+DMCS-1st
+DMCSOPT-1st
+DMCS-10
+DMCSOPT-10
+
+100
+
+10
+
+10
+
+1
+
+1
+
+0.1
+
+0.1
+
+Z1
+
+Z2
+
+Z3
+
+Z4
+
+Z5
+
+R1
+
+(c) Z(10, 10, 5, 5)
+
+R2
+
+R3
+
+R4
+
+R5
+
+(d) R(4, 10, 5, 5)
+
+Figure 14: DMCS vs. DMCSOPT in streaming mode
+be obtained from projecting many partial equilibria returned by DMCS on the imported interface.
+Furthermore, all intermediate results are transferred in one message, which makes no difference
+in terms of the number of communications between the algorithms. As such, DMCS must spend
+more time on processing possibly exponentially more input; hence, unsurprisingly, it is consistently
+slower than DMCSOPT.
+However, the observation in streaming mode is different. Figure 14 shows the running time of
+DMCS and DMCSOPT in streaming mode to compute the first 100 respectively 10 unique partial
+equilibria for T (25, 10, 5, 5) respectively D(10, 10, 5, 5), Z(10, 10, 5, 5) and R(4, 10, 5, 5). On a
+first view, as DMCSOPT is consistently slower than DMCS, one might question the correctness of
+the results. However, they are not a surprise: again a PE returned by DMCSOPT should correspond to several PEs returned by DMCS. Hence, the batch of the first k unique answers in DMCS
+corresponds to only a smaller number of (few) unique answers in DMCSOPT.
+Therefore, comparing DMCS and DMCSOPT in streaming mode by measuring the runtime to
+compute the first k answers is not fair. We thus took the time when both algorithms finished the first
+round of answers (denoted by DMCS-1st and DMCSOPT-1st in Figure 14). With this setting, we
+observed the following:
+ on the majority of cases DMCSOPT finishes the first round faster than DMCS, however in
+about 40% of the instances, it is the other way around; this shows the effect of using the query plan;
+576
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+ however, in some cases DMCS wins. This can be explained as follows. First of all, in streaming
+mode, we transfer only packages of k partial equilibria at a time; therefore, the effect of reducing the
+amount of total work to be done does not always apply as in the non-streaming mode. Furthermore,
+at every context, we compute k PEs and project them to the output interface before returning the
+results. According to this strategy, when a context Ci returns k1 partial equilibria in non-streaming
+mode and k2 partial equilibria in streaming to another context Cj , it might happen that k2 is much
+smaller than k1 and hence does not provide enough input for Cj to compute k PEs. Therefore, Cj
+will issue more requests to Ci asking for further packages of k PEs, e.g., [k + 1, 2k], [2k + 1, 3k],
+etc; and this costs DMCSOPT more time to even compute the first batch of PEs at the root context.
+Another approach is to compute always k unique partial equilibria before returning to a parent
+context. However, this strategy risks to compute even all local models before k unique partial
+equilibria can be found.
+Overall, there is not much difference in running time when DMCSOPT is slower than DMCS, except
+for instance R3 (Figure 14d). This however comes from a different reason: the cyclic topology with
+guess-and-check effects, which play a much more important role than choosing between DMCS and
+DMCSOPT (see Section 6.3.4).
+6.3.2 S TREAMING VS . N ON - STREAMING DMCS
+We now compare streaming and non-streaming for the same algorithm (DMCS resp. DMCSOPT).
+Figure 15 shows the results for DMCS in (15a), and the results for DMCSOPT to compute
+the first 10 resp. 100 PEs with small systems/local knowledge bases in (15b) and with large systems/local theories in (15c). Excluding Ring (which behaves abnormally due to guess-and-check)
+one can see that:
+ For DMCS, the streaming mode is definitely worth pursuing since DMCS in non-streaming
+mode times out in many cases (see also Figure 13), while in streaming mode we still could find
+some answers after a reasonable time.
+ For DMCSOPT, the situation is a bit different, as streaming loses against non-streaming on
+small instances. This is due to the recomputation that the streaming mode pays for transferring just
+chunks of partial equilibria between contexts; furthermore, there are duplications between answers.
+When one moves to larger systems and local knowledge bases, the streaming mode starts gaining
+back. However, it does not always win, as recomputation still significantly takes time in some cases.
+Summing up, when the system is small enough, one should try the non-streaming mode as it
+avoids recomputation and duplication of PEs between different rounds of computation. But for large
+systems, streaming can rescue us from timing out. Even if we have to pay for recomputation, it still
+helps in cases when some but not all results are needed, e.g. in brave query answering (membership
+of the query in some PE).
+6.3.3 E FFECTS OF THE PACKAGE S IZE IN S TREAMING M ODE
+The considerations above raise the question of the optimal number of PEs that should be transferred
+in return messages between contexts. We will analyze the experimental results on the streaming
+mode with package sizes 1, 10, and 100 to give some hints on this.
+Figure 16 shows the average time to compute 1 PE of DMCSOPT in streaming mode with
+respect to three package sizes. One can see that transferring just a single PE to get the first answer
+577
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+1000
+
+Non-Streaming
+Streaming-10
+Streaming-100
+
+100
+
+10
+
+1
+
+0.1
+
+0.01
+-5
+
+T10,10,5,5
+
+0
+
+5
+
+D10,10,5,5
+10
+
+15
+
+Z10,10,5,5
+
+20
+
+R4,10,5,5
+25
+
+30
+
+(a) DMCS
+1000
+
+Non-Streaming
+Streaming-10
+Streaming-100
+
+100
+
+10
+
+1
+
+0.1
+
+0.01
+-5
+
+T10,10,5,5
+
+0
+
+5
+
+D10,10,5,5
+10
+
+15
+
+Z10,10,5,5
+
+20
+
+R4,10,5,5
+25
+
+30
+
+(b) DMCSOPT with small systems and local theories
+1000
+
+Non-Streaming
+Streaming-10
+Streaming-100
+
+100
+
+10
+
+1
+
+0.1
+
+0.01
+-5
+
+0
+
+T31,20,10,10
+
+5
+
+D10,20,10,10
+10
+
+15
+
+Z10,20,10,10
+
+20
+
+R4,20,10,10
+25
+
+30
+
+(c) DMCSOPT with large systems and local theories
+
+Figure 15: Non-streaming vs. streaming under DMCS and DMCSOPT
+is acceptable in most cases, in particular if no guessing is needed. Moving from size 1 to a small
+package size like 10 here is sometimes better, as one can save communication time (sending once
+a package of 10 partial equilibria vs. sending ten times a package with a single PE). This setting
+(small package sizes like 10) will be more effective when communication is a big factor, which
+578
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+1000
+
+Streaming-1
+Streaming-10
+Streaming-100
+
+100
+10
+1
+0.1
+0.01
+0.001
+-5
+
+0
+
+T100,20,10,10
+
+5
+
+D25,20,10,10
+
+10
+
+Z70,20,10,10
+15
+
+R4,20,10,10
+20
+
+25
+
+Figure 16: Average time of DMCSOPT to find one partial equilibrium in streaming mode, varying
+package size
+happens in real applications where contexts are located at physically distributed nodes. In such
+cases, computing 10 partial equilibria should be faster than computing 1 PE in 10 consecutive times.
+Furthermore, having package of size 1 is not safe in cases where guessing is applied, e.g., in
+R3 (4, 20, 10, 10). For these cases, a large enough package size might help to cover the correct
+guess; but in general, there is no guarantee for such a coverage. To thoroughly solve this problem,
+one needs to apply conflict learning on the whole MCS evaluation.
+Also, it is interesting to see that with package size 100, DMCSOPT usually times out. The
+reason is that there are many duplications and once DMCSOPT is stuck with a local search branch
+that promises fewer than 100 partial equilibria, the algorithm will lose time here without finding
+new unique answers and will eventually time out.
+To find a good package size p with a specific setting (topology, system size, local theory size),
+one may run the system on a training set and apply binary search on p.
+6.3.4 E FFECT OF T OPOLOGY
+A quick glance over all plots in Figures 1316 reveals the pattern that the algorithms, especially
+the optimizations, perform better on tree than on zigzag and diamond, depending on DMCS or
+DMCSOPT, and worst on ring.
+The system topology plays an important role here. The aspects that affect the performance of
+the algorithms are (i) number of connections, (ii) the structure of block trees and cut vertices, and
+(iii) acyclicity vs. cyclicity.
+Regarding (i), the topology introduces the number of connections based on the system size. Tree
+has fewer connections than Diamond and Zigzag, which reduces not only communication but also
+local solving time as fewer requests are made; and the performance of DMCS on these topologies
+proves this observation. If one follows this argument, then Ring must offer the best performance.
+However, this is actually not the case due to aspect (iii) that we will shortly analyze below.
+Concerning (ii), tree can be ultimately optimized as every intermediate node is a cut vertex.
+Hence, when applying the query plan for DMCSOPT, we can strip off all beliefs in PEs sent from
+child contexts to a parent context. In other words, only local beliefs at a context Ci are needed
+to be transferred back to its parents. This drastically decreases the amount of information to be
+579
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+1000
+DMCS-100
+DMCSOPT-100
+
+100
+
+10
+
+1
+-2
+
+0
+
+R4,10,5,5
+2
+
+4
+
+6
+
+R7,10,5,5
+8
+
+10
+
+12
+
+R4,20,10,10
+14
+
+16
+
+18
+
+Figure 17: DMCS vs. DMCSOPT in streaming mode with package size 100 on ring
+communicated, and more importantly, the number of calls to lsolve. Due to this special property,
+DMCSOPT performs extremely well on the tree topology, and scales to hundreds of contexts.
+Comparing Diamond and Zigzag, they have the same number of cut vertices. However, Zigzag
+is converted to a linear topology with an optimal query plan (cf. Figure 11c), and therefore can be
+processed much faster than Diamond. In Figure 16, DMCSOPT scales on Zigzag to 70 contexts with
+an average time to compute one answer that still better than the one on diamond with 25 contexts.
+Regarding (iii), Ring is a cyclic topology while the other topologies are acyclic. Hence each
+of the algorithms must do some guess-and-check at some context in the topology. Making the
+right guess is most important, even more important than reducing communication and calls to local
+solvers. The result of running DMCS and DMCSOPT on this topology (Figure 17) does not follow
+any pattern; it absolutely depends on a specific instance whether the above sequential guessing
+luckily arrives at the result. Therefore, we frequently see that DMCS outperforms DMCSOPT in
+streaming mode, as in such cases, guessing at the root context (after detecting the cycle) is more
+effective than guessing at the parent of the root context according to the optimal query plan.
+Based on these observations, one can come up with a best strategy to evaluate different types of
+topologies. When dealing with MCSs of arbitrary topologies, it looks natural to decompose them
+into parts of familiar topologies for which efficient strategies are known, and to combine then these
+strategies to an overall evaluation method. Studying this is beyond the scope of this work and an
+interesting issue for future research.
+6.3.5 B EHAVIOR ON D ETERMINISTIC C ONTEXTS
+Above we considered our algorithms on MCSs consisting of possibly non-deterministic contexts,
+i.e., they can have more than one acceptable belief set per knowledge base. It is intriguing to see how
+the algorithms behave if all contexts always have exactly one accepted belief set per knowledge base;
+this might be because the underlying logic is genuinely deterministic and the accepted belief set
+clear (e.g., closure in classical logic) or among multiple candidates a particular belief set is chosen
+(in implementations typically the first or a best solution computed, e.g. in SAT solving or in ASP).
+We observed that:
+ for non-cyclic topologies, there is no performance difference between DMCS and DMCSOPT,
+because the smaller interface used in DMCSOPT does not reduce the number of intermediate PEs
+transferred between contexts, as there is only one partial equilibrium computed at every context.
+580
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+1000
+
+DMCS
+DMCSOPT
+MCS-IE
+
+100
+
+10
+
+1
+
+0.1
+
+0.01
+-5
+
+T7,10,5,5
+0
+
+5
+
+D7,10,5,5
+10
+
+Z7,10,5,5
+15
+
+R7,10,5,5
+20
+
+T10,10,5,5
+25
+
+D10,10,5,5
+30
+
+35
+
+Z10,10,5,5
+40
+
+R10,10,5,5
+45
+
+50
+
+Figure 18: DMCS vs. DMCSOPT in streaming mode with package size 100 on ring
+ for cyclic topology (Ring), guessing plays the main role. Hence it depends on the individual
+instance whether DMCS or DMCSOPT wins, like in the case of non-deterministic contexts (cf.
+Section 6.3.4).
+ non-streaming mode is much faster than streaming (on both DMCS and DMCSOPT); this is
+reasonable as any request for further partial equilibria is redundant.
+6.3.6 C OMPARISON WITH MCS-IE AND P2P-DR
+Systems close to DMCS are MCS-IE (Bogl et al., 2010)9 and P2P-DR (Bikakis, Antoniou, & Hassapis, 2011). The former is a plugin of the dlvhex system and was originally developed to compute
+explanations for inconsistency in Multi-context Systems, but also includes a mode for computing
+equilibria of an MCS. However, MCS-IE was implemented with a centralized approach. Figure 18
+presents the run time of DMCS, DMCSOPT in comparison with MCS-IE in computing all partial equilibria of the respective configurations. It shows that MCS-IE outperforms DMCS since it
+inherits a powerful decomposition technique from dlvhex; however, the decomposition based on
+topological information of DMCSOPT turns out to be more efficient, as it also localizes the interface beliefs to communicate between blocks of contexts, which is specific for MCS and is not
+exploited by the general decomposition technique in dlvhex.
+P2P-DR supports distributed query answering for multi-context systems based on defeasible
+logic; for more details, see Section 7. We present here a comparison between DMCS and P2P-DR.
+We converted our benchmark to P2P-DRs style by converting the local knowledge bases and
+bridge rules to defeasible local and meta rules, and added a fixed trust order between contexts. We
+then queried the root context with an atom appearing in one of the answers of DMCS-STREAMING
+with package size 10. It turned out that P2P-DR always found the answers in around 0.25 seconds,
+regardless of the tested instance. This behavior can be explained as follows. To find answers for a
+query atom, the algorithm of P2P-DR first evaluates the local theory. If it can determine the truth
+value of the query, it terminates; otherwise the algorithm consults neighbors to get further evidence
+for the reasoning. As our local knowledge base structure, when converted to P2P-DRs defeasible
+theories, allows for a local decision, the system works only on the local theory of the root context
+9. http://www.kr.tuwien.ac.at/research/systems/mcsie/tut/
+
+581
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+for every test case, thus results in almost constant execution time. Even when asking neighbours is
+necessary, P2P-DR in general may be much faster than DMCS, as the query answering process is
+inherently deterministic and in a low-complexity logic; in turn, the formalism is less expressive. A
+detailed study of this issue remains for future work.
+6.3.7 S UMMARY
+Summing up, the analysis of the experimental results shows that there is no clear winner among the
+algorithms (DMCS vs. DMCSOPT) under different running modes (streaming vs. non-streaming,
+with different package size) on different topologies. We can distill from it a guideline to choose the
+setup that fits specific instances in practice, including some issues open for further investigation,
+which can be briefly stated as follows:
+ choose DMCSOPT over DMCS in non-streaming mode, except for cyclic topologies;
+ in streaming mode, choose an appropriate package size carefully (e.g., doing a binary search
+on some training instances;
+ decompose random topologies into parts whose topologies have effective strategies to evaluate,
+and study how to combine the strategies for the over all systems.
+
+7. Related Work
+In this section, we resume the discussion of related work. Starting with multi-context systems, we
+provide more details on the work by Roelofsen et al. (2004), Bikakis et al. (2011) and consider other
+work. We then move to related formalisms in SAT, CSP and ASP.
+Roelofsen et al. (2004) described evaluation of monotone MCS with classical theories using
+SAT solvers for the contexts in parallel. They used a (co-inductive) fixpoint strategy to check MCS
+satisfiability, where a centralized process iteratively combines results of the SAT solvers. Apart
+from being not truly distributed, an extension to nonmonotonic MCS is non-obvious; furthermore,
+no caching technique was used.
+Serafini, Borgida, and Tamilin (2005) and Serafini and Tamilin (2005) developed distributed
+tableaux algorithms for reasoning in distributed ontologies, which can be regarded as multi-context
+systems with special bridge rules. The algorithms serve to decide whether such a system is consistent, provided no cyclic context dependencies exist (in technical terms, the distributed TBox is
+acyclic); the DRAGO system (Serafini & Tamilin, 2005) implements this approach for OWL ontologies. Compared to ours, this work is tailored for a specific class of multi-context systems resp.
+knowledge bases, without nonmonotonic negation and cyclic dependencies (which are challenging); furthermore, it targets query answering rather than model building, which in a sense is a dual
+problem.
+More related to our work as regards distributed evaluation is the the system P2P-DR of Bikakis
+et al. (2011). They developed a distributed algorithm for query evaluation in a multi-context system
+framework that is specifically based on (propositional) defeasible logic. In this framework, contexts are built using defeasible rules and can exchange literals via bridge rules, and a trust order
+between contexts is be supplied. Each knowledge base at a context has, in our terminology, a single
+accepted belief set which contains the literals concluded; the global system semantics is given in
+terms of a (unique) three-valued assignment to all literals, which can be determined using the algorithm: whether literal l is provably (not) a logical conclusion of the system, or whether this remains
+582
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+open. Apart from being tailored to a particular logic and preference mechanisms for evaluating interlinked contexts, applying this algorithm to model building is not straightforward; in particular, as
+it produces unique belief sets, dealing with nondeterminism and multiple equilibria is not possible.
+Our work on computing equilibria for distributed multi-context systems is clearly related to
+work on solving constraint satisfaction problems (CSP) and SAT solving in a distributed setting;
+Yokoo and Hirayama (2000) survey some algorithms for distributed CSP solving, which are usually developed for a setting where each node (agent) holds exactly one variable, the constraints
+are binary, communication is done via messages, and every node holds constraints in which it is
+involved. This is also adopted by later works (Gao, Sun, & Zhang, 2007) but can be generalized
+(Yokoo & Hirayama, 2000). In relation to the topology-based optimization techniques in Section 4,
+biconnected components are used by Baget and Tognetti (2001) to decompose CSP problems. The
+decomposition is used to localize the computation of a single solution in the components of undirected constraint graphs. Along the same lines, our approach is based on directed dependencies,
+which allows us to use a query plan for MCS evaluation.
+The predominant solution methods in CSP are backtracking algorithms. Bessiere, Bouyakhf,
+Mechqrane, and Wahbi (2011) took them a step further with backtracking on a dynamic total ordering between agents guided by nogoods. Our approach, however, allows for cyclic dependency
+between contexts. Hirayama and Yokoo (2005) presented a suite of algorithms for solving distributed SAT (DisSAT), based on a random assignment and improvement flips to reduce conflicts.
+However, these algorithms are geared towards finding a single model, and an extension to streaming
+multiple (or all) models is not straightforward; for other works on distributed CSP and SAT, this is
+similar.
+Finally, (distributed) SAT and CSP solving concerns monotonic systems (removal of clauses
+resp. constraints preserves satisfiability), while MCSs evaluation concerns nonmonotonic systems,
+even if all contexts were monotonic (e.g., clause sets); this makes efficient evaluation more difficult,
+as important structural properties of the search space cannot be exploited.
+Adjiman, Chatalic, Goasdoue, Rousset, and Simon (2006) present a framework of peer-to-peer
+inference systems, where local theories of propositional clause sets share atoms and a special algorithm for consequence finding is available. As we pursue the dual problem of model building,
+applying it for our needs is not straightforward; furthermore, we are dealing with non-monotonic
+systems, while the peer-to-peer systems by Adjiman et al. are monotonic.
+Moving to ASP, Pontelli, Son, and Nguyens (2011) ASP-PROLOG shares with MCS the idea
+of integrating several knowledge bases, called modules, possibly under different semantics. However, they restricted module semantics to ASP and Prolog (that is, the least Herbrand model), and
+ASP-PROLOG pursues query answering instead of model building.
+As for streaming, an answer set streaming algorithm for HEX-programs (which generalize ASP
+with external information access) was given by Eiter, Fink, Ianni, Krennwallner, and Schuller
+(2011). Despite some similarities to Algorithm DMCS-STREAMING, it is rather different: monolithic programs are syntactically decomposed into modules and answer sets computed in a modular
+fashion; it is not fully distributed and combines partial models from lower components to input for
+upper components straightforwardly; moreover, it may use exponential space in components.
+583
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+8. Conclusion
+We have considered distributed evaluation of Multi-context Systems (MCSs) that were introduced
+by Brewka and Eiter (2007) as a general formalism to interlink possibly nonmonotonic and heterogeneous knowledge bases. We have presented a suite of generic algorithms to compute the equilibria, i.e., the semantics of an MCS in a fully distributed manner, using local solvers for the knowledge
+bases at the contexts. It contains a basic algorithm DMCS, an advanced version DMCSOPT that
+uses topology-based optimizations, and a streaming variant DMCS-STREAMING for computing
+partial equilibria gradually. We believe that the underlying principles and techniques might be
+exploited in related contexts, and in particular for distributed evaluation of other non-monotonic
+knowledge base formalisms.
+The algorithms have been implemented in a prototype system that is available as open source.8
+On top of this implementation, we have conducted comprehensive experiments to compare the performance of the algorithms and we gave an insight analysis on the results. It points out advantages,
+disadvantages as well as the time/memory trade off between the algorithms in different situations
+depending on parameters such as system topology, local interface and theory size, and number of
+equilibria desired by the user. Based on this, the user can choose the setting (algorithm and mode)
+that fits her need best for finding (partial) equilibria of an MCS. A more extensive treatment is given
+by Dao-Tran (2014).
+Further work and open issues. Several issues remain for further investigation. One is further improvement of the algorithms. Here, the experimental results on the Ring topology strongly suggest
+to incorporate conflict learning, which proved to be valuable in ASP and SAT solving, to DMCS
+and DMCSOPT; we expect that cyclic topologies will benefit from a better guided guessing process. Another issue concerns further semantics and variants of MCSs. As for the former, grounded
+equilibria are considered by Dao-Tran (2014), which are akin to answer sets of logic programs and
+applicable to MCSs that satisfy certain algebraic conditions; they can be characterized like answer
+sets using an (adapted) loop formula approach (Lee & Lifschitz, 2003). Dealing with supported
+equilibria (Tasharrofi & Ternovska, 2014), however, is open.
+Regarding MCS variants, managed MCSs (Brewka et al., 2011) generalize bridge rules to derive
+operations (commands) for a management function that is applied on the knowledge bases; it seems
+possible to generalize our algorithms to this setting, but an efficient realization is not straightforward. Another generalization of MCS concerns dynamic data: in areas like sensor networks, social
+networks, or smart city applications, data may change or even continuously arrive at nodes, which
+motivates reactive and stream processing for MCSs (Goncalves et al., 2014; Brewka et al., 2014).
+Last but not least, allowing contexts to evolve via interation with users or with changes in the environment is a valuable extention. Extending our algorithms to these settings is interesting but
+challenging.
+Finally, extending this work to query answering over MCSs, where the user poses a query at a
+context and receives results derived from (partial) equilibria is another natural issue. As there is no
+need for building whole equilibria, better performance may be achieved.
+
+Acknowledgments
+This research has been supported by the Austrian Science Fund (FWF) projects P20841 and
+P26471.
+584
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+C1000
+
+C1
+
+C2
+
+C2000
+
+C3
+
+C1
+
+C3000
+
+Figure 19: Introducing guess context(s)
+We thank to the reviewers for pointing out corrections and their constructive suggestions which
+helped to improve the presentation of this work, and we thank Antonis Bikakis for providing us with
+the P2P-DR system for the experimental comparison.
+
+Appendix A. Proofs
+Proof of Theorem 1
+To prove this theorem, we first prove the following Lemmas 9 and 10. The latter aims at simplifying
+the proof for the cyclic case, based on the notion of converting cyclic MCSs to acyclic ones.
+Lemma 9 For any context Ck and partial belief state S of an MCS M = (C1 , . . . , Cn ),
+app(brk , S) = app(brk , S|V ) for all VB  V  V (k).
+Proof For any r  app(brk , S), we have that for all (ci : pi )  B + (r) : pi  Sci and for all
+(cj : pj )  B  (r) : pj 
+/ Scj . We need to show that pi  Sci |Vci  pj 
+/ Scj |Vcj . Indeed:
+We have V  VB  Vcj  VBj  Scj |Vcj  Scj . Therefore, pj 
+/ Scj  pj 
+/ Scj |Vcj .
+Now, assume that pi 
+/ Sci |Vci . From the fact that pi  Sci , it follows that pi 
+/ Vci , hence
+
+pi 
+/ V (k). But this is in contradiction with the fact that pi occurs in some bridge rule body.
+Therefore, r  app(brk , S|V ).
+
+The next Lemma 10 is based on the following notions that convert cyclic MCSs to acyclic
+ones and show that they have corresponding equilibria. The intuition (illustrated in Figure 19 and
+Examples 18, 19) is to introduce an additional context Ck to take care of guessing for every cycle
+breaker Ck . Then, the bridge rules of Ck and its parents are modified to point to Ck . We now
+formally realize this idea starting with a function ren that renames part of the bridge rules.
+Definition 12 Let Ck be a context in an MCS M , and let V be an interface for running DMCS. The
+renaming function ren is defined as follows:
+
+ For an atom a: ren(a, k, V) =
+
+ag
+a
+
+if a  Bk  V
+otherwise
+
+
+ For a context index c: ren(c, k, V) =
+
+c
+c
+
+if c  {1, . . . , n}
+otherwise
+
+ For a bridge atom (ci : pi ): ren((ci : pi ), k, V) = (ren(ci , k, V) : ren(pi , k, V))
+
+585
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+ For a bridge body B = {(c1 : p1 ) . . . (cj : pj )}:
+ren(B, k, V) = {ren((ci : pi ), k, V) | (ci : pi )  B}
+ For a bridge rule r = head (r)  B(r):
+ren(r, k, V) = head (r)  ren(B(r), k, V)
+ For a set of bridge rules br : ren(br , k, V) = {ren(r, k, V) | r  br }
+ For a context Ci = (Li , kb i , br i ) in M : ren(Ci , k, V) = (Li , kb i , ren(bri , k, V)).
+Example 18 Let us slightly modify the MCS M = (C1 , C2 , C3 ) from Example 8 as follows:
+ kb 1 = {e  e}, br 1 = {a  (1 : e), not (2 : b)};
+ kb 2 = , br 2 = {b  (3 : c)}; and
+ kb 3 = , br 3 = {c  d  not (1 : a)}.
+Applying function ren to contexts C1 and C3 results in the following bridge rules wrt. an interface V = {a, b, c, e}:
+ ren(br 1 , 1, V) = {a  (1 : eg ), not (2 : b)},
+ ren(br 3 , 1, V) = {c  d  not (1 : ag )}.
+For two contexts Ci and Cj , the former is called a parent of the latter with respect to an interface
+V, denoted by parent(Ci , Cj , V) iff there exists a bridge rule r  br i such that there exists (c : p) 
+B(r) and p  Bj  V.
+A set of contexts {Cc1 , Cc2 , . . . , Cc` } of an MCS M is called a cycle w.r.t. an interface V iff
+^
+parent(Cc` , C1 , V) 
+parent(Cci , Cci+1 , V)
+1i`1
+
+holds. One can pick an arbitrary context in this set to be its cycle-breaker. Given an MCS M , there
+are several ways to choose a (finite) set of its contexts to be cycle-breakers. In Algorithm DMCS,
+Step (d) practically establishes the cycle-breakers based on the order that elements in In(k) are
+iterated. For the next definition, we are interested in this particular set of cycle-breakers.
+Definition 13 Given an MCS M = (C1 , . . . , Cn ), let CB rM = {Cc1 , . . . , Ccj } be the set of cyclebreakers for M based on the application of DMCS on M starting from context Cr . The conversion
+of M to an equal acyclic M ? based on CB rM and an interface V is done as follows:
+
+ren(Ci , i, V) if Ci  CB rM
+0
+0
+Let Ci = (Li , kb i , br i ) =
+Ci
+otherwise
+Let Ci00 = (Li , kb i , br 00i ) = Ck CBM ren(Ci0 , k, V)10
+ 00
+br i  {a  (i : ag ) | a  Bi  V}
+000
+Let Ci000 = (Li , kb i , br 000
+)
+where
+br
+=
+i
+i
+br 00i
+
+if Ci  CB rM
+otherwise
+
+For each Cj  CB rM , introduce Cj = (Lj , kb j , br j ) where br j =  and kb j = {ag  ag | a 
+Bj  V}. Then M ? = (C1000 , . . . , Cn000 , Cc1 , . . . , Ccj ).
+10. The order of composing function ren with different parameters k does not matter here.
+
+586
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+Example 19 (contd) Let M be the MCS from Example 18 and CB rM = {C1 }. Then, the conversion in Definition 13 gives M ? = (C1000 , C2000 , C3000 , C1 ), where:
+g
+ kb 1 = {e  e}, br 000
+1 = {a  (1 : e ), not (2 : b).
+
+a  (1 : ag ).
+
+e  (1 : eg ).};
+
+ kb 2 = , br 000
+2 = {b  (3 : c)};
+g
+ kb 3 = , br 000
+3 = {c  d  not (1 : a )}; and
+
+ kb 1 = {eg  eg .
+
+ag  ag .}, br 1 = .
+
+Lemma 10 Let M be an MCS and M ? be its conversion to an acyclic MCS as in Definition 13.
+Then the equilibria of M and M ? are in 1-1 correspondence.
+Proof (Sketch) Let (R1 ) and (R2 ) be the runs of DMCS on M and M ? , respectively. Due to the
+selection of CB rM to construct M ? , both (R1 ) and (R2 ) have the same order visiting the contexts,
+except that when (R1 ) revisits a cycle-breaker Ck  CB rM , its counterpart (R2 ) visits Ck . At these
+corresponding locations:
+ (R1 ) calls guess(V, Ck ) at Step (c), and
+ (R2 ) calls lsolve({, . . . , }) at Step (e) since Ck is a leaf context.
+The construction of the local knowledge base of Ck gives us exactly the guess on Ck . Furthermore,
+these guesses are passed on to the parent contexts of Ck and then later on unified by the additional
+bridge rules a  (k : ag ) introduced in br 000
+k . Therefore, the belief combinations (Step (d)) done at
+Ck are executed on the same input on both runs (R1 ) and (R2 ). The correspondence of equilibria
+hence follows.
+
+Proof (Theorem 1) Thanks to Lemma 10, we now need to prove Theorem 1 only for the acyclic
+case and automatically get the result for the cyclic case.
+() We start by showing soundness of DMCS. Let S 0  Ck .DMCS(V, ) such that V  V (k). We
+show now that there is a partial equilibrium S of an acyclic M w.r.t. Ck such that S 0 = S|V . We
+proceed by structural induction on the topology of M .
+Base case: Ck is a leaf with In(k) =  and brk =  and k 
+/ hist. This means that (d) is not
+executed, hence, in (e), lsolve runs exactly once on (, . . . , ), and we get as result the set of all belief
+states S = lsolve((, . . . , )) = {(, . . . , , Tk , , . . . , ) | Tk  ACCk (kbk )}. We now show that
+S 0  S|V . Towards a contradiction, assume that there is no partial equilibrium S = (S1 , . . . , Sn ) of
+M w.r.t. Ck such that S 0 = S|V . From In(k) = , we get that IC (k) = {k}, thus the partial belief
+state (, . . . , , Tk , , . . . , )  S (where Tk  ACCk (kbk )) is a partial equilibrium of M w.r.t. Ck .
+Contradiction.
+Induction step: assume context Ck has import neighborhood In(k) = {i1 , . . . , im } and
+S i1 = Ci1 .DMCS(V, hist  {k}),
+..
+.
+S im = Cim .DMCS(V, hist  {k}).
+587
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+Then by the induction hypothesis, for every S 0ij  S ij , there exists a partial equilibrium S ij of M
+w.r.t. Cij such that S ij |V = S 0ij .
+Let S = Ck .DMCS(V, hist). We need to show that for every S 0  S, there is a partial equilibrium of M w.r.t. Ck such that S 0 = S|V . Indeed, since In(k) 6= , Step (d) is executed; let
+T = S i1 ./    ./ S im
+be the result of combining partial belief states from
+Scalling DMCS at Ci1 , . . . , Cim . Furthermore,
+?
+?
+by Step (e), we have that S = S |V where S = {lsolve(S) | S  T }. Eventually, S 0  S|V .
+Since every DMCS at Ci1 , . . . , Cim returns its partial equilibria w.r.t. Cij projected to V, we have
+that every T  T is a partial equilibrium w.r.t. Cij projected to V. M is acyclic and we have visited
+all contexts from In(k), thus by Lemma 9 we get that for every T  T , app(brk , T ) gives us all
+applicable bridge rules r regardless of Tj =  in T , for j 
+/ In(k). Hence, for all T  T , lsolve(T )
+returns only partial belief states, where each component is projected to V except the kth component.
+As every T  T preserves applicability of the rules by Lemma 9, we get that for every S 0  S|V ,
+there exists a partial equilibrium S of M w.r.t. Ck such that S 0 = S|V .
+() We give now a proof for completeness of DMCS by structural induction on the topology of an
+acyclic M . Let S = (S1 , . . . , Sn ) be a partial equilibrium of M w.r.t. Ck and let S 0 = S|V . We
+show now that S 0  Ck .DMCS(V, ).
+Base case: Ck is a leaf context. Then, when executing Ck .DMCS(V, ), Step (d) is ignored and
+Step (e) is called with input (, . . . , ), and lsolve((, . . . , )) gives us all belief sets S of Ck . As S
+is an equilibrium of M w.r.t. Ck , S  S; hence, S 0 = S|V will be returned from Ck .DMCS(V, ).
+Induction case: suppose that the import neighborhood of context Ck is In(k) = {i1 , . . . , im }. Let
+the restriction of S to every context Cij  In(k) be denoted by S ij , where:
+
+S` if `  IC (ij )
+0
+0
+0
+ij
+S = (S1 , . . . , Sn ) where S` =
+
+otherwise
+Informally speaking, this restriction keeps only belief sets of the contexts reachable from Cij and
+sets those of non-reachable contexts to . By the induction hypothesis, S ij |V is computed by
+Cij .DMCS(V, ) for all ij  In(k). We will show that S|V is computed by Ck .DMCS(V, ).
+Indeed, because we are considering an acyclic M , it holds that S ij |V is also returned from a call
+Cij .DMCS(V, {k}), as k plays no role in further calls from Cij to its neighbors. This means that
+after step (d), T contains a T = Si1 ./ . . . ./ Sim where Sij appears at position ij in S.
+Since S is a partial equilibrium of M w.r.t. Ck , we have that Sk  ACCk (kbk  {head (r) |
+r  app(brk , S)}). Furthermore, by choosing V  V (k), Lemma 9 tells us that the applicability of
+bridge rules is preserved under the projection of belief sets to V. This gives us that Sk  lsolve(T )
+in step (e), and hence S 0 = S|V is returned from Ck .DMCS(V, ).
+
+Proof of Proposition 4
+(1) For a context Ck , let the number of calls to its local solver be denoted by c(k). This number is
+calculated during the computation of T in Step (d), and it is bounded by the maximal number of
+combined partial belief sets from its neighbors. Formally speaking:
+c(k)  iIn(k) 2|VBi |  2|In(k)||V|  2n|V| .
+588
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+Hence for the whole MCS, the upper bound of calls to lsolve in a run of DMCS is
+c = 1kn c(k)  n  2n|V|
+(2) For a context Ck of an MCS M = (C1 , . . . , Cn ), the set E(k) contains all dependencies from
+contexts Ci for i  IC (k). We visit all (i, j)  E(k) exactly twice during DFS-traversal of M : once
+when calling Cj .DMCS(V, hist) at Ci , and once when retrieving S|V from Cj in Ci . Furthermore,
+the caching technique in Step (a) prevents recomputation on already visited nodes, thus prevents
+recommunication in the subtree of any visited node. The claim hence follows.
+
+Proof of Proposition 5
+Item (i) is trivial to see since CycleBreaker is applied in Algorithm 4. To prove item (ii), let us look
+at two cases in which an edge (`, t) is removed from the original topology at Step (a) of Algorithm 3:
+ (`, t) is removed by CycleBreaker: this causes that certain nodes in the graph cannot reach t
+via `. However, the interface that Ct provides is already attached to v(i, j) via V  (cp )|Bt .
+ (`, t) is removed by transitive reduction: this does not change the reachability of t from other
+nodes; therefore, the interface that Ct provides is already included in V  (i, j)B 0 .
+
+
+This argument gives us property (ii).
+Proof of Proposition 6
+First, we estimate the complexity to compute v(i, j) in loop (a).
+[
+[
+v(i, j) := V (i, j)B 0 
+V (cp )|Bc 
+V (cp )|Bt
+cC 0
+
+(`,t)E
+
+On the one hand, the refined recursive import V (i, j)0B is defined as (Definition 9):
+V (i, j)0B = {V  (i) 
+
+[
+
+B` }
+
+`B 0 |j
+
+where B 0 |j contains all nodes reachable from j.
+On the other hand, since all sets of possible beliefs in different contexts are disjoint, we have
+that
+[
+cC 0
+
+V (cp )|Bc 
+
+[
+
+V (cp )|Bt = V (cp )|ScC0 Bc S(`,t)E Bt
+
+(`,t)E
+
+S
+Since the recursive import interface for a node k is defined as V (k) = iIC (k) V(i), the
+expression to compute v(i, j) is in the end a combination of set intersection, union, and projection.
+With an implementation of sets using hash set, that is, look up takes O(1), these operators can be
+implemented in linear time. Therefore, v(i, j) can be computed in linear time in the total number of
+beliefs of contexts in the system.
+Given GM , the block tree graph T (GM ) can be constructed in linear time (Vats & Moura,
+2010). Ear-decomposition (Step (c)) can also be done in linear time (Valdes, Tarjan, & Lawler,
+589
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+1982). Transitive reduction (Step (d)) can be computed in quadratic time with respect to the number
+of edges in the block.
+OptimizeTree(T (GM ), k, k) iterates through all blocks. Assume that we have m blocks B1 . . . ,
+Bm , and each Bi contains ni edges, where n = m
+i=1 ni is the total number of edges in the original
+graph. Let ti be the time to process block Bi . Then the bound of the total processing time can be
+assessed as follows:
+m
+m
+m
+X
+X
+X
+2
+t=
+ti 
+ni  (
+ni )2 = n2 .
+i=1
+
+i=1
+
+i=1
+
+Therefore, if we ignore loop (a), OptimizeTree can be done in quadratic time in the size of the
+original input, i.e., the size of GM .
+
+Proof of Theorem 7
+To prove this, we need Proposition 11 to claim that partial equilibria returned from DMCS and
+DMCSOPT are in correspondence. But first, we need the following supportive notion.
+
+Definition 14 Let Ck be a context of an MCS M , and let k be the query plan as in Definition 11.
+For each block B of k , the block interface of B, whose root vertex is cB , is
+VB = {p  v(i, j) | (i, j)  E(B)}  BcB .
+Let Ci be a context in B. The self-recursive import interface of Ci in B is
+[
+V  (i)B = Bi 
+V  (i, `)B .
+(i,`)E(k )
+
+Proposition 11 Let Ck be a context of an MCS M
+S , let k be the query plan as in Definition 11 in
+which Ck belongs to block B of k and let V = Bk VB . Then,
+(i) for each S 0  DMCSOPT(k) called from Cc where (c, k)  E(k ) or c = k, there exists
+a partial equilibrium S  Ck .DMCS(V, ) such that S 0 = S|V  (c,k)B if (c, k)  E(k ) or
+S 0 = S|V  (k)B if c = k;
+(ii) for each S  Ck .DMCS(V, ), there exists some S  DMCSOPT(k) called from Cc such that
+S 0 = S|V  (c,k)B if (c, k)  E(k ) or S 0 = S|V  (k)B if c = k.
+A detailed proof for Proposition 11 is given in the next section, we now give a proof for Theorem 7.
+Proof (Theorem 7) (i) Let S 0  Ck .DMCSOPT(k) be a result from DMCSOPT. By Proposi00
+0
+00
+tion 11 (i) for
+Sc = k, there exists an S  Ck .DMCS(V, ) such that S = S |V  (k)B , where we
+choose V = Bk VB . Note that V (k)  V as V collects all bridge atoms from all blocks, which
+might contain blocks not reachable from k. By Theorem 1, there exists a partial equilibrium S of
+M such that S 00 = S|V . Thus, we have that
+S 0 = (S|V )|V  (k)B
+= S|V  (k)B
+because V  (k)B  V
+b  V  (k)B
+= S|Vb
+because V
+(ii) Let S be a partial equilibrium of MS. By Theorem 1, there exists S 00  Ck .DMCS(V, ) such
+that S 00 = S|V where we choose V = Bk VB . As above, V  (k)  V. By Proposition 11 (ii)
+for c = k, there exists S 0  Ck .DMCSOPT(k) such that S 0 = S 00 |V  (k)B . As above, we have that
+S 0 = S|Vb .
+
+590
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+Proof of Proposition 11
+To support the proof of Proposition 11, we need the following lemmas.
+Lemma 12 Assume context Ck has import neighborhood In(k) = {i1 , . . . , im }, no (k, ij ) is removed from the original topology by OptimizeBlock(B, cB ), and
+S 0i1
+
+= DMCSOPT(k) at Ci1
+..
+.
+
+S i1
+
+= Ci1 .DMCS(VB , )
+..
+.
+
+S 0im
+
+= DMCSOPT(k) at Cim
+
+S im
+
+= Cim .DMCS(VB , )
+
+such that for every partial equilibrium S 0  S 0ij , there exists S  S ij such that S 0 = S|V  (k,ij )B .
+Let T 0 = S 0i1 ./ . . . ./ S 0im and T = S i1 ./ . . . ./ SSim . Then, for each T 0  T 0 , there exists
+2
+V  (k, ij )B .
+T  T such that T 0 = T |Vinput (1,m) with Vinput (`1 , `2 ) = `j=`
+1
+Proof We prove by induction on the number of neighbors in In(k).
+Base case: In(k) = {i}, the claim trivially holds.
+Induction case: In(k) = {i1 , . . . , i` }, U 0 = S 0i1 ./ . . . ./ S 0i`1 , U = S i1 ./ . . . ./ S i`1 , and
+for each U 0  U 0 , there exists U  U such that U 0 = U |Vinput(1,`1) . We need to show that for each
+T 0  U 0 ./ S 0i` , there exists a T  U ./ S i` such that T 0 = T |Vinput (1,`) .
+Assume that the opposite holds, i.e., there exists T = U 0 ./ S 0 where U 0  U 0 and S 0  S 0i` ,
+and for all U  U, S  S i` such that U 0 = U |Vinput (1,`1) and S 0 = S|V  (k,i` )B , we have that
+U ./ S is void.
+This means there exists a context Ct reachable from Ck by two different ways, one via i` and
+the other via one of i1 , . . . , i`1 such that Ut 6= , St 6= , Ut 6= St , and either
+(i) Ut0 =  or St0 = , or
+(ii) Ut0 = St0 6= 
+Case (i) cannot happen because Ct is reachable from Ck , hence Vinput (1, `  1)  Bt 6=  and
+V  (k, i` )  Bt 6= .
+Concerning case (ii), we have that Ut |Vinput (1,`1) = St |V  (k,i` ) 6= , hence there exists a 
+Ut \ Ut |Vinput (1,`1) and a 
+/ St |V  (k,i` ) . This means that Vinput (1, `  1)  Bt 6= V  (k, i` )  Bt .
+
+
+S However, from Definition 9 of recursive import interface, we have that V (k, ix )B = V (k) 
+`B|k B` , where B|ix contains all nodes in B reachable from ix . It follows that V (k, i` ) and
+
+V (k, ij ) for any 1  j  `  1 that reaches t, share the same projection to Bt , hence Vinput (1, ` 
+1)  Bt = V  (k, i` )  Bt .
+We reach a contradiction, and therefore Lemma 12 is proved.
+
+
+Lemma 13 The join operator ./ has the following properties, given arbitrary belief states S, T , U
+with the same size: (i) S ./ S = S (ii) S ./ T = T ./ S (iii) S ./ (T ./ U ) = (S ./ T ) ./ U .
+These properties also hold for sets of belief states.
+Proof The first two properties are trivial to prove. We will prove associativity.
+Let R = S ./ (T ./ U ) and W = (S ./ T ) ./ U . Consider doing the joins from left to right.
+At each position i (1  i  n), Ri and Wi are determined by locally comparing Si , Ti and Ui . If we
+591
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+Si = 
+Y
+Y
+Y
+
+Ti = 
+Y
+Y
+N
+
+Ui = 
+Y
+N
+Y
+
+Y
+
+N
+
+N
+
+N
+
+Y
+
+Y
+
+N
+
+Y
+
+N
+
+N
+
+N
+
+Y
+
+N
+
+N
+
+N
+
+Si = Ti
+Y
+Y
+N
+N
+N
+N
+N
+N
+Y
+N
+Y
+Y
+N
+N
+
+Ti = Ui
+Y
+N
+N
+Y
+N
+Y
+N
+N
+N
+N
+Y
+N
+Y
+N
+
+Ui = Si
+Y
+N
+Y
+N
+N
+N
+Y
+N
+N
+N
+Y
+N
+N
+N
+
+Ri
+
+Ui
+Ti
+Ti
+void
+Si
+Si
+void
+Si
+void
+Si
+void
+void
+void
+
+Wi
+
+Ui
+Ti
+Ti
+void
+Si
+Si
+void
+Si
+void
+Si
+void
+void
+void
+
+Table 1: Possible cases when joining at position i
+
+reach inconsistency, the process terminates and void is returned; otherwise, we conclude the value
+for Ri , Wi and continue to the next position. The final join is returned if position n is processed
+without any inconsistency.
+All possible combination of Si , Ti , and Wi are shown in Table 1. One can see that we always
+have the same outcome for Ri and Wi . Therefore, we have in the end either R = W or both are
+void . This concludes that the join operator ./ is commutative.
+
+Lemma 14 Let Ci and Cj be two contexts in M such that they are in the same block after executing
+OptimizeTree and there is a directed path from Ci to Cj . Suppose that S i = DMCSOPT(k) at Ci
+and S j = DMCSOPT(k) at Cj . Then S i = S i ./ S j .
+
+Proof The use of cache in DMCSOPT does not change the result and can be disregarded, i.e., we
+can assume without loss of generality that cache(k) =  in DMCSOPT. Indeed, cache(k) is filled
+with the result of the computation when it is empty (i.e., when Ck is accessed the first time), and
+is after that never changed and DMCSOPT just returns cache(k), i.e., the value of the computation
+with empty cache(k).
+Under the above assumption, Lemma 14 can be proven by taking any path Ci = Cp1 , . . . , Cph =
+Cj that connects Ci to Cj , and arguing that for each index `  {1, . . . , h}, it holds that S p` = S p` ./
+S j (?). Indeed, we can show this by an induction on the path.
+Base case: ` = h, statement (?) holds as we have S ph ./ S j = S j ./ S j = S j by identity
+(Lemma (13), (i)).
+Induction case: consider ` < h, and suppose we already established by the induction hypothesis
+that S p`+1 = S p`+1 ./ S j .
+592
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+Now by definition of S p` and DMCSOPT, it holds that S p` = lsolve(T )11 and T is, by the
+statements (b) and (c), of the form T = S p`+1 ./ T 0 ; this holds because there is an edge (p` , p`+1 )
+in E, and because ./ is commutative and associative (Lemma (13), (ii) and (iii)). By the induction
+hypothesis, we get
+T = S p`+1 ./ T 0 = (S p`+1 ./ S j ) ./ T 0 = S j ./ (S p`+1 ./ T 0 ),
+that is, T is of the form S j ./ T 00 .
+Next, lsolve(T ) does not change the value of any component of any interpretation I in T that is
+defined in S j ; that is, lsolve(T ) ./ S j = lsolve(T ). This means S p` = lsolve(T ) = lsolve(T ) ./
+S j = S p` ./ S j , which proves statement (?) holds for `.
+Eventually, we get for ` = 1 that S i = S p1 = S p1 ./ S j = S i ./ S j .
+
+Based on Lemma 14, we have the following result.
+Lemma 15 Assume the import neighborhood of context Ck is In(k) = {i1 , . . . , im }, and that
+S ij = DMCSOPT(k) at Cij , 1  j  m. Furthermore, suppose that edge (k, ij ) was removed by
+the optimization process (1  j  m), and that Ci` is a neighbor of Ck such that there exists a path
+from k to ij through i` in the optimized topology. Then S i` = S i` ./ S ij ; in other words, the input
+to DMCSOPT at Ck is not affected by the removal of (k, ij ).
+Proof Since Cij and Ci` are direct children of Ck , it follows that they belong to the same block.
+Therefore, by Lemma 14 we have that S i` = S i` ./ S ij .
+
+Proof (Proposition 11) We proceed by structural induction on the block tree of an MCS M . First,
+we consider the case where the topology of M is a single block B. In this case, the interface passed
+to DMCS is V = VB .
+Base case: Ck is a leaf. Then we now compare a call DMCSOPT(k) at Ck and Ck .DMCS(V, ),
+where V = V  (k)B = Bk . Algorithm 1 returns local belief sets of Ck projected to V and Algorithm 5 returns plain local belief sets, the claim follows as V = V  (k)B = Bk .
+Induction case: Assume the import neighborhood of context Ck is In(k) = {i1 , . . . , im }, and
+S 0i1
+
+= DMCSOPT(k) at Ci1
+..
+.
+
+S i1
+
+= Ci1 .DMCS(VB , )
+..
+.
+
+S 0im
+
+= DMCSOPT(k) at Cim
+
+S im
+
+= Cim .DMCS(VB , )
+
+such that for every partial equilibrium S 0  S 0ij , there exists S  S ij such that S 0 = S|V  (k,ij )B .
+There are two cases. First, no edge (k, ij ) is removed by the optimization procedure. Then, by
+Lemma 12, we have the correspondence between the input to DMCSOPT and DMCS at Ck .
+On the other hand, assume that an edge (k, ij ) was removed by the optimization process. The
+removal can be from either transitive reduction or ear decomposition. In the former case, Lemma 15
+shows that the input to Ck is not affected by the removal of this edge. For the latter case, the removal
+can be one of three possibilities as illustrated in Figure 20, assuming that context C1 gets called:
+(i) (6, 1), the last edge of the simple cycle P0 = {1, 2, 3, 4, 5, 6}
+11. With abuse of notation, we write lsolve(T ) for
+
+S
+
+T T
+
+lsolve(T )
+
+593
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+1
+
+12
+11
+
+10
+
+9
+
+2
+
+6
+
+3
+
+5
+4
+
+8
+
+7
+
+Figure 20: Possible cycle breakings
+(ii) (9, 6), the last edge of path P1 = {5, 7, 8, 9, 6}
+(iii) (12, 2), the last edge of path P2 = {3, 10, 11, 12}
+Cases (i) and (iii) differ from case (ii) in the sense that a cycle will be recognized by DMCS
+while for case (ii), no cycle is detected along the corresponding path.
+Now, consider when (k, ij ) is removed in situations similar to cases (i) and (iii), DMCSOPT
+will issue a guess at Step (c) of Algorithm 5 on v(k, ij ), which includes V  (cB )|Bij = VB  Bij .
+On the other hand, DMCS will recognize the cycle at Cij and issue a guess on VB  Bij at Step (c)
+of Algorithm 1. Therefore, the guess is fed equally to Ck .
+When (k, ij ) is removed in situations similar to case (ii), all guesses of Ck on the interface from
+Cij will be eventually filtered when being combined with the local belief states computed by Cij ,
+at the starting node of the path containing (k, ij ) as the last edge (in the ear decomposition). In
+Figure 20, this is node 5.
+In all cases, we have that whenever there is an input T 0 into lsolve in DMCSOPT(k) called by
+Cc , there is an input T to lsolve in Ck .DMCS(VB , ). Therefore, the claim on the output holds.
+Now that Proposition 11 holds for a single leaf block, one can see that the upper blocks only
+need to import the interface
+S beliefs from the cut vertices (also the root contexts of the lower blocks).
+Under the setting of V = Bk VB , results from DMCSOPT and DMCS projected to the interface
+of the cut vertices are identical. Therefore, the upper blocks receive the same input regarding the
+interfaces of the cut vertices in running both algorithms. And therefore the final results projected to
+V  (k)B are in the end the same.
+
+
+Proof of Proposition 8
+Note that the components Handler and Output simply take care of the communication part of
+DMCS-STREAMING. Output makes sure that the models sent back to the invokers are in correspondence with the request that Handler got. The other routines Joiner and Solver are the main
+components that play the role of Step (b) and (d) in Algorithm 5, respectively.
+594
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+T1,1
+
+T1,1
+T1,1
+
+T1,1
+
+./
+
+T2,1
+
+./
+
+
+
+./
+
+./
+
+T2,1
+
+./
+
+
+
+./
+
+./
+
+T2,1
+
+./
+
+
+
+./
+
+./
+
+T2,1
+
+./
+
+
+
+./
+
+
+T1,1
+
+T1,1
+
+T1,1
+
+./
+
+T2,1
+
+./
+
+
+
+./
+
+./
+
+T2,1
+
+./
+
+
+
+./
+
+./
+
+T2,p2
+
+./
+
+
+
+./
+
+Tm,1
+
+
+
+./
+
+Tm,pm
+
+
+
+./
+
+Tm,1
+
+
+
+./
+
+Tm,pm
+
+
+
+Tm1,pm1
+
+Tm1,pm1
+
+
+./
+
+Tm,1
+
+
+
+./
+
+Tm,pm
+
+
+
+Tm1,1
+
+./
+
+Tm,1
+
+
+
+./
+
+Tm,pm
+
+
+
+./
+
+Tm,1
+
+
+
+
+./
+
+T2,p2
+
+./
+
+
+
+./
+
+
+T1,p1
+
+Tm1,2
+
+Tm1,2
+
+./
+
+
+
+
+T1,1
+
+Tm1,1
+
+Tm1,1
+
+Tm1,pm1
+
+
+./
+
+T2,1
+
+./
+
+
+
+./
+
+
+
+Tm1,p1
+
+
+T1,p1
+
+./
+
+T2,p2
+
+./
+
+
+
+./
+
+Tm1,pm1
+
+./
+
+Tm,pm
+
+T1,1
+
+T1,1
+
+T1,1
+
+T1,1
+
+T1,p1
+
+./
+
+T2,1
+
+./
+
+
+
+./
+
+Tm1,1
+
+
+./
+
+F (m, m)
+
+
+
+./
+
+T2,1
+
+./
+
+
+
+./
+
+./
+
+F (m, m)
+
+
+
+./
+
+T2,p2
+
+./
+
+
+
+./
+
+./
+
+F (m, m)
+
+
+
+./
+
+T2,p2
+
+./
+
+
+
+./
+
+./
+
+F (m, m)
+
+
+
+./
+
+T2,p2
+
+./
+
+
+
+./
+
+Tm1,pm1
+
+Tm1,1
+
+Tm1,pm1
+
+Tm1,pm1
+
+./
+
+F (m, m)
+
+T1,1
+
+T1,1
+
+T1,p1
+
+./
+
+T2,1
+
+./
+
+
+
+./
+
+
+
+./
+
+T2,p2
+
+./
+
+
+
+./
+
+./
+
+T2,p2
+
+./
+
+
+
+./
+
+F (m  1, m)
+
+F (m  1, m)
+
+F (m  1, m)
+
+=
+
+[T1,1 ./ F (2, m)]
+
+
+
+
+
+
+
+[T1,p1 ./ F (2, m)]
+
+=
+
+F (1, m).
+
+=
+
+=
+
+
+
+Table 2: Accumulation of Joiner
+
+To prove the correctness of DMCS-STREAMING, we just need to show that the input to lsolve
+is complete in the sense that if Step (e) of Algorithm 8 is exhaustively executed, the full join of
+partial equilibria from the neighboring contexts is delivered.
+595
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+Formally, assume that the current contexts import neighborhood is {1, 2, . . . , m}. Assume that
+for neighbor Ci where 1  i  m, the full partial equilibria are Ti and the returned packages of size
+k are denoted by Ti,1 , . . . , Ti,pi , that is, Ti = Ti,1  . . .  Ti,pi . For the correctness of the algorithm,
+we assume that Ti,1 , . . . , Ti,pi is a fixed partition of Ti . This is possible when, for example, lsolve
+always returns answers in a fixed order. We need to show that the accumulation of the join by
+Algorithm 8 is actually T1 ./ . . . ./ Tm .
+Indeed, each possible join T1,i1 ./ T2,i2 ./ . . . ./ Tm,im is considered by Joiner, which performs
+a lexicographical traversal of all suitable combinations. Formally speaking, let F (p, q), where q <
+q, denote the join result of neighbors from p to q, that is, F (p, q) = Tp ./ Tp+1 ./
+S .1 . . ./ Tq .
+According to the lexicographical order, we have that the accumulation of Joiner is pj=1
+[T1,j ./
+F (2, m)] = F (1, m) as demonstrated in Table 2.
+This shows that the input to lsolve is complete. Hence, DMCS-STREAMING is correct.
+
+
+Appendix B. Detailed Run of OptimizeTree
+Example 20 We illustrate now the call OptimizeTree(T = (B  C, E), cp , cr ) for the block set B =
+{B1 , B2 , B3 }, B1 = {1, 2, 3, 4}, B2 = {4, 5}, B3 = {3, 6}, C = {1, 3, 4}, E = {(B1 , 1), (B2 , 4),
+(B3 , 3)}, and cp = cr = 1.
+From the local knowledge bases presented in Example 10, we have:
+B1 = {car 1 , train 1 , nuts 1 }
+B2 = {car 2 , train 2 }
+B3 = {car 3 , train 3 , salad 3 , peanuts 3 , coke 3 , juice 3 , urgent 3 }
+
+B4 = {car 4 , train 4 }
+B5 = {soon5 , sooner 5 }
+B6 = {fit 6 , sick 6 }
+
+Since cp = cr , we start with B 0 = {B1 }. We have F = v = .
+Now we call OptimizeBlock(B1 , 1). Since B1 is acyclic, only the transitive reduction is applied.
+We get B1 = ({1, 2, 3, 4}, {(1, 2), (2, 3), (3, 4)}). The subroutine returns E = {(1, 3), (2, 4)}.
+The child cut vertices of B1 are C 0 = {3, 4}; we update F to {(1, 3), (2, 4)}.
+Next, we update the label of all edges (i, j) in B1 . But before this, let us enumerate the recursive
+import interfaces, starting from the import interface, for every node from 1 to 6:
+V(1) = {train 2 , train 3 , peanuts 3 }
+V(2) = {car 3 , coke 3 , train 3 , car 4 , train 4 }
+V  (1)
+V  (2)
+V  (3)
+V  (4)
+V  (5)
+V  (6)
+
+V(3) = {train 4 , sick 6 }
+V(5) = {train 4 }
+
+V(4) = {sooner 5 }
+V(6) = 
+
+{train 2 , train 3 , peanuts 3 , car 3 , coke 3 , car 4 , train 4 , sooner 5 , sick 6 }
+{train 3 , car 3 , coke 3 , train 4 , car 4 , sooner 5 , sick 6 }
+{train 4 , sooner 5 , sick 6 }
+{train 4 , sooner 5 }
+{train 4 , sooner 5 }
+
+S
+Now, let us compute V  (1, 2)B1 = V  (1)  `B1 |2 B` . We have that B1 |2 = {3, 4}, thus
+=
+=
+=
+=
+=
+=
+
+V  (1, 2)B1 = V  (1)  (B3  B4 ) = {train 2 , train 3 , peanuts 3 , car 3 , coke 3 , car 4 , train 4 }
+Similarly, with B1 |3 = B1 |4 = {4}, we have:
+V  (2, 3) = V  (2)  B3 = {car 4 , train 4 }
+V  (3, 4) = V  (3)  B4 = {train 4 }
+596
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+The removed edges and updated labels to be stored respectively in F and v for block B1 can be
+summarized as:
+F = {(1, 3), (2, 4)}
+v(1, 2) =
+
+V  (1, 2)
+
+
+
+V  (1)|B3
+
+
+
+V  (1)|B4
+
+v(2, 3) = V  (2, 3)  V  (1)|B3  V  (1)|B4
+v(3, 4) = V  (3, 4)  V  (1)|B3  V  (1)|B4
+
+
+
+
+train 2 , train 3 , peanuts 3 ,
+=
+car 3 , coke 3 , car 4 , train 4
+= {train 3 , peanuts 3 , car 3 , coke 3 , car 4 , train 4 }
+= {train 3 , peanuts 3 , car 3 , coke 3 , car 4 , train 4 }
+
+Next, we call OptimizeTree(T \ B1 , 3, 1) and OptimizeTree(T \ B1 , 4, 1), which eventually process
+blocks B2 and B3 in the same manner as above. The two calls respectively return:
+F 0 = {(5, 4)}
+v 0 (4, 5) = {sooner 5 }
+
+F 00 = 
+v 00 (3, 6) = {train 4 , sick 6 }
+
+Combining all results together, OptimizeTree(T, 1, 1) returns as the set of removed edges
+F = {(1, 2), (3, 4), (5, 4)}
+and as updated labels v for the remaining edges in the blocks
+v(1, 2)
+v(2, 3)
+v(3, 4)
+v(4, 5)
+v(3, 6)
+
+=
+=
+=
+=
+=
+
+{train 2 , train 3 , peanuts 3 , car 3 , coke 3 , car 4 , train 4 }
+{train 3 , peanuts 3 , car 3 , coke 3 , car 4 , train 4 }
+{train 3 , peanuts 3 , car 3 , coke 3 , car 4 , train 4 }
+{sooner 5 }
+{train 4 , sick 6 }
+
+References
+Adjiman, P., Chatalic, P., Goasdoue, F., Rousset, M.-C., & Simon, L. (2006). Distributed reasoning
+in a peer-to-peer setting: Application to the semantic web. J. Artif. Intell. Res., 25, 269314.
+Aho, A. V., Garey, M. R., & Ullman, J. D. (1972). The Transitive Reduction of a Directed Graph.
+SIAM J. Comput., 1(2), 131137.
+Analyti, A., Antoniou, G., & Damasio, C. V. (2011). MWeb: A principled framework for modular
+web rule bases and its semantics. ACM Trans. Comput. Log., 12(2), 17.
+Baader, F., Calvanese, D., McGuinness, D., Nardi, D., & Patel-Schneider, P. F. (Eds.). (2003). The
+Description Logic Handbook. Cambridge University Press.
+Baget, J.-F., & Tognetti, Y. S. (2001). Backtracking through biconnected components of a constraint
+graph. In Nebel, B. (Ed.), Proceedings of the Seventeenth International Joint Conference on
+Artificial Intelligence, IJCAI 2001, Seattle, Washington, USA, August 4-10, 2001, pp. 291
+296. Morgan Kaufmann.
+Bairakdar, S. E.-D., Dao-Tran, M., Eiter, T., Fink, M., & Krennwallner, T. (2010a). Decomposition
+of distributed nonmonotonic multi-context systems. In Janhunen, T., & Niemela, I. (Eds.),
+Logics in Artificial Intelligence - 12th European Conference, JELIA 2010, Helsinki, Finland,
+September 13-15, 2010. Proceedings, Vol. 6341 of Lecture Notes in Computer Science, pp.
+2437. Springer.
+597
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+Bairakdar, S. E.-D., Dao-Tran, M., Eiter, T., Fink, M., & Krennwallner, T. (2010b). The DMCS
+solver for distributed nonmonotonic multi-context systems. In Janhunen, T., & Niemela, I.
+(Eds.), Logics in Artificial Intelligence - 12th European Conference, JELIA 2010, Helsinki,
+Finland, September 13-15, 2010. Proceedings, Vol. 6341 of Lecture Notes in Computer Science, pp. 352355. Springer.
+Bessiere, C., Bouyakhf, E., Mechqrane, Y., & Wahbi, M. (2011). Agile asynchronous backtracking
+for distributed constraint satisfaction problems. In IEEE 23rd International Conference on
+Tools with Artificial Intelligence, ICTAI 2011, Boca Raton, FL, USA, November 7-9, 2011,
+pp. 777784.
+Bikakis, A., & Antoniou, G. (2010). Defeasible contextual reasoning with arguments in ambient
+intelligence. IEEE Transactions on Knowledge and Data Engineering, 22(11), 14921506.
+Bikakis, A., Antoniou, G., & Hassapis, P. (2011). Strategies for contextual reasoning with conflicts
+in ambient intelligence. Knowl. Inf. Syst., 27(1), 4584.
+Bogl, M., Eiter, T., Fink, M., & Schuller, P. (2010). The MCS-IE system for explaining inconsistency
+in multi-context systems. In Logics in Artificial Intelligence - 12th European Conference,
+JELIA 2010, Helsinki, Finland, September 13-15, 2010. Proceedings, Vol. 6341 of Lecture
+Notes in Computer Science, pp. 356359. Springer.
+Bondy, A., & Murty, U. S. R. (2008). Graph Theory, Vol. 244 of Graduate Texts in Mathematics.
+Springer.
+Brewka, G., Eiter, T., Fink, M., & Weinzierl, A. (2011). Managed multi-context systems. In Walsh,
+T. (Ed.), Proceedings of the 22nd International Joint Conference on Artificial Intelligence
+(IJCAI-11), pp. 786791. AAAI Press/IJCAI.
+Brewka, G., Ellmauthaler, S., & Puhrer, J. (2014). Multi-context systems for reactive reasoning in
+dynamic environments. In Ellmauthaler, S., & Puhrer, J. (Eds.), Proceedings of the International Workshop on Reactive Concepts in Knowledge Representation (ReactKnow) 2014, pp.
+2330. Tech.Rep. 1, Computer Science Institute, Univ. Leipzig, ISSN 1430-3701.
+Brewka, G., & Eiter, T. (2007). Equilibria in heterogeneous nonmonotonic multi-context systems.
+In Proceedings of the Twenty-Second AAAI Conference on Artificial Intelligence, July 22-26,
+2007, Vancouver, British Columbia, Canada, pp. 385390. AAAI Press.
+Brewka, G., Eiter, T., & Fink, M. (2011). Nonmonotonic Multi-Context Systems: A Flexible Approach for Integrating Heterogeneous Knowledge Sources. In Balduccini, M., & Son, T. C.
+(Eds.), Logic Programming, Knowledge Representation, and Nonmonotonic Reasoning - Essays Dedicated to Michael Gelfond on the Occasion of His 65th Birthday, Vol. 6565 of Lecture Notes in Computer Science, pp. 233258. Springer.
+Brewka, G., Roelofsen, F., & Serafini, L. (2007). Contextual default reasoning. In Veloso, M. M.
+(Ed.), IJCAI 2007, Proceedings of the 20th International Joint Conference on Artificial Intelligence, Hyderabad, India, January 6-12, 2007, pp. 268273.
+Buccafurri, F., & Caminiti, G. (2008). Logic programming with social features. Theory and Practice
+of Logic Programming, 8(5-6), 643690.
+Dao-Tran, M. (2014). Distributed Nonmonotonic Multi-Context Systems: Algorithms and Efficient
+Evaluation. Ph.D. thesis, Faculty of Informatics, Vienna University of Technology, Austria.
+598
+
+fiD ISTRIBUTED E VALUATION OF N ONMONOTONIC M ULTI - CONTEXT S YSTEMS
+
+Dao-Tran, M., Eiter, T., Fink, M., & Krennwallner, T. (2010). Distributed nonmonotonic multicontext systems. In Lin, F., Sattler, U., & Truszczynski, M. (Eds.), Principles of Knowledge Representation and Reasoning: Proceedings of the Twelfth International Conference,
+KR 2010, Toronto, Ontario, Canada, May 9-13, 2010. AAAI Press.
+Dao-Tran, M., Eiter, T., Fink, M., & Krennwallner, T. (2011). Model streaming for distributed multicontext systems. In Mileo, A., & Fink, M. (Eds.), 2nd International Workshop on Logicbased Interpretation of Context: Modeling and Applications, Vol. 738 of CEUR Workshop
+Proceedings, pp. 1122.
+Eiter, T., Fink, M., Ianni, G., Krennwallner, T., & Schuller, P. (2011). Pushing efficient evaluation of
+hex programs by modular decomposition. In Delgrande, J. P., & Faber, W. (Eds.), 11th International Conference on Logic Programming and Nonmonotonic Reasoning (LPNMR 2011),
+Vancouver, BC, Canada, May 16-19, 2011, Vol. 6645 of Lecture Notes in Computer Science,
+pp. 93106. Springer.
+Eiter, T., Ianni, G., Schindlauer, R., & Tompits, H. (2005). A uniform integration of higher-order
+reasoning and external evaluations in answer-set programming. In IJCAI, pp. 9096.
+Faltings, B., & Yokoo, M. (2005). Introduction: Special issue on distributed constraint satisfaction.
+Artif. Intell., 161(1-2), 15.
+Fink, M., Ghionna, L., & Weinzierl, A. (2011). Relational information exchange and aggregation
+in multi-context systems. In Delgrande, J. P., & Faber, W. (Eds.), 11th International Conference on Logic Programming and Nonmonotonic Reasoning (LPNMR 2011), Vancouver, BC,
+Canada, 16-19 May, 2011, Vol. 6645 of Lecture Notes in Computer Science, pp. 120133.
+Springer.
+Gao, J., Sun, J., & Zhang, Y. (2007). An improved concurrent search algorithm for distributed CSPs.
+In Australian Conference on Artificial Intelligence, pp. 181190.
+Gelfond, M., & Lifschitz, V. (1991). Classical negation in logic programs and disjunctive databases.
+New Generation Comput., 9(3/4), 365386.
+Ghidini, C., & Giunchiglia, F. (2001).
+Local models semantics, or contextual reasoning=locality+compatibility. Artif. Intell., 127(2), 221259.
+Giunchiglia, F. (1992). Contextual Reasoning. Epistemologia, Special Issue on I Linguaggi e le
+Macchine, 345, 345364.
+Giunchiglia, F., & Serafini, L. (1994). Multilanguage hierarchical logics or: How we can do without
+modal logics. Artif. Intell., 65(1), 2970.
+Goncalves, R., Knorr, M., & Leite, J. (2014). Evolving multi-context systems. In Schaub, T.,
+Friedrich, G., & OSullivan, B. (Eds.), Proceedings of the 21st Eureopean Conference on
+Artificial Intelligence, ECAI2014, Prague, Czech Republic, August 18-23, 2014. IOS Press.
+Hirayama, K., & Yokoo, M. (2005). The distributed breakout algorithms. Artif. Intell., 161(12),
+89115.
+Homola, M. (2010). Semantic Investigations in Distributed Ontologies. Ph.D. thesis, Comenius
+University, Bratislava, Slovakia.
+599
+
+fiDAO -T RAN , E ITER , F INK , & K RENNWALLNER
+
+Lee, J., & Lifschitz, V. (2003). Loop formulas for disjunctive logic programs. In Palamidessi, C.
+(Ed.), Logic Programming, 19th International Conference, ICLP 2003, Mumbai, India, December 9-13, 2003, Proceedings, Lecture Notes in Computer Science, pp. 451465. Springer.
+McCarthy, J. (1993). Notes on formalizing context. In Bajcsy, R. (Ed.), Proceedings of the 13th
+International Joint Conference on Artificial Intelligence. Chambery, France, August 28 September 3, 1993, pp. 555562. Morgan Kaufmann.
+Pontelli, E., Son, T., & Nguyen, N.-H. (2011). Combining answer set programming and prolog: The
+ASP-PROLOG system. In Balduccini, M., & Son, T. (Eds.), Logic Programming, Knowledge
+Representation, and Nonmonotonic Reasoning, Vol. 6565, pp. 452472. Springer Berlin Heidelberg.
+Reiter, R. (1980). A logic for default reasoning. Artificial Intelligence, 13, 81132.
+Roelofsen, F., Serafini, L., & Cimatti, A. (2004). Many hands make light work: Localized satisfiability for multi-context systems. In de Mantaras, R. L., & Saitta, L. (Eds.), Proceedings of
+the 16th Eureopean Conference on Artificial Intelligence, ECAI2004, including Prestigious
+Applicants of Intelligent Systems, PAIS 2004, Valencia, Spain, August 22-27, 2004, pp. 5862.
+IOS Press.
+Serafini, L., Borgida, A., & Tamilin, A. (2005). Aspects of distributed and modular ontology reasoning. In Nineteenth International Joint Conference on Artificial Intelligence (IJCAI 2005),
+pp. 570575. AAAI Press.
+Serafini, L., & Tamilin, A. (2005). Drago: Distributed reasoning architecture for the semantic web.
+In Gomez-Perez, A., & Euzenat, J. (Eds.), The Semantic Web: Research and Applications,
+Second European Semantic Web Conference, ESWC 2005, Heraklion, Crete, Greece, May 29
+- June 1, 2005, Proceedings, Lecture Notes in Computer Science, pp. 361376. Springer.
+Tarjan, R. E. (1972). Depth-First Search and Linear Graph Algorithms. SIAM J. Comput., 1(2),
+146160.
+Tasharrofi, S., & Ternovska, E. (2014). Generalized multi-context systems.. In Baral, C., Giacomo,
+G. D., & Eiter, T. (Eds.), Principles of Knowledge Representation and Reasoning: Proceedings of the Fourteenth International Conference, KR 2014, Vienna, Austria, July 20-24, 2014.
+AAAI Press.
+Valdes, J., Tarjan, R. E., & Lawler, E. L. (1982). The recognition of series parallel digraphs. SIAM
+J. Comput., 11(2), 298313.
+Vats, D., & Moura, J. M. F. (2010). Graphical models as block-tree graphs. CoRR, abs/1007.0563.
+Velikova, M., Novak, P., Huijbrechts, B., Laarhuis, J., Hoeksma, J., & Michels, S. (2014). An
+Integrated Reconfigurable System for Maritime Situational Awareness. In ECAI 2014 - 21st
+European Conference on Artificial Intelligence, 18-22 August 2014, Prague, Czech Republic
+- Including Prestigious Applications of Intelligent Systems (PAIS 2014), pp. 11971202.
+Yokoo, M., & Hirayama, K. (2000). Algorithms for distributed constraint satisfaction: A review.
+Autonomous Agents and Multi-Agent Systems, 3(2), 185207.
+
+600
+
+fi

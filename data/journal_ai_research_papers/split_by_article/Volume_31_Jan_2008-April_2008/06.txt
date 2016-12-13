@@ -1,0 +1,2955 @@
+Journal of Artificial Intelligence Research 31 (2008) 497-542
+
+Submitted 08/07; published 03/08
+
+Exploiting Subgraph Structure in
+Multi-Robot Path Planning
+Malcolm R. K. Ryan
+
+malcolmr@cse.unsw.edu.au
+
+ARC Centre of Excellence for Autonomous Systems
+University of New South Wales, Australia
+
+Abstract
+Multi-robot path planning is difficult due to the combinatorial explosion of the search
+space with every new robot added. Complete search of the combined state-space soon
+becomes intractable. In this paper we present a novel form of abstraction that allows
+us to plan much more efficiently. The key to this abstraction is the partitioning of the
+map into subgraphs of known structure with entry and exit restrictions which we can
+represent compactly. Planning then becomes a search in the much smaller space of subgraph
+configurations. Once an abstract plan is found, it can be quickly resolved into a correct
+(but possibly sub-optimal) concrete plan without the need for further search. We prove
+that this technique is sound and complete and demonstrate its practical effectiveness on a
+real map.
+A contending solution, prioritised planning, is also evaluated and shown to have similar
+performance albeit at the cost of completeness. The two approaches are not necessarily
+conflicting; we demonstrate how they can be combined into a single algorithm which outperforms either approach alone.
+
+1. Introduction
+There are many scenarios which require large groups of robots to navigate around a shared
+environment. Examples include: delivery robots in an office (Hada & Takase, 2001), a
+warehouse (Everett, Gage, Gilbreth, Laird, & Smurlo, 1994), a shipping yard (Alami, Fleury,
+Herrb, Ingrand, & Robert, 1998), or a mine (Alarie & Gamache, 2002); or even virtual
+armies in a computer wargame (Buro & Furtak, 2004). In each case we have many robots
+with independent goals which must traverse a shared environment without colliding with
+one another. When planning a path for just a single robot we can usually consider the
+rest of the world to be static, so that the world can be represented by a graph called a
+road-map. The path-planning problem then amounts to finding a path in the road-map, for
+which reasonably efficient algorithms exist. However, in a multi-robot scenario the world is
+not static. We must not only avoid collisions with obstacles, but also with other robots.
+Centralised methods (Barraquand & Latombe, 1991), which treat the robots as a single composite entity, scale poorly as the number of robots increases. Decoupled methods
+(LaValle & Hutchinson, 1998; Erdmann & Lozano-Perez, 1986), which first plan for each
+robot independently then resolve conflicts afterwards, prove to be much faster but are incomplete because many problems require robots to deliberately detour from their optimal
+path in order to let another robot pass. Even if a priority ordering is used (van den Berg
+& Overmars, 2005), requiring low priority robots to plan to avoid high-priority robots,
+problems can be found which cannot be solved with any priority ordering.
+
+c
+2008
+AI Access Foundation. All rights reserved.
+
+fiRyan
+
+In realistic maps there are common structures such as roads, corridors and open spaces
+which produce particular topological features in the map which constrain the possible interactions of robots. In a long narrow corridor, for instance, it may be impossible for one robot
+to overtake another and so robots must enter and exit in a first-in/first-out order. On the
+other hand, a large open space may permit many robots to pass through it simultaneously
+without collision.
+We can characterise these features as particular kinds of subgraphs occurring in the
+road-map. If we can decompose a map into a collection of such simple subgraphs, then we
+can build plans hierarchically, first planning the movements from one subgraph to another,
+then using special-purpose planners to build paths within each subgraph.
+In this paper we propose such an abstraction. We limit ourselves to considering an
+homogeneous group of robots navigating using a shared road-map. We identify particular
+kinds of subgraphs in this road-map which place known constraints on the ordering of robots
+that pass through them. We use these constraints to make efficient planning algorithms for
+traversing each kind of subgraph, and we combine these local planners into a hierarchical
+planner for solving arbitrary problems.
+This abstraction can be used to implement both centralised and prioritised planners,
+and we demonstrate both in this paper. Unlike most heuristic abstractions, this method is
+sound and complete. That is, when used with a centralised search it is guaranteed to find a
+correct plan if and only if one exists. This guarantee cannot be made when prioritised search
+is used, however the two-stage planning process means that a prioritised planner with the
+abstraction can often find plans that would not be available to it otherwise. Experimental
+investigation shows that this approach is most effective in maps with only sparsely connected
+graph representations.
+
+2. Problem Formulation
+We assume for this work that we are provided with a road-map in the form of a graph
+G = (V, E) representing the connectivity of free space for a single robot moving around the
+world (e.g. a vertical cell decomposition or a visibility graph, LaValle, 2006). We also have
+a set of robots R = {r1 , . . . , rk } which we shall consider to be homogeneous, so a single map
+suffices for them all. We shall assume all starting locations and goals lie on this road-map.
+Further, we shall assume that the map is constructed so that collisions only occur when
+one robot is entering a vertex v at the same time as another robot is occupying, entering or
+leaving this vertex. Robots occupying other vertices in the map do not affect this movement.
+With appropriate levels of underlying control these assumptions can be satisfied for most
+real-world problems.
+A simple centralised approach to computing a plan proceeds as follows: First, initialise
+every robot at its starting position, then select a robot and move it to a neighbouring vertex,
+checking first that no other robot is currently occupying that vertex. Continue in this fashion, selecting and moving one of the robots at each step until each is at its goal. Pseudocode
+for this process is shown in Algorithm 1. The code is presented as a non-deterministic algorithm, with choice points indicated by the choose operator, and backtracking required
+when the fail command is encountered. In practice, a search algorithm such as depth-first,
+breadth-first or A* search is necessary to evaluate all the alternative paths it presents.
+
+498
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+Algorithm 1 A simple centralised planning algorithm.
+1: function Plan(G, a, b)
+2:
+if a = b then
+3:
+return hi
+4:
+end if
+5:
+choose r  R
+6:
+select vf : a[vf ] = r
+7:
+choose vt  {v | (vf , v)  G}
+8:
+if a[vt ] 6= 2 then
+9:
+fail
+10:
+else
+11:
+a[vf ]  2
+12:
+a[vt ]  r
+13:
+return (r, vf , vt ).Plan(G, a, b)
+14:
+end if
+15: end function
+
+. Build a plan from a to b in graph G.
+. Nothing to do.
+. Choose a robot.
+. Find its location.
+. Choose an edge.
+. The destination is occupied; backtrack.
+. Move the robot from vf to vt .
+. Recurse.
+
+This algorithm does a complete search of the composite space Gk = G  G      G,
+for k = |R| robots. After eliminating vertices which represent collisions between robots, the
+size of the composite graph is given by:
+fi
+fi
+fi
+fi
+fiV (Gk )fi = n Pk
+=
+
+n!
+(n  k)!
+
+fi
+fi
+fi
+k fi
+fiE(G )fi = k |E(G)| (n2) P(k1)
+= k |E(G)|
+
+(n  2)!
+(n  k  1)!
+
+where n = |V (G)| and k = |R|. The running time of this algorithm will depend on the
+search algorithm used, but it can be expected to be very long for moderately large values
+of n and k.
+
+3. Subgraph Abstraction
+Consider the problem shown in Figure 1. This road-map contains 18 vertices and 17 edges,
+and there are 3 robots to plan for. So, according to the above formulae, the composite
+graph has 18!/15! = 4896 vertices and 3  17  16!/14! = 12240 edges. A small map has
+expanded into a large search problem. But to a human mind it is obvious that a lot of these
+arrangements are equivalent. What is important is not the exact positions of the robots,
+but their ordering.
+Consider the subgraph labeled X. We recognise this subgraph as a stack. That is, robots
+can only move in and out of this subgraph in a last-in-first-out (LIFO) order. Robots inside
+the stack cannot change their order without exiting and re-entering the stack. So if our
+goal is to reverse the order of robots in X, we know immediately that this cannot be done
+without moving all the robots out of the stack and then have them re-enter in the opposite
+order. Once the robots are in the right order, rearranging them into the right positions is
+499
+
+fiRyan
+
+y1
+
+x1
+
+x2
+a
+
+x3
+
+x4
+
+x5
+
+y2
+
+y3
+
+y4
+
+y5
+
+y6
+
+Y
+
+z2
+
+z3
+
+z4
+
+z5
+
+z6
+
+Z
+
+x6
+
+c
+
+b
+
+X
+
+z1
+
+Figure 1: A planning problem illustrating the use of subgraphs.
+trivial. Thus we can make a distinction between the arrangement of the robots (in which
+we specify exactly which vertex each robot occupies) and the configuration of the stack (in
+which we are only interested in their order).
+Now X has 6 vertices, so when there are m robots in the stack, there are 6 Pm =
+6!/(6  m)! possible arrangements. So the total number of arrangements is:
+6
+
+P3 + 3  6 P2 + 3  6 P1 + 6 P0 = 120 + 3  30 + 3  6 + 1
+= 229
+
+In terms of deciding whether a robot can leave the stack, however, all we need to know is
+their order. So we need only represent 3! + 3  2! + 3  1! + 1 = 16 different configurations
+of the stack.
+Subgraphs Y and Z are also stacks. Applying this analysis to all three, we find that
+we can represent the abstract state space with only 60 different states, and 144 possible
+transitions between states (moving the top-most robot off one stack onto another). This is
+dramatically smaller than the composite map space above.
+A stack is a very simple kind of subgraph and we will need a larger collection of canonical
+subgraphs to represent realistic problems. The key features we are looking for are as follows:
+1. Computing transitions to and from the subgraph does not require knowledge of the exact arrangement of robots within the subgraph, only some more abstract configuration
+(in this case, their order).
+2. If two arrangements of robots share the same configuration, then transforming one
+into the other can be done easily without search,
+3. Therefore planning need only be done in the configuration space, which is significantly
+smaller.
+Later we will introduce three more subgraph types  cliques, halls and rings  which also
+share these properties and which are readily found in realistic planning problems. But first
+we need to formalise the ideas of subgraph planning.
+
+500
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+4. Definitions
+In this section we outline the concepts we will use later in the paper. A complete formal
+definition of these terms is provided in the Appendix, along with a proof of soundness and
+completeness of the subgraph planning process.
+Given a map represented by a graph G we partition it into a set of disjoint subgraphs
+S1 , . . . , Sm . These subgraphs are induced, i.e. an edge exists between two vertices in a
+subgraph if and only if it also exists in G.
+An arrangement a of robots in G is a 1-to-1 partial function a : V (G)  R, which
+represents the locations of robots within G. If robot r is in vertex v, we write a(v) = r.
+We can also speak of the arrangement of robots within a subgraph S. We will denote
+arrangements by the lowercase roman letters a, b
+A configuration of a subgraph S is a set of equivalent arrangements of robots within S.
+Two arrangements are equivalent if there exists a plan to move robots from one to the other
+without any robots leaving the subgraph. We will denote a configuration of subgraph Sx
+by cx . The configuration of the whole map can then be represented as a tuple of subgraph
+configurations  = (c1 , . . . , cm ).
+There are two operators  and 	 which operate on configurations, representing a robot
+entering and leaving the subgraph respectively. When a robot r moves between two subgraphs Sx and Sy their configurations change depending on the identity of the edge (u, v)
+on which the robot traveled. We write:
+c0x  cx 	 (r, u),
+c0y  cy  (r, v)
+In complex subgraphs it is possible for such a transition to result in several possible configurations, so the operators  and 	 return sets. It is also possible that a transition is
+impossible from a particular configuration, in which case the operation returns the empty
+set.
+An abstract plan  can now be defined as a sequence of transitions  with intermediate
+configurations . For every abstract plan between two arrangements there exists at least one
+corresponding concrete plan, and vice versa. All the subgraph transitions in the concrete
+plan must also exist in the abstract plan. The equivalence of arrangements in a configuration
+then guarantees the existence of the intermediate steps. See the Appendix for a complete
+proof.
+
+5. Subgraph Planning
+We can now construct a planning algorithm which searches the space of abstract plans (Algorithm 2). The procedure is much the same as before. First we compute the configuration
+tuple for the initial arrangement. Then we extend the plan one step at a time. Each step
+consists of selecting a robot r and moving it from the subgraph it currently occupies Sx to
+a neighbouring subgraph Sy in the reduced graph X, along a connecting edge (u, v).
+This transition is only possible if the plan-step (s, (u, v)) is applicable. If it is, it may
+result in a number of different configurations in the subgraph entered. We need to choose
+one to create the configuration tuple for the next step. Both the applicability test and the
+selection of the subsequent configurations are performed in lines 10-11 of AbstractPlan.
+501
+
+fiRyan
+
+The abstract plan is extended step by step in this fashion until it reaches a configuration
+tuple which matches the goal arrangement. The resulting abstract plan is then resolved into
+a concrete plan. For each transition in the abstract plan we build two short concrete plans
+ one to move the robot to the outgoing vertex of the transition, and one to make sure the
+incoming vertex is clear and the subgraph is appropriately arranged to create the subsequent
+configuration. Since these two plans are on separate subgraphs, they can be combined in
+parallel. The final step is to rearrange the robots into the goal arrangement. Again, this
+can be done in parallel on each of the subgraphs.
+AbstractPlan has been written as a non-deterministic program, including choicepoints. A search algorithm such as breadth-first or depth-first search is needed to examine
+each possible set of choices in some ordered fashion. If this search is complete then an
+abstract plan is guaranteed to be found, if one exists and so by the theorem above this
+planning algorithm is both sound and complete. Note that the resolution phase of the
+planner is entirely deterministic, so no further search is needed once an abstract plan is
+found.
+5.1 Subgraph Methods
+The efficiency of this algorithm relies on being able to compute several functions without a
+lot of search:
+ Exit To compute c 	 (r, u), testing if it is possible for a robot to exit the subgraph
+and determining the resulting configuration(s).
+ Enter To compute c  (r, v), testing if it is possible for a robot to enter the subgraph
+and determining the resulting configuration(s).
+ Terminate To compute b/S  c, testing if it is possible for the robots in the subgraph
+to move to their terminating positions.
+ ResolveExit To build a plan rearranging robots in a subgraph to allow one to exit.
+ ResolveEnter To build a plan rearranging robots in a subgraph to allow one to
+enter.
+ ResolveTerminate To build a plan rearranging robots in a subgraph into their
+terminating positions.
+The key to efficient subgraph planning is to carefully constrain the allowed structure
+of the subgraphs in our partition, so these functions are simple to implement and do not
+require expensive search. The advantage of this approach is that each of these functions can
+always be computed based only on the arrangement of other robots within that particular
+subgraph, not relying on the positions of robots elsewhere.
+
+6. Subgraph Structures
+The key to this process is therefore in the selection of subgraph types. These abstractions
+need to be chosen such that:
+502
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+v1
+
+v2
+
+v3
+
+v1
+
+vk
+
+v2
+
+(a) A stack
+
+v3
+
+vk
+
+(b) A hall
+
+v1
+
+v2
+
+v1
+
+v2
+
+v4
+
+v3
+
+v4
+
+v3
+
+(c) A clique
+
+(d) A ring
+
+Figure 2: Examples of the four different subgraph structures.
+
+1. They are commonly occurring in real road-maps,
+2. They are easy to detect and extract from a road-map,
+3. They abstract a large portion of the search space,
+4. Computing the legality of transitions is fast, sound and complete,
+5. Resolving an abstract plan into a concrete sequence of movements is efficient.
+In this paper we present four subgraph types: stacks, halls, cliques and rings, which satisfy
+these requirements. In the following analysis, let n be the the number of vertices in the
+subgraph and k be the number of robots occupying the subgraph before the action takes
+place.
+6.1 Stacks
+A stack (Figure 2(a)) represents a narrow dead-end corridor in the road-map. It has only
+one exit and it is too narrow for robots to pass one another, so robots must enter and leave
+in a last-in-first-out order. It is one of the simplest subgraphs and does not occur often
+in real maps, but it serves as an easy illustration of the subgraph methods. Formally it
+consists of a chain of vertices, each linked only to its predecessor and its successor. Only
+the vertex at one end of the chain, called the head, is connected to other subgraphs so all
+entrances and exits happen there.
+A configuration of a stack corresponds to an ordering of the robots that reside in it, from
+the head down. Robots in the stack cannot pass each other, and so the ordering cannot be
+changed without the robots exiting and re-entering the stack.
+
+503
+
+fiRyan
+
+6.1.1 Enter
+A robot can always enter the stack as long as the stack is not full. Only one new configuration is created, adding the robot to the front of the ordering. This computation can be
+done in O(1) time.
+6.1.2 Exit
+A robot can exit the stack only if it is the top robot in the ordering. Only one new
+configuration is created, removing the robot from the ordering. This computation can also
+be done in O(1) time.
+6.1.3 Terminate
+To determine whether termination is possible, we need to check if the order of robots in the
+current configuration is the same as that in the terminating arrangement. This operation
+takes O(k) time.
+6.1.4 ResolveEnter
+Rearranging robots inside the stack is simple since we know that the ordering is constant.
+To vacate the top of the stack (the only possible entrance point) we move robots deeper
+into the stack (as necessary). There is guaranteed to be room, since entering a full stack is
+not permitted. At worst this takes O(k) time.
+6.1.5 ResolveExit
+When a robot exits the stack, the abstract planner has already determined that it is the
+first robot in the stack with no others between it and the head vertex. It can simply move
+up the stack to the head, and then out. No other robots need to be moved. At worst this
+takes O(n) time.
+6.1.6 ResolveTerminate
+Finally, moving robots to their terminating positions can be done in a top-to-bottom order.
+If a robot is below its terminating position it can move upwards without interference. If
+a robot is above its terminating position, other robots below may need to be moved lower
+in order to clear its path. This approach is sound, since the terminating positions of these
+robots must be further down the stack (or else the ordering would be different). This process
+has an O(nk) total worst-case running time.
+6.2 Halls
+A hall is a generalisation of a stack (Figure 2(b)). Like a stack, it is a narrow corridor
+which does not permit passing, but a hall may have multiple entrances and exits along its
+length. Formally it consists of a single chain of vertices, each one joined to its predecessor
+and its successor. There must be no other edges between vertices in the hall, but there may
+be edges connecting to other subgraphs from any node in the hall. Halls are much more
+commonly occurring structures, but still maintain the same property as stacks: the robots
+
+504
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+j=0
+v1
+
+v2
+
+v3
+
+v4
+
+v5
+A
+
+v6
+B
+
+C
+
+D
+j=1
+v1
+
+v2
+
+v3
+
+v4
+
+v5
+B
+
+A
+
+v6
+C
+
+D
+j=2
+v1
+A
+
+v2
+
+v3
+
+v4
+
+B
+
+v5
+
+v6
+
+C
+
+D
+
+Figure 3: Example of entering a hall subgraph, with k = 3, n = 6 and i = 3. Robot D can
+enter at three possible sequence positions j = 0, 1 or 2 but not at j = 3.
+
+cannot be reordered without exiting and re-entering. Thus, as with stacks, the configuration
+of a hall corresponds to the order of the robots occupying it, from one end of the hall to
+the other.
+6.2.1 Enter
+A robot can enter a hall as long as it is not full. The configurations generated by that
+entrance depend on three factors: 1) The size of the hall n, 2) The number of robots
+already in the hall k, and 3) The index i of the vertex at which it enters (ranging from 1 to
+n).
+Figure 3 shows how entering a hall can result in several different configurations. It is
+a matter of how the robots already in the hall are arranged, to the left and right of the
+entrance, before the entering robot moves in. If there is enough space in the hall on either
+side of the entrance vertex, then the new robot can be inserted at any point in the ordering.
+But if space is limited (as in the example) then it may not be possible to move all the robots
+to one side or another, limiting the possible insertion points.
+Given the three variables k, n, i above, we can compute the maximum and minimum
+insertion points as:
+j  min(i  1, k)
+j  max(0, k  (n  i))
+
+505
+
+fiRyan
+
+Creating a new configuration is then just a matter of inserting the new robot into the
+ordering at the appropriate point. Since the list of robots needs to be copied in order to do
+this, it takes O(k) time for each new configuration.
+6.2.2 Exit
+Whether a robot can exit a hall via a given edge again depends on several factors: 1) the
+size of the hall n, 2) the number of robots in the hall k, 3) the index i of the vertex from
+which it exits (from 1 to k), 3) the index j of the robot in the ordering (from 1 to k). Exit
+is possible if:
+j  i  n  (k  j)
+If exit is possible there is one resulting configuration: the previous ordering with the robot
+removed. This takes O(k) time to compute.
+6.2.3 Terminate
+Checking termination is the same for halls as with stacks, we just have to test that the order
+of robots in the final arrangement matches the current configuration. This can be done in
+O(k) time for k robots in the hall.
+6.2.4 ResolveEnter
+To resolve an entrance to a hall we need to know which of the subsequent configurations we
+are aiming to generate, so we know the proper insertion point for the entering robot. The
+robots before the insertion point are shuffled in one direction so that they are on one side
+of the entry vertex, and the rest to the other side. At worst this will take O(nk) time.
+6.2.5 ResolveExit
+Resolving an exit involves moving the robot up or down the hall to the exit vertex, shuffling
+any other robots that are in the way. In the worst case, in which all the robots shuffle from
+one end of the hall to the other, this takes O(nk) time.
+6.2.6 ResolveTerminate
+ResolveTerminate for a hall is identical to that for a stack, described above.
+6.3 Cliques
+A clique (Figure 2(c)) represents a large open area in the map with many exit points
+(vertices) around its perimeter. Robots can cross directly from any vertex to another, and
+as long as the clique is not full, other robots inside can be shuffled out of the way to allow
+this to happen.
+Formally a clique is a totally connected subgraph. Cliques have quite different properties
+to halls and stacks. As long as there is at least one empty vertex in a clique, it is possible
+to rearrange it arbitrarily. So a configuration of a clique, in this circumstance, is just the
+set of robots it contains.
+
+506
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+However there are a special set of configurations in which the clique is locked. This
+occurs when the number of robots in the clique equals the number of vertices. Then it
+is impossible for the clique to be rearranged. A configuration of a locked clique has to
+explicitly record the position of each robot.
+6.3.1 Enter
+A clique can always be entered so long as it is not full. If the clique has more than one
+vacant vertex, then there is a single new configuration with the entering robot added to the
+set of occupants. If the clique has only one space remaining, then the entering robot locks
+the clique. In theory, at this point it is necessary to make a new configuration for every
+possible arrangement of the occupying robots (with the entering robot always in the vertex
+it enters).
+In practice, it is more efficient to create just a single locked configuration which
+records the locking robot and its vertex, and leaves the other positions unspecified. Any
+permutation of the other robots is possible, so the exact details of the configuration need
+not be pinned down until the next action (either Exit or Terminate) requires them to be.
+This is a form of least commitment, and it can significantly reduce the branching factor of
+our search.
+Performing this test and creating the new configuration takes O(k) time for k robots in
+the clique.
+6.3.2 Exit
+If the clique is unlocked then any robot can exit from any vertex and the new configuration
+is created by simply removing the robot from the set of occupants.
+If the clique is locked then a robot can only exit from the specific vertex that it occupies. The resulting configuration is unlocked and the exact locations of the robots can be
+discarded.
+In the least-commitment version, the locking robot is constrained to exit from its vertex
+and every other robot can exit from any vertex except the one occupied by the locking
+robot.
+Performing this test and creating the new configuration takes O(k) time for k robots in
+the clique.
+6.3.3 Terminate
+With an unlocked configuration, checking for termination simply consists of making sure
+that all (and only) the required occupants are in the clique. For a locked configuration the
+robots must all be in their terminating positions (as there is no possibility of rearranging
+them). In the least-commitment version just the locking robot must be in its terminating vertex. We can then assume that all the other robots are also in their places (thus
+committing to a choice of configuration that we delayed earlier).
+Performing this test takes O(k) time for k robots in the clique.
+
+507
+
+fiRyan
+
+6.3.4 ResolveEnter
+If the entrance vertex is occupied when a robot wishes to enter then we can simply move
+the occupant directly to another vacant vertex in the clique, since every vertex is connected
+to every other.
+If we are using least commitment and the entering robot locks the clique then we need to
+look ahead in the plan to see the next action involving this clique. If it is an exit transition
+then we need to move the exiting robot to the exit vertex now (before the clique is locked).
+If there is no subsequent exit, meaning the robots will be terminating in this clique, then
+we need to rearrange them into their terminating positions at this point.
+If we amortise the cost of any rearrangements over the subsequent call to ResolveExit
+or ResolveTerminate we can treat this operation as taking O(1) time.
+6.3.5 ResolveExit
+If the clique is full at the time of exit then we can assume that the exiting robot is already
+at its exit vertex and nothing needs to be done. On the other hand, if the clique is not full it
+may be that the robot is not at its exit vertex. It must be moved there. If the exit vertex is
+already occupied by another robot, it can be moved into another unoccupied vertex. Both
+these movements can be done directly, as the clique is totally connected. This operation
+takes O(1) time.
+6.3.6 ResolveTerminate
+If the clique is locked then we can assume that the robots have already been appropriately
+arranged into their terminal positions and no further work needs to be done. Otherwise the
+robots may need to be rearranged. A simple way to do this is to proceed as follows: for each
+robot that is out of place, first vacate its terminating position by moving any occupant to
+another unoccupied vertex, then move the terminating robot into the vertex. Once a robot
+has been moved in this way it will not have to move again, so this process is correct but it
+may produce longer plans than necessary. The upside is that it takes only O(n) time.
+6.4 Rings
+A ring (Figure 2(d)) resembles a hall with its ends connected. Formally, it is a subgraph S
+with vertices V (S) = {v1 , . . . , vn } and induced edges E(S) satisfying:
+(vi , vj )  E(S) iff |i  j|  1 (mod n)
+As with a hall, ordering is important in a ring. Robots in the ring cannot pass one another
+and so cannot re-order themselves. They can, however, rotate their ordering (provided that
+the ring is not full). Thus in a ring of size 4 or more, the sequence hr1 , r2 , r3 i is equivalent
+to hr3 , r1 , r2 i but not to hr2 , r1 , r3 i. Equivalent sequences represent the same configuration.
+Like cliques, rings are locked when they are full. A locked ring cannot be rotated, so
+in a ring of size three the sequences hr1 , r2 , r3 i and hr3 , r1 , r2 i are not equivalent. They
+represent two locked configurations with different properties.
+
+508
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+6.4.1 Enter
+A robot may always enter a ring provided that it is not full. If there are k robots already
+occupying the ring, then there are k possible configurations that can result (or one if k is
+zero), one for each possible insertion point.
+If the entering robot locks the ring then we must also record the specific positions of
+each robot in the ring. This will still only produce k different configurations because the
+robots cannot be arbitrarily rearranged, unlike in cliques.
+It is also possible to produce least-commitment versions of Enter for rings as with
+cliques. Again, this can significantly reduce the branching factor of the search, but the
+details are more involved than we wish to enter into in this paper.
+This operation takes O(k) time for each new configuration generated.
+6.4.2 Exit
+When the ring is locked a robot can only exit from its recorded position, otherwise it can
+exit from any vertex. The robot is removed from the sequence to produce the resultant
+configuration. The new configuration is unlocked and any position information can be
+discarded. This can be done in O(k) time for k robots in the ring.
+6.4.3 Terminate
+To check if termination is possible we need to see if the order of robots around the ring in
+the terminal arrangement matches that of the current configuration. If the configuration is
+not locked then rotations are allowed, otherwise the match must be exact. This test can be
+done in O(k) time for k robots in the ring.
+6.4.4 ResolveEnter
+When a robot is about to enter the ring, we need to first rearrange it so that the the entry
+vertex is empty and the nearest robots on either side of that vertex provide the correct
+insertion point for the subsequent configuration, as selected in Enter above. This may
+require shuffling the robots one way or another, in much the same fashion as in a stack or
+hall. In the worst case this will take O(nk) operations for k robots in a ring of n vertices.
+6.4.5 ResolveExit
+If a ring is locked then any robot exiting must already be at its exit position so nothing needs
+to be done. Otherwise, in an unlocked ring, the robots may need to be shuffled around the
+ring in order to move the robot to its exit. In the worst case this will take O(nk) operations
+for k robots in a ring of n vertices.
+6.4.6 ResolveTerminate
+If a ring is locked then all the robots must already be in their terminating positions; this is
+guaranteed by the abstract planner. Otherwise they will need to be rotated into the correct
+positions. Once one robot has been moved to its correct vertex, the rest of the ring can be
+treated as a stack and the ResolveTerminate method described above can be used, with
+O(nk) worst case running time for k robots in a ring of n vertices.
+509
+
+fiRyan
+
+6.5 Summary
+Of these four subgraphs halls and rings are the most powerful. Such subgraphs are not only
+common in the structured maps of man-made environments, but can also be found often
+in purely random graphs (consider: any shortest path in an unweighted graph is a hall).
+Halls, rings and cliques of significant size can be found in many realistic planning problems.
+Importantly, these structures are well constrained enough that the six procedures for
+planning outlined above can all be implemented efficiently and deterministically, without the
+need for any further search. In the cases of the clique and the ring, the resolution methods
+we describe sometimes sacrifice path optimality for speed, but this could be improved by
+using smarter resolution planners. Since the resolution stage is only done once, this probably
+would not have a major effect on the overall running time of the planner.
+
+7. Prioritised Planning
+A common solution to the rapid growth of search spaces in multi-robot planning is prioritised
+planning (Erdmann & Lozano-Perez, 1986; van den Berg & Overmars, 2005). In this
+approach we give the robots a fixed priority ordering before we begin. Planning is performed
+in priority ordering: first a plan is built for just the robot with highest priority; then a plan
+for the second highest, such that it does not interfere with the first; then the third, and so
+on. Each new plan must be constructed so that it does not interfere with the plans before
+it. An example implementation is shown in Algorithm 3. Usually there is no backtracking
+once a plan has been made. This is signified in the algorithm by the cut operator in line 8
+of Plan.
+Because of this cut, the search is no longer complete. There are problems with solutions
+that a prioritised planner cannot find. Figure 4 is an example. Robots a and b wish to
+change positions. To plan for either robot on its own is easy; the plan contains just one
+step. But to plan for both robots together requires each of them to move out of its way,
+to the right hand side of the map so that the other can pass. A prioritised planner which
+committed to a one-step plan for either a or b cannot then construct a plan for the other
+robot which does not interfere.
+This incompleteness is not just a mistake, however. It is the core of what makes prioritised planning more efficient. The search space has been pruned significantly by eliminating
+
+x1
+
+x2
+a
+
+x3
+
+x4
+
+b
+y
+
+Figure 4: A simple planning problem that cannot be solved with naive prioritised planning.
+The goal is to swap the positions of robots a and b.
+
+510
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+certain plans from consideration. If there is still a viable solution within this pruned space
+(and often there is) then it can be found much more quickly. In the (hopefully few) cases
+where it fails, we can always resort to a complete planner as a backup.
+7.1 Prioritised Subgraph Planning
+Prioritised planning is not strictly a competitor to subgraph planning. In fact, prioritised
+search and the subgraph representation are orthogonal ideas, and it is quite possible to use
+both together. As in Algorithm 3, a plan is constructed for each robot consecutively, but
+rather than building an entire concrete plan, only the abstract version is produced, in the
+fashion of Algorithm 2 earlier. Only when compatible abstract plans have been produced
+for every robot, are they resolved into a concrete plan.
+As well as adding the advantage of abstraction to prioritised planning, the subgraph
+representation also allows the planner to cover more of the space of possible plans. By
+delaying resolution until the end, we avoid commitment to concrete choices for a high
+priority robot which will hamper the planning of later robots.
+To illustrate this, lets return to the example in Figure 4 above. If we partition this
+subgraph so that vertices {x1 , x2 , x3 , x4 } are a hall X, then the prioritised subgraph planner
+can solve the problem. The abstract plan for the highest priority robot is empty; there is
+nothing for it to do as it is already in its goal subgraph. Given this plan, the second highest
+priority robot can plan to move from X to y and then back again. This plan can produce
+the goal configuration required. Resolving this plan will move the highest priority robot to
+x4 and back again as needed, but this plan will be built by the Resolve methods for halls,
+and not by search.
+Of course there is no such thing as a free lunch and this example only works if we choose
+the right partition. If instead we treat {x1 , x2 } as a stack and {x4 , x3 , y} as a separate hall
+then the prioritised subgraph planner will not help us. Furthermore there exist problems,
+such as the one in Figure 5 which can be solved by standard prioritised planners but will
+fail if we introduce the wrong subgraph abstraction. It is difficult to generate more realistic
+
+x1
+
+x2
+
+x3
+
+a
+
+x4
+b
+
+y
+
+Figure 5: A simple planning problem that can be solved with naive prioritised planning but
+not with the subgraph abstraction. The goal is to swap the positions of robots
+a and b. With priority ordering a, b the subgraph planner will choose for robot
+a to remain inside the hall. Robot b is then trapped, because a blocks the only
+exit to y (note that the edges (x1 , y) and (y, x4 ) are directed).
+
+511
+
+fiRyan
+
+cases of this problem with small numbers of robots, but as we will see in Section 9.3 below,
+they can occur when the number of robots is large.
+
+8. Search Complexity
+Let us consider more carefully where the advantages (if any) of the subgraph decomposition lie. Subgraph transitions act as macro-operators between one abstract state (set of
+configurations) to another. There is a long history of planners using macros of one kind
+or another, and their advantages and disadvantages are well known (see Section10.1). It is
+widely recognised that macros are advantageous when they reduce the depth of the search,
+but become a disadvantage when too many macros are created and the branching factor of
+the search becomes too large. These guidelines also apply to the use of subgraphs.
+A typical search algorithm proceeds as follows: select a plan from the frontier of incomplete plans and create all expansions. Add all the expansions to the frontier and recurse
+until a complete plan is found. The time taken to complete this search is determined by
+the number of nodes in the search tree, which is in turn determined by three factors:
+1. d, the depth of the goal state,
+2. b, the average branching factor of the tree, i.e. the number of nodes generated per
+node expanded
+3. The efficiency of the search.
+A perfect search algorithm, which heads directly to the goal, will nevertheless contain O(bd)
+nodes as the alternative nodes must still be generated, even if they are never followed. An
+uninformed breadth-first search, on the other hand, will generate O(bd ) nodes. This can be
+regarded as a sensible upper bound on the efficiency of the search (although it is possible
+to do worse).
+Macro-operators tend to decrease d at the expense of increasing b, so do very well in
+uninformed search when d dominates, but show less advantage when a good heuristic exists,
+where b and d are equally important. So it becomes important to consider how to keep the
+increases in branching factor to a minimum. In the case of subgraph planning, there are
+two main reasons why b increases:
+1. The reduced graph may have a larger average degree than the original. Since a
+subgraph contains many vertices, it tends to have more out-going edges than a single
+vertex. If all these edges connect to different subgraphs, then the branching factor will
+be significantly larger. Sparse subgraphs (such as halls) are worse in this regard than
+dense subgraphs (such as cliques). The subgraph decomposition needs to be chosen
+carefully to avoid this problem.
+2. A single subgraph transition may create a large number of possible configurations,
+such as when a robot enters a large hall which is already occupied by several robots.
+In some cases it may not strictly matter which configuration is generated and where
+possible we use least commitment to avoid creating unnecessary alternatives, but if
+there is the possibility that different configurations will result in different outcomes
+
+512
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+further down the track, then they all need to be considered. Halls in particular have
+this problem.
+As we will see in the experiments that follow, careful choice of the subgraph decomposition is important to avoid these pitfalls, but with an appropriate partition the abstraction
+can significantly improve both informed and uninformed search.
+
+9. Experiments
+To empirically test the advantages of the subgraph approach, we ran several experiments
+on both real and randomly generated problems. Our first experiment demonstrates how the
+algorithms scale with changes to the size of the problem, in terms of the number of vertices,
+edges and robots, under a standard breadth-first search. The second experiment shows how
+these results are affected by using an heuristic to guide search. Both of these experiments
+use randomly generated graphs. The final experiment demonstrates the algorithm on a
+realistic problem.
+In the first two experiments, maps were generated randomly and automatically partitioned into subgraphs. Random generation was done as follows: first a spanning tree was
+generated by adding vertices one by one, connecting each to a randomly selected vertex in
+the graph. If further edges were required they were generated by randomly selecting two
+non-adjacent vertices and creating an edge between them. All edges were undirected.1
+Automated partitioning worked as follows:
+1. Initially mark all vertices as unused.
+2. Select a pair of adjacent unused vertices.
+3. Use this pair as the basis for growing a hall, a ring and a clique:
+Hall: Randomly add unused vertices adjacent to either end of the hall, provided they
+do not violate the hall property. Continue until no further growth is possible.
+Ring: Randomly add unused vertices adjacent to either end of the ring until a loop
+is created. Discard any vertices not involved in the loop.
+Clique: Randomly add unused vertices adjacent to every vertex in the clique. Continue until no further growth is possible.
+4. Keep the biggest of the three generated subgraphs. Mark all its vertices as used.
+5. Go back to step 2, until no adjacent unused pairs can be found.
+6. All remaining unused vertices are singletons.
+This is not intended to be an ideal algorithm. Its results are far from optimal but it is fast
+and effective. Experience suggests that a partition generated by this approach can contain
+about twice as many subgraphs as one crafted by hand, and it makes no effort to minimise
+the degree of the reduced graph, but even with these randomly generated partitions the
+advantages of the subgraph abstraction are apparent.
+1. It should be noted that this algorithm does not generate a uniform distribution over all connected graphs
+of a given size, but it is very difficult to generate sparse connected graphs with a uniform distribution.
+The bias is not deemed significant.
+
+513
+
+fiRyan
+
+4.0
+Original
+Reduced
+
+30
+
+3.5
+
+degree
+
+# subgraphs
+
+3.0
+20
+
+2.5
+
+2.0
+10
+1.5
+
+0
+
+1.0
+10
+
+20
+
+30
+
+40
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+10
+
+# vertices
+
+20
+
+30
+
+40
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+# vertices
+
+Figure 6: The results of the automatic partitioning program in Experiment 1a. The left
+graph shows the average number of subgraphs generated and the right graph
+shows the average degree of the reduced graph.
+
+9.1 Experiment 1: Scaling Problem Size
+9.1.1 Scaling |V |
+In the first experiment we investigate the effect that scaling the number of vertices in the
+graph has on search time. Random graphs were generated with the number of vertices
+ranging from 10 to 100. Edges we added so that the average degree d = |E|/|V | was always
+equal to 3. (This value seems typical for the realistic maps.) One hundred graphs were
+generated of each size, and each one was partitioned using the method described above.
+Figure 6 shows the performance of the auto-partitioning. As we can see, the number of
+subgraphs increased roughly linearly with the size of the graph, with an average subgraph
+size of 4. For small graphs (with fewer than 40 vertices) the reduced graph after partitioning
+is sparser than the original, but as the size increases the average degree of the reduced graph
+gets larger. These results are presented for informative purposes only. We make no claims
+about the quality of this partitioning algorithm, other than that it is indeed reducing the
+size of the graph, if only by a small factor.
+In each graph, three robots were given randomly selected initial and final locations, and
+a plan was generated. Figure 7(a) shows the average run times for each of the four approaches.2 It shows a clear performance hierarchy. The complete planners are significantly
+slower than the priority planners, and in both cases the subgraph abstraction shows a significant improvement over the naive alternative. Nevertheless, in every case the combinatorial
+growth in runtime is apparent (note that the graph is plotted on a log scale). The linear
+relationship between number of vertices and number of subgraphs prevents the subgraph
+2. It has been noted that these times are overall rather slow. We acknowledge this and attribute it to our
+implementation, which is in Java and which was not heavily optimised to avoid garbage collection. We
+are currently working on an implementation with an optimised search engine, but we believe that these
+results still provide a valuable comparison between methods.
+
+514
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+1000000
+
+100000
+
+Time (ms)
+
+10000
+
+1000
+
+100
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+10
+
+1
+10
+
+20
+
+30
+
+40
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+# vertices
+(a) run times
+8
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+7
+
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+30
+
+5
+
+path length
+
+branching factor
+
+6
+
+4
+
+20
+
+3
+10
+
+2
+1
+0
+
+0
+10
+
+20
+
+30
+
+40
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+10
+
+# vertices
+
+20
+
+30
+
+40
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+# vertices
+
+(b) branching factor
+
+(c) goal depth
+
+Figure 7: The results of Experiment 1a. In graph (a) the boxes show the first and third
+quartile and whiskers to show the complete range. When an experiment failed to
+complete due to time or memory limits or incompleteness of the search, the run
+time was treated as infinite. No value is plotted for cases where more than 50%
+of experiments failed. In graph (c) the goal depth for the naive complete and
+subgraph priority approaches are identical for graphs of 30 to 60 vertices, so the
+lines overlap. The naive complete planner could not solve problems with more
+than 60 vertices.
+
+515
+
+fiRyan
+
+Table 1: The number of planning failures recorded by the two prioritised planning approaches in Experiment 1a.
+# Failures
+Vertices Naive Subgraph
+10
+2
+0
+20 - 70
+0
+0
+80
+1
+0
+90 - 100
+0
+0
+
+approaches from doing better than this. A better partitioning algorithm should ameliorate
+this problem.
+To analyse the causes of this variation in run times, we need to consider the search
+process more carefully. We can measure the search depth d and average branching factor b
+for each experiment. The results are plotted in Figure 7(b) and (c). As we expected, when
+the subgraph abstraction is used, the goal depth is decreased and grows more slowly, but
+the branching factor is increased. Since we are doing uninformed search, d dominates and
+the overall result is an improvement in planning time.
+The incompleteness of prioritised planning shows in Table 1. On three occasions the
+naive prioritised search failed to find available solutions. However this was not a problem
+for the prioritised subgraph search.
+9.1.2 Scaling |E|
+Next we examine the effect of graph density. Fixing the number of vertices at 30, we
+generated random graphs with average degree ranging from 2.0 to 4.0. For each value,
+100 graphs were randomly generated and automatically partitioned. Again the planning
+problem was to move three robots from between selected initial and goal locations.
+The results for this experiment are shown in Figure 8. There does not appear to be much
+overall change in the run times of any of the approaches, other than a small improvement
+from the naive prioritised planner as the graph gets denser. Figures 8(b) and (c) show
+the expected result: increasing the density of the graph increases the branching factor but
+decreases the depth. It appears to affect all four approaches similarly.
+An interesting difference, however, is shown in Table 2. This records the percentage of
+experiments for which each of the prioritised planners was unable to find a solution. For
+very sparse graphs, the naive planner failed on as many as 10% of problems, but it improved
+quickly as density increased. With the subgraph abstraction added, the planner was able
+to solve all but two of the problems. In no case did we find problems which were solved by
+the naive planner and not by the subgraph planner.
+9.1.3 Scaling |R|
+In the last of the scaling experiments, we investigate how each approach performs with
+varying numbers of robots. As before, 100 random graphs were generated and partitioned,
+each with 30 vertices and average degree of 3, and each one was partitioned using the
+516
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+10000
+
+Time (ms)
+
+1000
+
+100
+
+10
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+1
+2.0
+
+2.2
+
+2.4
+
+2.6
+
+2.8
+
+3.0
+
+3.2
+
+3.4
+
+3.6
+
+3.8
+
+4.0
+
+degree
+(a) run times
+8
+
+40
+
+6
+
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+30
+path length
+
+branching factor
+
+7
+
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+5
+4
+
+20
+
+3
+10
+2
+1
+2.0
+
+2.2
+
+2.4
+
+2.6
+
+2.8
+
+3.0
+
+3.2
+
+3.4
+
+3.6
+
+3.8
+
+4.0
+
+0
+2.0
+
+2.2
+
+2.4
+
+2.6
+
+2.8
+
+degree
+
+3.0
+
+3.2
+
+degree
+
+(b) branching factor
+
+(c) goal depth
+
+Figure 8: The results for Experiment 1b.
+
+517
+
+3.4
+
+3.6
+
+3.8
+
+4.0
+
+fiRyan
+
+100000
+
+Time (ms)
+
+10000
+
+1000
+
+100
+
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+10
+
+1
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10
+
+# robots
+(a) run times
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+7
+
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+1000
+
+5
+
+100
+path length
+
+branching factor
+
+6
+
+4
+
+3
+
+10
+
+2
+
+1
+
+1
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10
+
+1
+
+2
+
+3
+
+4
+
+# robots
+
+5
+
+6
+# robots
+
+(b) branching factor
+
+(c) goal depth
+
+Figure 9: The results for Experiment 1c.
+
+518
+
+7
+
+8
+
+9
+
+10
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+Table 2: The number of planning failures recorded by the two prioritised planning approaches in Experiment 1b.
+# Failures
+Degree Naive Subgraph
+2.0
+10
+0
+2.2
+8
+0
+2.4
+5
+0
+2.6
+1
+1
+2.8
+0
+0
+3.0
+2
+0
+3.2
+1
+1
+3.4 - 4.0
+0
+0
+
+Table 3: The number of planning failures recorded by the two prioritised planning approaches in Experiment 1c.
+# Failures
+# Robots Naive Subgraph
+1-3
+0
+0
+4
+3
+0
+5
+4
+0
+6
+10
+0
+7
+7
+1
+8
+7
+1
+9
+26
+0
+10
+46
+1
+
+automatic partitioning algorithm. Ten planning problems were set in each graph with the
+number of robots varying from 1 to 10. In each case initial and goal locations were selected
+randomly.
+The running times for all four approaches are plotted in Figure 9(a). There is a major
+performance difference between the prioritised and non-prioritised planners, with the prioritised planners able to handle twice as many robots. Between the two complete-search
+approaches, the subgraph abstraction is an unnecessary overhead for very small problems,
+but shows significant advantage as the number of robots increases.
+There is less obvious advantage to the subgraph abstraction in the case of prioritised
+planning, until we look at the failure rates shown in Table 3. As the number of robots
+increases the incompleteness of the naive prioritised algorithm begins to become apparent,
+until with 10 robots we see that 46% of the problems could not be solved by this planner.
+The advantage of the subgraph abstraction is now apparent: only a total of 3 problems
+could not be solved out of 1000 tried.
+
+519
+
+fiRyan
+
+Figures 9(b) and (c) plot the average branching factor and goal depth for these problems.
+As in previous experiments, the subgraph abstraction is seen to increase the branching
+factor but decrease the depth. In the complete search approaches the branching factor
+grows rapidly with the number of robots, as each node on the search path contains a choice
+of which robot to move. The prioritised approach reverses this trend, as planning is only
+ever done for one robot at a time, and the later robots are much more heavily constrained
+in the options available to them, providing fewer alternatives in the search tree.
+9.1.4 Discussion
+To summarise the above experiments, the advantages of the subgraph abstraction are twofold. Firstly, it decreases the necessary search depth of a planning problem by compressing
+many robot movements into a single abstract step. Like other macro-based abstractions, it
+does this at the expense of increasing the branching factor but the gains seem to outweigh
+the losses in practice. Of course, this is dependent to some degree on the use of uninformed
+search, which we shall address below.
+The other advantage is specific to the prioritised planner. For tightly constrained problems with sparse maps and/or many robots the incompleteness of the naive prioritised
+search becomes a very significant issue. With the addition of the subgraph abstraction the
+number of such failures is dramatically reduced, without additional search.
+9.2 Experiment 2: Heuristic Search
+All the experiments so far have involved uninformed breadth-first search without the use of
+an heuristic. As such, the runtime of the algorithms is more strongly affected by changes
+in search depth than by the branching factor. As we explained above, uninformed search
+has an O(bd ) expected running time. However a perfect heuristic can reduce this to O(bd),
+making the branching factor a much more significant aspect. A perfect heuristic is, of course,
+unavailable, but it it possible to efficiently compute a reasonably good search heuristic for
+this task by relaxing the problem. Disregarding collisions we can simply compute the sum
+of the shortest path lengths from each robots location to its goal. This is an underestimate
+of the actual path length, but is accurate for loosely constrained problems (with few robots
+and dense graphs).
+In this experiment we used a best-first search algorithm guided by this heuristic.3 At
+every node in the search tree, we selected the plan which minimised this value. In the case
+of the subgraph planner, the actual locations of robots at any time-point are not specified,
+just the subgraph they occupy, so the heuristic was calculated using the maximum distances
+from any vertex in each robots subgraph to its goal. We pre-computed the shortest path
+distances between every pair of nodes before running the planner, so the time to do this
+computation is not counted in the runtime for the algorithm.
+The utility of this heuristic depends largely on how constrained the problem is. If the
+graph is dense and there are relatively few robots, the heuristic should direct the planner
+quickly to the goal. However if the graph is sparser, then interactions between robots
+will become more important, and the heuristic will be less useful. For this reason, we
+3. The A* algorithm was not used, as we have no desire to minimise the length of the solution, just to find
+a solution as quickly as possible.
+
+520
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+concentrate our attention in this experiment on how varying the density of the graph affects
+the performance of our different approaches.
+Random maps of 200 vertices were generated, with average degree ranging from 2 to
+3. One hundred graphs were generated of each size and partitioned using the algorithm
+described earlier. Figure 10 shows the results. As the original graph gets denser, the
+number of subgraphs decreases, mostly because it is possible to create longer halls. This is
+good, as fewer subgraphs mean shorter paths, but the consequential increase in degree will
+adversely affect the branching factor.
+Ten robots were placed randomly in each graph and assigned random goal locations.
+All four planning approaches were applied to these problems. The resulting run-times
+are plotted in Figure 11(a). The first thing that is apparent from this graph is that the
+distinction between the different approaches is greatly reduced. Both the size of the graph
+and the number of robots are much larger than in previous experiments, and this has had
+a corresponding effect on the goal depth and branching factor (Figure 11(b) and (c)), but
+the run-times are much smaller, so clearly the heuristic is effective at guiding the search.
+On average the ratio of search nodes expanded to goal depth was very close to 1.0 in all
+experiments, with only a slight increase in the more constrained cases, so we can conclude
+that this heuristic is close to perfect.
+When we compare the four approaches we see three distinct stages. In the most constrained case, at 200 edges, we see both the subgraph approaches outperforming either naive
+approach, with a small benefit in prioritised search over complete search. At 220 edges the
+pattern has changed. The two prioritised methods are significantly better than the two
+complete approaches. As the number of edges increases, both the naive methods continue
+to improve, while prioritised subgraph search holds steady and complete subgraph search
+gets significantly worse (due to its rapid increase in branching factor). At 300 edges both
+the naive approaches are doing significantly better than the subgraph approaches.
+
+All
+Singletons
+Halls
+Cliques
+Rings
+
+60
+
+4.5
+
+Original
+Reduced
+
+4.0
+
+50
+
+degree
+
+# subgraphs
+
+3.5
+40
+30
+
+3.0
+2.5
+
+20
+
+2.0
+
+10
+
+1.5
+
+0
+
+1.0
+200
+
+210
+
+220
+
+230
+
+240
+
+250
+
+260
+
+270
+
+280
+
+290
+
+300
+
+200
+
+# edges
+
+210
+
+220
+
+230
+
+240
+
+250
+
+260
+
+270
+
+280
+
+290
+
+# edges
+
+(a) subgraphs
+
+(b) degree
+
+Figure 10: The results of the auto-partitioner on graphs in Experiment 2.
+
+521
+
+300
+
+fiRyan
+
+10000
+
+Time (ms)
+
+1000
+
+100
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+10
+200
+
+210
+
+220
+
+230
+
+240
+
+250
+
+260
+
+270
+
+280
+
+290
+
+300
+
+edges
+(a) run times
+120
+
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+400
+
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+300
+80
+
+path length
+
+branching factor
+
+100
+
+60
+
+200
+
+40
+100
+20
+0
+200
+
+220
+
+240
+
+260
+
+280
+
+300
+
+0
+200
+
+220
+
+240
+
+edges
+
+260
+edges
+
+(b) branching factor
+
+(c) goal depth
+
+Figure 11: The results for Experiment 2.
+
+522
+
+280
+
+300
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+Table 4: The number of planning failures recorded by the two prioritised planning approaches in Experiment 2.
+# Failures
+# Edges Naive Subgraph
+200
+14
+0
+210
+2
+0
+220
+0
+0
+230
+0
+0
+240
+1
+0
+250 - 300
+0
+0
+
+The cause is clearly seen in Figures 11(b) and (c). The branching factors for the subgraph
+approaches increase significantly faster than for the naive approaches, and the corresponding
+improvement in goal depth is not sufficient to outweigh the cost.
+The benefits of the subgraph abstraction in highly constrained cases is also shown in the
+failure cases (Table 4). At 200 edges the naive prioritised search was unable to solve 10%
+of problems, while prioritised search with subgraphs could solve them all. The number of
+failures fell quickly as the density of the graph increased.
+9.2.1 Discussion
+Once a graph becomes moderately dense and interactions between robots become few,
+the total-single-robot-paths measure becomes a near perfect heuristic. This makes the
+branching factor a much more critical factor than when using uninformed search. The
+auto-partitioning algorithm we use does a very poor job limiting this factor and so the
+subgraph approaches perform poorly.
+Better results could be achieved with better decomposition, but it is not clear whether
+this could be found in a random graph without excessive computation. Certainly partitioning such graphs by hand is no easy task. Realistic graphs, on the other hand, are generally
+shaped by natural constraints (e.g. rooms, doors and corridors) which make decomposition
+much simpler, as we will see in the following experiment.
+9.3 Experiment 3: The Indoor Map
+Figure 12 shows the map for our final two experiments, based on the floor-plan of Level 4 of
+the K17 building at the University of New South Wales. A road-map of 113 vertices and 308
+edges has been drawn (by hand) connecting all the offices and open-plan desk locations.
+It is imagined that this might be used as a map for a delivery task involving a team of
+medium-sized robots.
+The road-map has been partitioned into 47 subgraphs  11 cliques, 7 halls and 1 ring,
+plus 28 remaining singleton nodes (subgraphs containing only one vertex). The average
+
+523
+
+fiRyan
+
+Figure 12: The map for Experiment 3. Vertices are coloured by subgraph.
+
+524
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+10000
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+Time (ms)
+
+1000
+
+100
+
+10
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10
+
+11
+
+12
+
+13
+
+14
+
+15
+
+16
+
+17
+
+18
+
+19
+
+20
+
+robots
+
+Figure 13: Comparing run times for Experiment 3.
+degree of the reduced graph is 2.1, compared to 2.7 in the original.4 Partitioning was done
+by hand with the aid of an interactive GUI which performed some simple graph analysis
+and offered recommendations (by indicating nodes which could be added to a hall or clique
+the user is creating). The road-map was clearly laid out with partitioning in mind and
+deciding on this partitioning was not on the whole difficult. Large open spaces generally
+became cliques. Corridors became halls or rings. Only the foyer area (around vertex 94)
+caused any particular trouble when finding an ideal partitioning, due to its slightly unusual
+topology.5
+A series of experiments were run in this world, varying the number of robots from 1
+to 20. For each experiment 100 runs were performed in which each robot was placed in
+a random office or desk and was required to make a delivery to another random office or
+desk (chosen without replacement, so no two robots had the same goal). Plans were built
+using both complete and prioritised planners with and without the subgraph abstraction.
+All four approaches utilised the total single-robot shortest path heuristic from the previous
+experiment. The running times of each algorithm are shown in Figure 13.
+We can see that for small numbers of robots (1 or 2) the naive approaches are significantly better than the subgraph approaches. The overhead of doing subgraph search
+outweighs its disadvantages in such simple problems. As the number of robots increases
+the subgraph methods take over, and for around 9 to 16 robots both subgraph methods are
+significant better than either naive approach. At 17 robots the combination of complete
+search with subgraphs begins to perform less well and the two prioritised approaches are
+the best performers, with a considerable advantage to the subgraph approach.
+4. In comparison, the auto-partitioner yielded a partition with fewer subgraphs (avg. 41.8) but higher
+degree (avg. 2.25).
+5. For the curious, the empty rooms in the centre of the map, near vertex 91, are bathrooms. We did not
+consider that the robots would need to make deliveries there.
+
+525
+
+fiRyan
+
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+1.8
+1.7
+
+expanded / path
+
+1.6
+1.5
+1.4
+1.3
+1.2
+1.1
+1.0
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9 10 11 12 13 14 15 16 17 18 19 20
+robots
+
+Figure 14: Assessing the quality of the heuristic in Experiment 3. The value plotted is the
+ratio of the number of expanded nodes in the search tree and the goal depth. A
+perfect heuristic yields a value of 1.0.
+
+Considering search complexity, let us first examine the performance of the heuristic.
+Figure 14 plots the ratio or the average number of expanded nodes in the search tree and
+the goal depth. For a perfect heuristic, this value is 1.0, as it is in this experiment for up
+to 11 robots. With more than 11 robots the heuristic begins to become inaccurate. The
+inaccuracy seems to affect the complete planners more badly than the prioritised ones, and
+in both cases the subgraph approach is more seriously affected than the naive approach.
+To explain this difference, note that the heuristic we are using contains significantly less
+information for subgraph search than it does for naive search. As we do not know exactly
+where a robot is within a subgraph, we assume that it is in the worst possible position. This
+means that the value of a configuration tuple is based solely on the allocation of robots to
+subgraphs, and not on the particular configurations of those subgraphs. Hall subgraphs in
+particular may have several different configurations for the same set of robots, which will all
+be assigned the same heuristic value despite having significantly different real distances to
+the goal.This creates a plateau in the heuristic function which broadens the search. For large
+numbers of robots these permutations become a significant factor in the search. To improve
+the heuristic we need to find a way to distinguish the value of different configurations of a
+subgraph. This will probably require an extra method for each specific subgraph structure.
+The graphs of branching factor and goal depth (Figure 15) show what we have come to
+expect  the branching factor is larger in the complete search than in prioritised search and
+the subgraph abstraction makes it worse. Significantly, the branching factor for prioritised
+526
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+50
+
+Naive complete
+Naive priority
+Subgraph complete
+Subgraph priority
+
+2000
+
+path length
+
+branching factor
+
+40
+
+30
+
+20
+
+1000
+
+10
+
+0
+
+0
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9 10 11 12 13 14 15 16 17 18 19 20
+
+1
+
+robots
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9 10 11 12 13 14 15 16 17 18 19 20
+robots
+
+(a) branching factor
+
+(b) goal depth
+
+Figure 15: The branching factor and goal depth for Experiment 3.
+Table 5: The number of planning failures recorded by the two prioritised planning approaches in Experiment 3.
+# Failures
+Edges Naive Subgraph
+1-9
+0
+0
+10 - 19
+0
+1
+20
+0
+2
+
+search does not increase as more robots are added, because at any step in the plan only
+one robot can be moved. The goal depth shows the opposite pattern, complete searches are
+shorter than prioritised searches and the subgraph abstraction approximately halves the
+search depth in all cases.
+Failure rates are recorded in Table 5. The story here is different from that of previous
+experiments. The naive prioritised planner was able to solve all the problems at every depth,
+but adding the subgraph abstraction caused a small number of failures in more complex
+problems. It is not clear what has caused this reversal. The cases involved are very complex
+and elude analysis. This problem warrants further investigation.
+9.3.1 Discussion
+This experiment has shown that in a realistic problem with an appropriately chosen set
+of subgraphs the subgraph abstraction is an effective way to reduce the search even when
+a good heuristic is available. Why does the subgraph abstraction work so well in this
+example, compared to the random graphs in Experiment 2? The answer seems to be found
+in the degree of the reduced graph. Automatically partitioning a random graph significantly
+increases its degree, as we saw in Figure 10(b). This, in turn, increases the branching factor
+and thus the search time.
+
+527
+
+fiRyan
+
+In contrast, when we partition the realistic map we decreased the degree of the graph
+from 2.7 to 2.1 (by hand) or 2.25 (automatically). The branching factor for the subgraph
+methods is still larger (as one transition can still create multiple configurations) but the
+effect is reduced enough to be overcome by the decrease in goal depth. The indication is
+that a realistic map has more structure that can be exploited by this abstraction. More
+investigation is warranted to characterise the features that many this possible.
+
+10. Conclusion
+We have demonstrated a new kind of abstract representation for multi-robot path planning
+which allows for much faster planning without sacrificing completeness. Decomposing a
+road-map into subgraphs is a simple and intuitive way of providing background knowledge
+to a planner which can be efficiently exploited. The key is to find subgraph structures which
+allow us to treat many arrangements of robots as equivalent configurations and to compute
+transitions between these configurations quickly and deterministically. We have described
+four such structures in this paper: stacks, halls, cliques and rings. These structures are
+simple enough to compute configurations easily but also common enough to be found in
+many realistic maps.
+We have shown that abstract plans on these subgraphs can be resolved deterministically
+into concrete plans without the need for further search. The planner is sound and complete,
+although the plans produced are not necessarily optimal. Future work could prove that it
+is worth spending more time in the resolution phase to trim unnecessarily wasteful plans,
+using, for example, simulated annealing (Sanchez, Ramos, & Frausto, 1999). It may be that
+the time saved in abstract planning leaves us space to do more clever resolution.
+The conventional solution to the search-space explosion in multi-robot planning is prioritisation. We have shown that not only is subgraph-based planning competitive with
+prioritised planning but also that the combination of the two methods is more powerful still
+and in some cases, partly alleviates the incompleteness of the prioritised approach.
+10.1 Related Work
+Abstraction and hierarchical decomposition are standard techniques in planning and other
+related search problems. The use of macro-operators dates back as far as Sacerdotis early
+work on the Abstrips planning system (Sacerdoti, 1974) which introduced abstraction
+hierarchies, whereby a problem could first be solved at a high level of abstraction while
+ignoring lower-level details. The idea has been re-expressed in many different ways through
+the history of planning  far too many to review in detail. This present work was particularly
+inspired by the generic types of Long and Fox (2002) in which they similarly detected
+substructures in a task-planning problem and solved them using structure-specific planners.
+Hierarchical planning has been applied to path-planning before with abstractions such
+as approximate cell decomposition (Barbehenn & Hutchinson, 1995; Conte & Zulli, 1995),
+generalised Voronoi graphs (Choset & Burdick, 1995; Choset, 1996) and general ad-hoc
+hierarchical maps (Bakker, Zivkovic, & Krose, 2005; Zivkovic, Bakker, & Krose, 2005, 2006),
+but the structures identified in these examples do not carry over well to the multi-robot
+scenario.
+
+528
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+Other faster solutions to the multi-robot problem are available if we can assume the
+existence of garage locations for each robot (LaValle & Hutchinson, 1998) or other kinds
+of temporary free space (Sharma & Aloimonos, 1992; Fitch, Butler, & Rus, 2003). The
+method we present here makes no such assumption and is thus more general in application.
+There does not appear to be any previous work which provides a complete abstraction-based
+planner for the general multi-robot problem.
+The work that bears most similarity to our own is not explicitly in robot path planning,
+but in solving the Sokoban puzzle (Botea, Muller, & Schaeffer, 2003; Junghanns & Schaeffer, 2001). That domain is significantly more constrained than ours (the map is necessarily
+an orthogonal grid and the stones can only move when they are pushed by the man) but
+the method they employ is similar. Dividing a map up into rooms and tunnels they use
+the strongly-connected-component algorithm to identify equivalent arrangements of boulders in each subpart. Equivalent arrangements are then treated as a single abstract state 
+corresponding to a configuration in our formulation  which is used as the state in a global
+search. The particular structures they represent are different, but the general ideas of partitioning into independent local subproblems and identifying abstract states from strongly
+connected components, are the same as those employed in this work.
+10.2 Future Plans
+In the next stage of this project we plan to examine the symmetries provided by the subgraph
+representation. Recent work in symbolic task-planning (Porteous, Long, & Fox, 2004)
+has shown that recognising and exploiting symmetries and almost-symmetries in planning
+problems can eliminate large amounts of search. Subgraph configurations provide a natural
+ground for similar work in our problem domain and we expect similar improvements are
+possible.
+We also plan to further investigate the problem of automatic subgraph partitioning
+of maps. Having identified the importance of trading off path depth against branching
+factor, we plan to make a partitioning algorithm which chooses subgraphs that optimise this
+relationship. Automatically finding an optimal partition could be very hard, but creating
+a powerful interactive partitioning tool for a human operator would seem to be a viable
+compromise. One approach would be to adapt the auto-partitioner we describe in this
+paper so that the seed vertices are selected by the user, who is then allowed to choose from
+a number of possible subgraphs based on this selection.
+Further subgraph structures can also be identified, and we are currently working on
+formalising the properties of tree-structured subgraphs. Another possibility would be to
+generalise cliques and rings into a new ring-with-chords structure, although characterising
+such a structure may prove difficult.
+There have been many other advances in search technology which may be applicable
+to the multi-robot planning problem. We are currently in the process of re-expressing the
+entire problem as a constraint satisfaction problem (CSP) in the Gecode constraint engine
+(Gecode Team, 2006). We believe that the CSP formulation will be a powerful way to take
+advantage of the structural knowledge that subgraph decomposition represents.
+
+Acknowledgments
+529
+
+fiRyan
+
+Id like to thank Jonathan Paxman, Brad Tonkes and Maurice Pagnucco for their help in
+developing the ideas in this paper and proofreading the drafts.
+
+Appendix A. Proof of Soundness and Completeness
+In this appendix we set up the necessary formal definitions and then prove the soundness
+and completeness of the abstract planning process. The main result is a theorem showing
+that an abstract plan exists for a given problem if and only if a concrete plan also exists.
+A.1 Graphs and Subgraphs
+An induced subgraph S  G is a graph S = (V (S), E(S)) such that
+V (S)  V (G)
+
+E(S) = {(u, v) | u, v  V (S), (u, v)  E(G)}
+
+Intuitively this describes a subgraph consisting of a subset of vertices with all their connecting edges from the parent graph. Thus an induced subgraph can be specified solely in
+terms of its vertices. We shall henceforth assume that all subgraphs we refer to are induced.
+A partition P of G is a set {S1 , . . . , Sm } of subgraphs of G satisfying
+[
+V (G) =
+V (Si )
+and
+V (Si )  V (Sj ) = , i, j : i 6= j
+i=1...m
+
+Given a graph G and a partition P we can construct the reduced graph X of G by
+contracting each subgraph to a single vertex
+V (X) = P
+E(X) = {(Si , Sj ) | x  Si , y  Sj : (x, y)  G}
+A.2 Robots and Arrangements
+Let us assume we have a set of robots R. An arrangement a of robots in a graph G is a
+1-to-1 partial function a : V (G)  R. An arrangement represents the locations of robots
+within G. If a(v) = r, then robot r is at vertex v. We shall use the notation a(v) = 2
+to indicate that a is undefined at v, i.e. vertex v is unoccupied. An arrangement may not
+necessarily include every robot in R. Two arrangements a and b are said to be disjoint if
+range(a)  range(b) = . Let AG represent the set of all arrangements of R in G.
+If S is a subgraph of G, and a is an arrangement of R in G then we define a/S, the
+induced arrangement of R in S, as
+a/S(v) = a(v), v  V (S)
+If S1 and S2 are disjoint subgraphs of G with disjoint arrangements a1 in S1 and a2 in
+S2 , then we define the combined arrangement a = a1  a2 as an arrangement in S1  S2
+satisfying
+(
+a1 (v) if v  S1
+a(v) =
+a2 (v) if v  S2
+
+530
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+Lemma 1 If a is an arrangement in G with partition P = {S1 , . . . , Sm } and {a1 , . . . , am }
+is the set of induced arrangements ai = a/Si , then the combined arrangement a1   am =
+a.
+Given this identity, we can uniquely identify an arrangement a in G as the combination of
+its induced arrangements over a partition P.
+A.3 Concrete Plans
+We now need to define what it means to move robots around a graph. First we will define
+two operators  and 	 which respectively add and remove robots from a given arrangement.
+Formally  : AG  R  V (G)  AG is a mapping which satisfies
+G
+
+a  (r, v) = b
+G
+
+where
+
+(
+r
+b(u) =
+a(u)
+
+if u = v
+otherwise
+
+Similarly 	 : AG  R  AG is a mapping which satisfies
+G
+
+a	r =b
+G
+
+where
+
+(
+2
+b(u) =
+a(u)
+
+if a(u) = r
+otherwise
+
+We will omit the subscript G when it is clear from the context.
+We can now define a plan-step s  R  E(G) in G as a robot/edge pair (r, u, v),
+representing the movement of r along the edge from u to v, with u 6= v. A plan-step is
+applicable to an arrangement a  AG iff a(u) = r and a(v) = 2. In this case we can apply
+s to a to produce a new arrangement b = s(a) where
+s(a) = (a 	 r)  (r, v)
+A concrete plan (or just plan) in G from a  AG to b  AG is a sequence of plan-steps
+hs1 , . . . , sl i such that there exist arrangements a0 , . . . , al  AG with si applicable to ai1
+and
+a0 = a
+al = b
+ai = si (ai1 ), i : 0 < i  l
+Lemma 2 If S is a subgraph of G and P is a plan in S then P is also a plan in G.
+Lemma 3 If P is a plan in G from a to b and Q is a plan in G from b to c, then the
+concatenation of P and Q, written P.Q is a plan in G from a to c.
+531
+
+fiRyan
+
+Lemma 4 Let P kQ denote the set of all interleavings of sequences P and Q. Let S1 and
+S2 be disjoint subgraphs of G, P1 be a plan on S1 from a1 to b1 and P2 be a plan on S2 from
+a2 to b2 , such that a1 and a2 are disjoint. Any arbitrary interleaving P  P1 kP2 is a plan
+on G from a1  a2 to b1  b2 .
+A.4 Configurations
+Having defined the machinery for concrete plans, we now introduce abstraction. The key
+idea is that of a configuration which is an abstraction of arrangements. If the robots in a
+subgraph can be rearranged from one arrangement to another, without any of the robots
+having to leave the subgraph during the rearrangement, then those two arrangements can
+be treated as equivalent. Configurations represent sets of equivalent arrangements in a
+subgraph. So, for example, in a stack subgraph a configuration is the set of all arrangements
+which have the same ordering of robots. An arrangement over an entire partitioned graph
+can be abstracted as the list of configurations it produces in each of its subgraphs.
+Formally, we define a configuration relation  on graph G as an equivalence relation
+G
+
+over AG such that a  b iff there exists plans Pab and Pba in G from a to b and from b to a
+G
+
+respectively.
+A configuration c of G is an equivalence class of . We write c =  (a) to represent
+G
+
+G
+
+the equivalence class containing arrangement a. Let CG be the set of all configurations of
+G.
+Lemma 5 If a  b then range(a) = range(b)
+G
+
+Given this identity, we can unambiguously define the range of a configuration c to be
+range(c) = range(a), for any a  c
+We can now extend our definitions of  and 	 to configurations. If c  CG is a
+configuration of G, r  R and v  V (G) then
+
+
+c  (r, v) =  (a  (r, v)) | a  c, a(v) = 2
+G
+G
+G
+
+
+c 	 (r, v) =  (a 	 r) | a  c, a(v) = r
+G
+
+G
+
+G
+
+Note that  and 	 map configurations to sets of configurations.6
+Given a partition P = {S1 , . . . , Sm } of G and a corresponding set of configuration
+relations { , . . . ,  } we define a configuration tuple  of R in G as a tuple (c1 , . . . , cm )
+S1
+
+Sm
+
+where i : ci  CSi , and
+[
+
+range(ci ) = R
+
+i=1...m
+
+range(ci )  range(cj ) = , i, j : i 6= j
+6. Astute readers will notice that c 	 (r, v) never contains more than one element, although it may be
+G
+
+empty.
+
+532
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+A configuration tuple represents the abstract state of all the robots in the entire graph, in
+terms of the configurations of the individual subgraphs in the partition. Given an arrangement a of G we can construct a corresponding configuration tuple (a) = (c1 , . . . , cm ) where
+ci =  (a/Si ). Conversely, if a/Si  ci for all ci in , then we write a  .
+Si
+
+Lemma 6 If a and b are arrangements in graph G with partition {S1 , . . . , Sm } and  is a
+configuration tuple in G with a, b  , then there exists a plan from a to b in G.
+Proof
+For each i = 1 . . . m, let ai = a/Si and bi = b/Si . Now ai  ci and bi  ci so
+ai  bi . Therefore from the definition of  there exists a plan Pi from ai to bi in Si .
+Si
+
+Let P  P1 k . . . kPm . Since the Pi s are plans on disjoint subgraphs, P is a plan from
+a1      am = a to b1      bm = b as required.
+
+A.5 Abstract Plans
+With configuration tuples as our abstract state representation, we can now define abstract
+plans, as sequences of subgraph transitions  plan steps which move a robot from one
+subgraph to another. We will then prove the main result of this section, that an abstract
+plan for a problem exists if and only if a corresponding concrete plan exists. This will allow
+us later to prove the soundness and completeness of our subgraph planning algorithm.
+For the rest of this section we shall assume that our graph G has a partition P =
+{S1 , . . . , Sm } with corresponding configuration relations { , . . . ,  }.
+S1
+
+Sm
+
+A subgraph transition (or just transition) is a plan-step s = (r, u, v) such that u  Sx ,
+v  Sy and Sx 6= Sy . A transition s = (r, u, v) is applicable to a configuration tuple
+ = (c1 , . . . , cm ) of G if
+cx 	 (r, u) 6= , where u  Sx ,
+Sx
+
+and cy  (r, v) 6= , where v  Sy .
+Sy
+
+That is, the robots in Sx can be rearranged so that robot r can leave via u and the robots
+in Sy can be rearranged so that v is empty for r to enter.
+If transition s = (r, u, v) is applicable to  = (c1 , . . . , cm ) with u  Sx and v  Sy then
+we can apply s to  to compute a set s() of configuration-tuples
+(c01 , . . . c0m )  s()
+if and only if
+c0x  cx 	 (r, u),
+Sx
+
+and
+
+c0y
+
+ cy  (r, v),
+
+c0z
+
+= cz , otherwise.
+
+Sy
+
+Lemma 7 If a is an arrangement in G with partition {S1 , . . . , Sm } and transition s =
+(r, u, v) is applicable to a then s is also applicable to (a), with
+(s(a))  s((a))
+533
+
+fiRyan
+
+Proof Let Sx , Sy be disjoint subgraphs from the partition such that u  Sx , v  Sy . Let
+ax = a/Sx and ay = a/Sy . Let (a) = (c1 , . . . , cm ). Now
+ax  cx
+ax (u) = r
+ cx 	 (r, u) 6= .
+And similarly
+ay  cy
+ay (v) = 2
+ cy  (r, v) 6= .
+Therefore s is applicable in (a).
+Further, let b = s(a) and (b) = (c01 , . . . , c0m ). Now
+c0x = (b/Sx )
+Sx
+
+= (ax 	 r)
+Sx
+
+ cx 	 (r, u)
+and
+c0y = (b/Sy )
+Sy
+
+= (ay  (r, v))
+Sy
+
+ cy  (r, v)
+and
+c0z = cz .
+Therefore (b)  s() as required.
+
+
+
+Lemma 8 If s = (r, u, v) with u, v  Sx (i.e. s is not a transition) and a is an arrangement in G such that s is applicable in a, then (a) = (s(a)).
+Proof
+Let b = s(a). Let ai = a/Si and bi = b/Si for all i = 1 . . . m. Let (a) =
+(c1 , . . . , cm ) and (b) = (c01 , . . . , c0m ).
+Now the plan Px = hsi is a plan from ax to bx in Sx , so ax  bx implying cx = c0x . For
+all other z 6= x, we have az = bz so cz = c0z . Therefore (a) = (b) as required.
+
+
+534
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+Now we can define an abstract plan  from arrangement  to  in G as a tuple (, )
+where  is a sequence of configuration tuples h0 , . . . , l i and  is a sequence of plan steps
+hs1 , . . . , sl i, such that
+0 = (),
+l = (),
+si is applicable in i1 ,
+and i  s(i1 ).
+Theorem 1 An abstract plan from  to  in G exists if and only if there exists a corresponding concrete plan P from  to  in G.
+Proof Case (  P ):
+Let  = (, ) be an abstract plan on G from  to , with  = h0 , . . . , l i and
+ = hs1 , . . . , sl i. Let i = (ci0 , . . . , cim ).
+We shall construct a concrete plan
+P = P0 . hs1 i .P1 .    .Pl1 . hsl i .Pl
+where each Pi is a concrete plan from ai to bi , satisfying
+a0 = ,
+bl = ,
+ai , bi  i ,
+si+1 is applicable in bi ,
+and ai+1 = si+1 (bi ), i = 0 . . . l  1.
+Proposition 1 ai and bi exist satisfying these conditions for all i = 1 . . . l.
+Proof by induction:
+a0 =  therefore a0 exists.
+Assume ai exists:
+Let si+1 = (r, u, v) with u  Sx and v  Sy . From the definition of an abstract plan,
+si+1 is applicable in i , and i+1 = si+1 (i ). Therefore
+ci+1
+ cix 	 (r, u) 6= 
+x
+n
+o
+i
+ ci+1
+
+(a
+	
+(r,
+u))
+|
+a(u)
+=
+r,
+a
+
+c
+x
+x 6= 
+ a  cix : a(u) = r
+Set bix equal to this a. We now have
+ci+1
+= (bix 	 (r, u))
+x
+ bix 	 (r, u)  ci+1
+x
+
+535
+
+fiRyan
+
+Also
+ci+1
+ ciy  (r, v) 6= 
+y
+n
+o
+i
+ ci+1
+
+(a
+
+(r,
+v))
+|
+a(v)
+=
+2,
+a
+
+c
+y
+y 6= 
+ a  ciy : a(v) = 2
+Set biy equal to this a. We now have
+ci+1
+= (biy  (r, v))
+y
+ biy  (r, v)  ci+1
+y
+Set biz = ai /Sz for all other z 
+/ {x, y}
+bij is now defined for every subgraph Sj in the partition of G. Therefore bi = bi1   bim
+exists and is an arrangement in G.
+So if ai exists then bi also exists for all i = 0 . . . l  1.
+Now si+1 is applicable in bi since
+bi (u) = bix (u) = r
+bi (v) = biy (v) = 2
+So ai+1 = si+1 (bi ) exists, and
+ai+1 /Sx = bix 	 r  ci+1
+x
+ai+1 /Sy = biy  (r, v)  ci+1
+y
+ai+1 /Sz = biz , z 
+/ {x, y}  ciz
+ ci+1
+z
+So
+ai+1  i+1
+By induction, ai  i exists for all i = 0 . . . l and bi  i exists for all i = 0 . . . l  1.
+Furthermore bl =   () = l , so bi exists for all i for all i = 0 . . . l, as required.
+
+Proposition 2 A concrete plan Pi from ai to bi exists, for i = 0, . . . , l
+Proof
+
+Since ai , bi  i a plan Pi must exist from ai to bi , by Lemma 6 above.
+
+
+
+Proposition 3 P is a concrete plan from  to  in G.
+Proof
+Pi is a plan from ai to bi for all i = 0, . . . , l. Furthermore ai+1 = si+1 (bi ), so
+hsi+1 i is a plan from bi to ai+1 . Therefore by the concatenation of plans
+P = P0 . hs1 i .    . hsl i .Pl
+is a plan in G from a0 =  to bl = , as required.
+536
+
+
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+Case (P  ):
+Let P = hs1 , . . . , sL i be a concrete plan from  to  in G. We wish to construct an
+abstract plan  = (, ) from  to  in G.
+Let T = ht0 , . . . , tl i be an increasing sequence of integers with t0 = 0 and ti = t iff st is
+a subgraph transition. (Note: we are using capital L to designate the length of the concrete
+plan P and lowercase l to designate the number of transitions in that plan, which will be
+the length of the corresponding abstract plan .)
+Now construct the sequence of arrangements A = h0 , . . . , L i such that
+0 = 
+i+1 = si+1 (i ), i = 0 . . . L  1
+and split A into subsequences A0 , . . . , Al such that
+
+
+ff
+Ai = ti , . . . , ti+1 1
+Define i = (ti ), i = 0, . . . , l,  = h0 , . . . , l i and  = hst1 , . . . , stl i.
+Proposition 4 a : a  Ai  a  i
+Proof by induction:
+By definition,
+ti  (ti ) = i
+Now assume t  i for t = ti + j, j < |Ai |  1. We need to prove t+1  i .
+Let st+1 = (r, u, v). Since t + 1 
+/ T we must have u, v  Sx . So using Lemma 8 above
+(t+1 ) = (st+1 (t ))
+= (t )
+= i .
+Therefore, by induction
+a  i , a  Ai
+as required.
+
+
+
+Proposition 5  = (, ) is a valid abstract plan from  to .
+Proof
+First we check that the initial and final configuration-tuples contain  and 
+respectively:
+0 = (0 ) = ().
+and
+  Al
+   l ,
+ l = ().
+
+537
+
+fiRyan
+
+Now, for each i = 0 . . . l  1 let bi = ti+1 1 (i.e. the final element of Ai ), and let
+= bi /Sz for z = 1 . . . m.
+Let s = sti+1 = (r, u, v) with u  Sx and v  Sy . Now s is applicable in bi by the
+definition of P . Therefore, by Lemma 7 above, s is applicable in i and
+
+biz
+
+i+1 = (ai+1 )
+= (s(bi ))
+ s((bi )) = s(i ), as required.
+
+Therefore  is a valid abstract plan.
+
+
+
+This theorem is significant for our planning problem. It tells us that we do not need to
+perform a search of all concrete plans. Instead, we need only search for an abstract plan
+and then convert it into a concrete form. Such a search will succeed if and only if a concrete
+plan exists.
+
+References
+Alami, R., Fleury, S., Herrb, M., Ingrand, F., & Robert, F. (1998). Multi-robot cooperation
+in the MARTHA project. Robotics & Automation Magazine, IEEE, 5 (1), 3647.
+Alarie, S., & Gamache, M. (2002). Overview of Solution Strategies Used in Truck Dispatching Systems for Open Pit Mines. International Journal of Surface Mining, Reclamation and Environment, 16 (1), 5976.
+Bakker, B., Zivkovic, Z., & Krose, B. (2005). Hierarchical dynamic programming for robot
+path planning. Proceedings of IEEE/RSJ International Conference on Intelligent
+Robots and Systems, 27562761.
+Barbehenn, M., & Hutchinson, S. (1995). Efficient search and hierarchical motion planning
+by dynamically maintaining single-source shortest paths trees. IEEE transactions on
+robotics and automation, 11 (2), 198214.
+Barraquand, J., & Latombe, J.-C. (1991). Robot motion planning: A distributed representation approach. International Journal of Robotics Research, 10 (6), 628649.
+Botea, A., Muller, M., & Schaeffer, J. (2003). Using abstraction for planning in sokoban. In
+Computers and Games: Lecture Notes in Computer Science, Vol. 2883, pp. 360375.
+Springer.
+Buro, M., & Furtak, T. (2004). RTS games and real-time AI research. Proceedings of the
+Behavior Representation in Modeling and Simulation Conference (BRIMS), Arlington
+VA 2004, 5158.
+Choset, H. (1996). Sensor based motion planning: The hierarchical generalized voronoi
+graph. Ph.D. thesis, California Institute of Technology, Pasadena, California.
+Choset, H., & Burdick, J. (1995). Sensor based planning. I. The generalized Voronoi graph.
+Proceedings of the International Conference on Robotics and utomation, 2.
+
+538
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+Conte, G., & Zulli, R. (1995). Hierarchical path planning in a multi-robot environment with
+a simple navigation function. IEEE Transactions on Systems, Man and Cybernetics,
+25 (4), 651654.
+Erdmann, M., & Lozano-Perez, T. (1986). On Multiple Moving Objects. Tech. rep. 883,
+M.I.T. AI Laboratory.
+Everett, H., Gage, D., Gilbreth, G., Laird, R., & Smurlo, R. (1994). Real-world issues
+in warehouse navigation. Proceedings of the SPIE Conference on Mobile Robots IX,
+2352.
+Fitch, R., Butler, Z., & Rus, D. (2003). Reconfiguration planning for heterogeneous selfreconfiguring robots. Proceedings of IEEE/RSJ International Conference on Intelligent Robots and Systems, 3, 24602467.
+Gecode Team (2006). Gecode: Generic constraint development environment,. Available
+from http://www.gecode.org.
+Hada, Y., & Takase, K. (2001). Multiple mobile robot navigation using the indoor global
+positioning system (iGPS). Proceedings of IEEE/RSJ International Conference on
+Intelligent Robots and Systems, 2.
+Junghanns, A., & Schaeffer, J. (2001). Sokoban: Enhancing general single-agent search
+methods using domain knowledge. Artificial Intelligence, 129 (1-2), 219251.
+LaValle, S. M. (2006). Planning Algorithms. Cambridge University Press.
+LaValle, S. M., & Hutchinson, S. A. (1998). Optimal Motion Planning for Multiple Robots
+Having Independent Goals. In IEEE Transactions on Robotics and Automation,
+Vol. 14.
+Long, D., & Fox, M. (2002). Planning with Generic Types, chap. 4, pp. 103138. Morgan
+Kaufmann.
+Porteous, J., Long, D., & Fox, M. (2004). The Identification and Exploitation of Almost
+Symmetry in Planning Problems. In Brown, K. (Ed.), Proceedings of the 23rd UK
+Planning and Scheduling SIG.
+Sacerdoti, E. (1974). Planning in a hierarchy of abstraction spaces. Artificial Intelligence,
+5 (2), 115135.
+Sanchez, G., Ramos, F., & Frausto, J. (1999). Locally-Optimal Path Planning by Using
+Probabilistic Road Maps and Simulatead Annealing. Proceedings of IASTED International Conference on Robotics and Applications.
+Sharma, R., & Aloimonos, Y. (1992). Coordinated motion planning: the warehousemans
+problem with constraints on free space. IEEE Transactions on Systems, Man and
+Cybernetics, 22 (1), 130141.
+van den Berg, J., & Overmars, M. (2005). Prioritized Motion Planning for Multiple Robots.
+In Proceedings of IEEE/RSJ International Conference on Intelligent Robots and Systems, pp. 430435.
+Zivkovic, Z., Bakker, B., & Krose, B. (2005). Hierarchical map building using visual landmarks and geometric constraints. Proceedings of IEEE/RSJ International Conference
+on Intelligent Robots and Systems, 24802485.
+539
+
+fiRyan
+
+Zivkovic, Z., Bakker, B., & Krose, B. (2006). Hierarchical Map Building and Planning based
+on Graph Partitioning. IEEE International Conference on Robotics and Automation.
+
+540
+
+fiExploiting Subgraph Structure in Multi-Robot Path Planning
+
+Algorithm 2 Planning with subgraph abstraction.
+1: function Plan(G, P, R, a, b)
+2:
+  (a)
+3:
+  (b)
+4:
+  AbstractPlan(G, P, R, , )
+5:
+P  Resolve(G, P, , a, b)
+6:
+return P
+7: end function
+
+. Build a plan from a to b in G using partition P.
+. Get the initial configuration.
+. Get the final configuration.
+. Build the abstract plan.
+. Resolve to a concrete plan.
+
+1: function AbstractPlan(G, P, R, , ) . Build an abstract plan from  to  in G using P.
+2:
+if  =  then
+3:
+return (hi , hi)
+. Done.
+4:
+end if
+5:
+(c1 , . . . , cm ) = 
+6:
+choose r  R
+. Choose a robot.
+7:
+select x : r  range(cx )
+. Find the subgraph it occupies.
+8:
+choose Sy  P : (Sx , Sy )  X
+. Choose a neighbouring subgraph.
+9:
+choose (u, v)  E(G) : u  Sx , v  Sy
+. Choose a connecting edge.
+. Choose the resulting configurations of Sx and Sy .
+10:
+choose c0x  cx 	 (r, u)
+11:
+choose c0y  cy  (r, v)
+12:
+  (c1 , . . . , c0x , . . . , c0y , . . . , cm )
+. Construct the new configuration tuple.
+13:
+(, )  AbstractPlan(G, P, R, , )
+. Recurse.
+14:
+0  .
+15:
+0  (r, u, v).
+16:
+return (0 , 0 )
+17: end function
+1: function Resolve(G, P, , a, b)
+. Resolve the abstract plan into a concrete plan.
+2:
+ = (, )
+3:
+ = h0 , . . . , l i
+4:
+ = hs1 , . . . , sl i
+5:
+P hi
+6:
+a0  a
+7:
+for i = 0 . . . (l  1) do
+8:
+(r, u, v) = si+1
+. The next transition.
+9:
+(c01 , . . . , c0m ) = i+1
+. The target configurations.
+10:
+find Sx : u  Sx
+11:
+find Sy : v  Sy
+12:
+aiz  ai /Sz , z = 1 . . . m
+13:
+(Pxi , bix )  Sx .ResolveExit(aix , r, u, c0x )
+. Rearrange Sx to let robot r exit.
+. Rearrange Sy to let robot r enter.
+14:
+(Pyi , biy )  Sy .ResolveEnter(aiy , r, v, c0y )
+15:
+P  P.(Pxi ||Pyi )
+16:
+bi = ai1  . . .  bix  . . .  biy  . . .  aim
+17:
+ai+1  si+1 (bi )
+18:
+P  P.. hsi+1 i
+. Add the transition.
+19:
+end for
+20:
+for z = 1 . . . m do
+21:
+Tz  Sz .ResolveTerminate(al /Sz , b/Sz )
+. Rearrange Sz into its final arrangement.
+22:
+end for
+23:
+P  P.(T1 || . . . ||Tm )
+24:
+return P
+25: end function
+
+541
+
+fiRyan
+
+Algorithm 3 A simple prioritised planning algorithm.
+1: function Plan(G, a, b)
+2:
+a0 [v]  2, v  G
+. a0 is the initial arrangement of robots
+0
+3:
+b [v]  2, v  G
+. b0 is the final arrangement of robots
+4:
+for i = 1 . . . k do
+5:
+a0 [v] = ri , for v : a[v] = ri
+6:
+b0 [v] = ri , for v : b[v] = ri
+7:
+(P, Pi ) PlanOne(G, ri , hP1 , . . . , Pi1 i , h0, . . . , 0i , a0 , b0 )
+. Build a plan for
+8:
+cut
+. Do not backtrack once a plan
+9:
+end for
+10:
+return P
+11: end function
+
+r1 . . . ri .
+r1 . . . ri .
+
+r1 . . . ri .
+is found
+
+1: function PlanOne(G, ri , hP1 , . . . , Pi1 i , ht1 , . . . , ti1 i , a, b)
+2:
+if a = b then
+3:
+return (hi, hi)
+. Done.
+4:
+end if
+5:
+choose rj  R : j  i
+. Choose a robot to move.
+6:
+if j = i then
+7:
+select vf : a[vf ] = ri
+8:
+choose vt  {v | (vf , v)  G}
+. Choose a new action for ri
+9:
+else
+10:
+(r, vf , vt )  Pj [tj ]
+. Select the old action for rj from Pj
+11:
+tj  tj + 1
+12:
+end if
+13:
+if a[vt ] 6= 2 then
+14:
+fail
+. Backtrack if the destination is occupied.
+15:
+end if
+16:
+a[vf ]  2
+. Move the robot.
+17:
+a[vt ]  r
+18:
+(P, Pi ) PlanOne(G, ri , hP1 , . . . , Pi1 i , ht1 , . . . , ti1 i , a, b)
+. Recurse.
+19:
+P  (rj , vf , vt ).P
+. Add this step to the global plan.
+20:
+if j = i then
+21:
+Pi  (ri , vf , vt ).Pri
+. Add this step to ri s plan.
+22:
+end if
+23:
+return (P, Pi )
+24: end function
+
+542
+
+fi

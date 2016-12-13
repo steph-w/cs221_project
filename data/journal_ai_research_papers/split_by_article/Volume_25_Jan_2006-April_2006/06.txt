@@ -1,0 +1,3406 @@
+Journal of Artificial Intelligence Research 25 (2006) 529-576
+
+Submitted 4/05; published 4/06
+
+Asynchronous Partial Overlay: A New Algorithm for Solving
+Distributed Constraint Satisfaction Problems
+Roger Mailler
+
+mailler@ai.sri.com
+
+SRI International
+333 Ravenswood Dr
+Menlo Park, CA 94025 USA
+
+Victor R. Lesser
+
+lesser@cs.umass.edu
+
+University of Massachusetts, Department of Computer Science
+140 Governors Drive
+Amherst, MA 01003 USA
+
+Abstract
+Distributed Constraint Satisfaction (DCSP) has long been considered an important
+problem in multi-agent systems research. This is because many real-world problems can
+be represented as constraint satisfaction and these problems often present themselves in a
+distributed form. In this article, we present a new complete, distributed algorithm called
+asynchronous partial overlay (APO) for solving DCSPs that is based on a cooperative mediation process. The primary ideas behind this algorithm are that agents, when acting as a
+mediator, centralize small, relevant portions of the DCSP, that these centralized subproblems overlap, and that agents increase the size of their subproblems along critical paths
+within the DCSP as the problem solving unfolds. We present empirical evidence that shows
+that APO outperforms other known, complete DCSP techniques.
+
+1. Introduction
+The Distributed constraint satisfaction problem has become a very useful representation
+that is used to describe a number of problems in multi-agent systems including distributed
+resource allocation (Conry, Kuwabara, Lesser, & Meyer, 1991) and distributed scheduling
+(Sycara, Roth, Sadeh, & Fox, 1991). Some researchers in cooperative multi-agent systems
+have focused on developing methods for solving these problems that are based on one key assumption. Particularly, the agents involved in the problem solving process are autonomous.
+This means that the agents are only willing to exchange information that is directly relevant
+to the shared problem and retain the ability to refuse a solution when it obviously conflicts
+with some internal goal.
+These researchers believe that the focus on agent autonomy precludes the use of centralization because it forces the agents to reveal all of their internal constraints and goals which
+may, for reasons of privacy or pure computational complexity, be impossible to achieve.
+Several algorithms have been developed with the explicit purpose of allowing the agents
+to retain their autonomy even when they are involved in a shared problem which exhibits
+interdependencies. Probably the best known algorithms that fit this description can be
+found in the work of Yokoo et al. in the form of distributed breakout (DBA) (Yokoo &
+Hirayama, 1996), asynchronous backtracking (ABT) (Yokoo, Durfee, Ishida, & Kuwabara,
+1992), and asynchronous weak-commitment (AWC) (Yokoo & Hirayama, 2000).
+c
+2006
+AI Access Foundation. All rights reserved.
+
+fiMailler & Lesser
+
+Unfortunately, a common drawback to each of these algorithms is that in an effort to
+provide the agents which complete privacy, these algorithms prevent the agents from
+making informed decisions about the global effects of changing their local allocation, schedule, value, etc. For example, in AWC, agents have to try a value and wait for another agent
+to tell them that it will not work through a nogood message. Because of this, agents never
+learn true reason why another agent or set of agents is unable to accept the value, they only
+learn that their value in combination with other values doesnt work.
+In addition, these techniques suffer because they have complete distribution of the control. In other words, each agent makes decisions based on its incomplete and often inaccurate
+view of the world. The result is that this leads to unnecessary thrashing in the problem
+solving because the agents are trying to adapt to the behavior of the other agents, who in
+turn are trying to adapt to them. Pathologically, this behavior can be counter-productive to
+convergence of the protocol(Fernandez, Bejar, Krishnamachari, Gomes, & Selman, 2003).
+This iterative trial and error approach to discovering the implicit and implied constraints
+within the problem causes the agents to pass an exponential number of messages and actually reveals a great deal of information about the agents constraints and domain values
+(Yokoo, Suzuki, & Hirayama, 2002). In fact, in order to be complete, agents using AWC
+have to be willing to reveal all of their shared constraints and domain values. The key thing
+to note about this statement is that AWC still allows the agents to retain their autonomy
+even if they are forced to reveal information about the variables and constraints that form
+the global constraint network.
+In this paper, we present a cooperative mediation based DCSP protocol, called Asynchronous Partial Overlay (APO). Cooperative mediation represents a new methodology
+that lies somewhere between centralized and distributed problem solving because it uses
+dynamically constructed, partial centralization. This allows cooperative mediation based
+algorithms, like APO, to utilize the speed of current state-of-the-art centralized solvers
+while taking advantage of opportunities for parallelism by dynamically identifying relevant
+problem structure.
+APO works by having agents asynchronously take the role of mediator. When an agent
+acts as a mediator, it computes a solution to a portion of the overall problem and recommends value changes to the agents involved in the mediation session. If, as a result of its
+recommendations, it causes conflicts for agents outside of the session, it links with them
+preventing itself from repeating the mistake in future sessions.
+Like AWC, APO provides the agents with a great deal of autonomy by allowing anyone
+of them to take over as the mediator when they notice an undesirable state in the current
+solution to the shared problem. Further adding to their autonomy, agents can also ignore
+recommendations for changing their local solution made by other agents. In a similar
+way to AWC, APO is both sound and complete when the agents are willing to reveal the
+domains and constraints of their shared variables and allows the agents to obscure the
+states, domains, and constraints of their strictly local variables.
+In the rest of this article, we present a formalization of the DCSP problem (section
+2). In section 3, we describe the underlying assumptions and motivation for this work.
+We then present the APO algorithm (section 4.1) and give an example of the protocols
+execution on a simple 3-coloring problem (section 4.2). We go on to give the proofs for
+the soundness and completeness of the algorithm (section 4.3). In section 5, we present
+530
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+the results of extensive testing that compares APO with AWC within the distributed graph
+coloring domain and the complete compatibility version of the SensorDCSP domain (Bejar,
+Krishnamachari, Gomes, & Selman, 2001) across a variety of metrics including number of
+cycles, messages, bytes transmitted, and serial runtime. In each of these cases, we will show
+that APO significantly outperforms AWC (Yokoo, 1995; Hirayama & Yokoo, 2000). Section
+6 summarizes the article and discusses some future research directions.
+
+2. Distributed Constraint Satisfaction
+A Constraint Satisfaction Problem (CSP) consists of the following:
+
+ a set of n variables V = {x1 , . . . , xn }.
+
+ discrete, finite domains for each of the variables D = {D1 , . . . , Dn }.
+
+ a set of constraints R = {R1 , . . . , Rm } where each Ri (di1 , . . . , dij ) is a predicate on
+the Cartesian product Di1      Dij that returns true iff the value assignments of
+the variables satisfies the constraint.
+
+The problem is to find an assignment A = {d1 , . . . , dn |di  Di } such that each of the
+constraints in R is satisfied. CSP has been shown to be NP-complete, making some form
+of search a necessity.
+In the distributed case, DCSP, using variable-based decomposition, each agent is assigned one or more variables along with the constraints on their variables. The goal of each
+agent, from a local perspective, is to ensure that each of the constraints on its variables
+is satisfied. Clearly, each agents goal is not independent of the goals of the other agents
+in the system. In fact, in all but the simplest cases, the goals of the agents are strongly
+interrelated. For example, in order for one agent to satisfy its local constraints, another
+agent, potentially not directly related through a constraint, may have to change the value
+of its variable.
+In this article, for the sake of clarity, we restrict ourselves to the case where each agent
+is assigned a single variable and is given knowledge of the constraints on that variable.
+Since each agent is assigned a single variable, we will refer to the agent by the name of
+the variable it manages. Also, we restrict ourselves to considering only binary constraints
+which are of the form Ri (di1 , di2 ). Since APO uses centralization as its core, it is easy to
+see that the algorithm would work if both of these restrictions are removed. This point will
+be discussed as part of the algorithm description in section 4.1.4.
+Throughout this article, we use the term constraint graph to refer to the graph formed by
+representing the variables as nodes and the constraints as edges. Also, a variables neighbors
+are the variables with which it shares constraints.
+531
+
+fiMailler & Lesser
+
+3. Assumptions and Motivation
+3.1 Assumptions
+The following are the assumptions made about the environments and agents for which this
+protocol was designed:
+1. Agents are situated, autonomous, computing entities. As such, they are capable of
+sensing their environment, making local decisions based on some model of intentionality, and acting out their decisions. Agents are rationally and resource bounded.
+As a result, agents must communicate to gain information about each others state,
+intentions, decisions, etc.
+2. Agents within the multi-agent system share one or more joint goals. In this paper,
+this goal is Boolean in nature stemming from the DCSP formulation.
+3. Because this work focuses on cooperative problem solving, the agents are cooperative.
+This does not necessarily imply they will share all of their state, intentions, etc. with
+other agents, but are, to some degree, willing to exchange information to solve joint
+goals. It also does not imply that they will change their intentions, state, or decisions
+based on the demands of another agent. Agents still maintain their autonomy and
+the ability to refuse or revise the decisions of other agents based on their local state,
+intentions, decisions, etc.
+4. Each agent has the capability of computing solutions to the joint goal based on their
+potentially limited rationality. This follows naturally from the ability of agents to
+make their own decisions, i.e., every agent is capable of computing a solution to its
+own portion of the joint goal based on its own desires.
+3.2 Motivation for Mediation-Based Problem Solving
+The Websters dictionary defines the act of mediating as follows:
+Mediate: 1. to act as an intermediary; especially to work with opposing sides
+in order to resolve (as a dispute) or bring about (as a settlement). 2. to bring
+about, influence, or transmit by acting as an intermediate or controlling agent
+or mechanism. (Merriam-Webster, 1995)
+By its very definition, mediation implies some degree of centralizing a shared problem in
+order for a group of individuals to derive a conflict free solution. Clearly in situations where
+the participants are willing (cooperative), mediation is a powerful paradigm for solving
+disputes. Its rather strange, considering this, that very little has been done on looking at
+mediation as a cooperative method for solving DCSPs.
+Probably, the earliest mediation-based approach for solving conflicts amongst agents in
+an airspace management application(Cammarata, McArthur, & Steeb, 1983). This work
+investigates using various conflict resolution strategies to deconflict airspace in a distributed
+air traffic control system. The author proposes a method for solving disputes where the
+involved agents elect a leader to solve the problem. Once elected, the leader becomes
+532
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+S1
+
+S2
+
+{1,2}
+
+{1,2}
+
+Figure 1: A simple distributed problem with two variables.
+responsible for recognizing the dispute, devising a plan to correct it, and acting out the
+plan. Various election schemes are tested, but unfortunately, the leader only has authority
+to modify its own actions in order to resolve the conflicts. This obviously leads to situations
+where the plan is suboptimal.
+In (Hayden, Carrick, & Yang, 1999), the authors describe mediation as one of a number possible coordination mechanisms. In this work, the mediator acts as a intermediary
+between agents and can also act to coordinate their behavior. As an intermediary, the mediator routes messages, provides directory services, etc. This provides for a loose coupling
+of the agents, since they only need to know the mediator. The mediator can also act to
+coordinate the agents behavior if they have tight interdependencies.
+Most of the research work on mediation-based problem solving involved settling disputes
+between competitive or semi-competitive agents. Probably one of the best examples of
+using mediation in this manner can be found in the PERSUADER system(Sycara, 1988).
+PERSUADER was designed to settle conflicts between adversarial parties that are involved
+in a labor dispute. PERSUADER uses case-based reasoning to suggest concessions in order
+to converge on a satisfactory solution. Another example of using mediation in this way
+can be found in in a system called Designer Fabricator Interpreter (DFI) (Werkman, 1990).
+In DFI, mediation is used to resolve conflicts as one of a series of problem solving steps.
+Whenever the first step fails, in this case iterative negotiation, a mediator agent steps in and
+tries to convince the agents to relax their constraints. If this fails, the mediator mandates
+a final solution.
+There may be several reasons why mediation has not been more deeply explored as
+a cooperative problem solving method. First, researchers have focused strongly on using
+distributed computing as a way of exploiting concurrency to distribute the computation
+needed to solve hard problems (Rao & Kumar, 1993). Because of this, even partially
+and/or temporarily centralizing sections of the problem can be viewed as contradictory
+to the central goal. Second, researchers have often claimed that part of the power of the
+distributed methods lies in the ability of the techniques to solve problems that are naturally
+distributed. For example, supply chain problems generally have no central monitoring
+authority. Again, directly sharing the reasons why a particular choice is made in the form of
+a constraint can seem to contradict the use of distributed methods. Lastly, researchers often
+claim that for reasons of privacy or security the problem should be solved in a distributed
+fashion. Clearly, sharing information to solve a problem compromises an agents ability to
+be private and/or violates its security in some manner.
+Although, parallelism, natural distribution, security, and privacy, may all seem like good
+justifications for entirely distributed problem solving, in actuality, whenever a problem has
+interdependencies between distributed problem solvers, some degree of centralization and
+information sharing must take place in order to derive a conflict-free solution.
+533
+
+fiMailler & Lesser
+
+Consider, as a simple example, the problem in figure 1. In this figure, two problem
+solvers, each with one variable, share the common goal of having a different value from one
+another. Each of the agents has only two allowable values: {1, 2}. Now, in order to solve
+this problem, each agent must individually decide that they have a different value from the
+other agent. To do this, at the very least, one agent must transmit its value to the other. By
+doing this, it removes half of its privacy (by revealing one of its possible values), eliminates
+security (because the other agent could make him send other values by telling him that this
+value is no good), and partially centralizes the problem solving (agent S2 has to compute
+solutions based on the solution S1 presented and decide if the problem is solved and agent
+S1 just relies on S2 to solve it.) In even this simple example, achieving totally distributed
+problem solving is impossible.
+In fact, if you look at the details of any of the current approaches to solving DCSPs,
+you will observe a significant amount of centralization occurring. Most of these approaches
+perform this centralization incrementally as the problem solving unfolds in an attempt to
+restrict the amount of internal information being shared. Unfortunately, on problems that
+have interdependencies among the problem solvers, revealing an agents information (such
+as the potential values of their variables) is unavoidable. In fact, solutions that are derived
+when one or more agents conceals all of the information regarding a shared constraint or
+variable are based on incomplete information and therefore may not always be sound.
+It follows then, that since you cannot avoid some amount of centralization, mediation
+is a natural method for solving problems that contain interdependencies among distributed
+problem solvers.
+
+4. Asynchronous Partial Overlay
+As a cooperative mediation based protocol, the key ideas behind the creation of the APO
+algorithm are
+ Using mediation, agents can solve subproblems of the DCSP using internal search.
+ These local subproblems can and should overlap to allow for more rapid convergence
+of the problem solving.
+ Agents should, over time, increase the size of the subproblem they work on along
+critical paths within the CSP. This increases the overlap with other agents and ensures
+the completeness of the search.
+4.1 The Algorithm
+Figures 2, 3, 4, 5, and 6 present the basic APO algorithm. The algorithm works by constructing a good list and maintaining a structure called the agent view. The agent view
+holds the names, values, domains, and constraints of variables to which an agent is linked.
+The good list holds the names of the variables that are known to be connected to the owner
+by a path in the constraint graph.
+As the problem solving unfolds, each agent tries to solve the subproblem it has centralized within its good list or determine that it is unsolvable which indicates the entire global
+problem is over-constrained. To do this, agents take the role of the mediator and attempt
+534
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+procedure initialize
+di  random d  Di ;
+pi  sizeof (neighbors) + 1;
+mi  true;
+mediate  false;
+add xi to the good list;
+send (init, (xi , pi , di , mi , Di , Ci )) to neighbors;
+initList  neighbors;
+end initialize;
+when received (init, (xj , pj , dj , mj , Dj , Cj )) do
+Add (xj , pj , dj , mj , Dj , Cj ) to agent view;
+if xj is a neighbor of some xk  good list do
+add xj to the good list;
+/ good list
+add all xl  agent view  xl 
+that can now be connected to the good list;
+pi  sizeof (good list);
+end if;
+if xj 
+/ initList do
+send (init, (xi , pi , di , mi , Di , Ci )) to xj ;
+else
+remove xj from initList;
+check agent view;
+end do;
+Figure 2: The APO procedures for initialization and linking.
+
+to change the values of the variables within the mediation session to achieve a satisfied
+subsystem. When this cannot be achieved without causing a violation for agents outside of
+the session, the mediator links with those agents assuming that they are somehow related to
+the mediators variable. This process continues until one of the agents finds an unsatisfiable
+subsystem, or all of the conflicts have been removed.
+In order to facilitate the problem solving process, each agent has a dynamic priority
+that is based on the size of their good list (if two agents have the same sized good list then
+the tie is broken using the lexicographical ordering of their names). Priorities are used by
+the agents to decide who mediates a session when a conflicts arises. Priority ordering is
+important for two reasons. First, priorities ensure that the agent with the most knowledge
+gets to make the decisions. This improves the efficiency of the algorithm by decreasing
+the effects of myopic decision making. Second, priorities improve the effectiveness of the
+mediation process because lower priority agents expect higher priority agents to mediate.
+This improves the likelihood that lower priority agents will be available when a mediation
+request is sent.
+535
+
+fiMailler & Lesser
+
+when received (ok?, (xj , pj , dj , mj )) do
+update agent view with (xj , pj , dj , mj );
+check agent view;
+end do;
+procedure check agent view
+if initList 6=  or mediate 6=false do
+return;
+m0i  hasConf lict(xi );
+if m0i and j (pj > pi  mj = = true)
+if (d0i  Di ) (d0i  agent view does not conflict)
+and di conflicts exclusively with lower priority neighbors
+di  d0i ;
+send (ok?, (xi , pi , di , mi )) to all xj  agent view;
+else
+do mediate;
+else if mi 6= m0i
+mi  m0i ;
+send (ok?, (xi , pi , di , mi )) to all xj  agent view;
+end if;
+end check agent view;
+
+Figure 3: The procedures for doing local resolution, updating the agent view and the
+good list.
+
+4.1.1 Initialization (Figure 2)
+On startup, the agents are provided with the value (they pick it randomly if one isnt
+assigned) and the constraints on their variable. Initialization proceeds by having each of
+the agents send out an init message to its neighbors. This initialization message includes
+the variables name (xi ), priority (pi ), current value(di ), the agents desire to mediate (mi ),
+domain (Di ), and constraints (Ci ). The array initList records the names of the agents that
+initialization messages have been sent to, the reason for which will become immediately
+apparent.
+When an agent receives an initialization message (either during the initialization or
+through a later link request), it records the information in its agent view and adds the
+variable to the good list if it can. A variable is only added to the good list if it is a
+neighbor of another variable already in the good list. This ensures that the graph created
+by the variables in the good list always remains connected, which focuses the agents internal
+problem solving on variables which it knows it has an interdependency with. The initList
+is then checked to see if this message is a link request or a response to a link request. If an
+agent is in the initList, it means that this message is a response, so the agent removes the
+536
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+procedure mediate
+pref erences  ;
+counter  0;
+for each xj  good list do
+send (evaluate?, (xi , pi )) to xj ;
+counter ++;
+end do;
+mediate  true;
+end mediate;
+when receive (wait!, (xj , pj )) do
+update agent view with (xj , pj );
+counter - -;
+if counter == 0 do choose solution;
+end do;
+when receive (evaluate!, (xj , pj , labeled Dj )) do
+record (xj , labeled Dj ) in preferences;
+update agent view with (xj , pj );
+counter - -;
+if counter == 0 do choose solution;
+end do;
+Figure 4: The procedures for mediating an APO session.
+name from the initList and does nothing further. If the agent is not in the initList then it
+means this is a request, so a response init is generated and sent.
+It is important to note that the agents contained in the good list are a subset of the
+agents contained in the agent view. This is done to maintain the integrity of the good list
+and allow links to be bidirectional. To understand this point, consider the case when a
+single agent has repeatedly mediated and has extended its local subproblem down a long
+path in the constraint graph. As it does so, it links with agents that may have a very limited
+view and therefore are unaware of their indirect connection to the mediator. In order for
+the link to be bidirectional, the receiver of the link request has to store the name of the
+requester in its agent view, but cannot add them to their good list until a path can be
+identified. As can be seen in section 4.3, the bi-directionality of links is important to ensure
+the protocols soundness.
+4.1.2 Checking the agent view (Figure 3)
+After all of the initialization messages are received, the agents execute the check agent view
+procedure (at the end of figure 2). In this procedure, the current agent view (which contains
+the assigned, known variable values) is checked to identify conflicts between the variable
+owned by the agent and its neighbors. If, during this check (called hasConflict in the
+537
+
+fiMailler & Lesser
+
+procedure choose solution
+select a solution s using a Branch and Bound search that:
+1. satisfies the constraints between agents in the good list
+2. minimizes the violations for agents outside of the session
+if s that satisfies the constraints do
+broadcast no solution;
+for each xj  agent view do
+if xj  pref erences do
+if d0j  s violates an xk and xk 
+/ agent view do
+send (init, (xi , pi , di , mi , Di , Ci )) to xk ;
+add xk to initList;
+end if;
+send (accept!, (d0j , xi , pi , di , mi )) to xj ;
+update agent view for xj
+else
+send (ok?, (xi , pi , di , mi )) to xj ;
+end if;
+end do;
+mediate  false;
+check agent view;
+end choose solution;
+Figure 5: The procedure for choosing a solution during an APO mediation.
+figure), an agent finds a conflict with one or more of its neighbors and has not been told by
+a higher priority agent that they want to mediate, it assumes the role of the mediator.
+An agent can tell when a higher priority agent wants to mediate because of the m i flag
+mentioned in the previous section. Whenever an agent checks its agent view it recomputes
+the value of this flag based on whether or not it has existing conflicts with its neighbors.
+When this flag is set to true it indicates that the agent wishes to mediate if it is given
+the opportunity. This mechanism acts like a two-phase commit protocol, commonly seen in
+database systems, and ensures that the protocol is live-lock and dead-lock free.
+When an agent becomes the mediator, it first attempts to rectify the conflict(s) with
+its neighbors by changing its own variable. This simple, but effective technique prevents
+mediation sessions from occurring unnecessarily, which stabilizes the system and saves messages and time. If the mediator finds a value that removes the conflict, it makes the change
+and sends out an ok? message to the agents in its agent view. If it cannot find a nonconflicting value, it starts a mediation session. An ok? message is similar to an init
+message, in that it contains information about the priority, current value, etc. of a variable.
+4.1.3 Mediation (Figures 4, 5, and 6)
+The most complex and certainly most interesting part of the protocol is the mediation. As
+was previously mentioned in this section, an agent decides to mediate if it is in conflict
+538
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+when received (evaluate?, (xj , pj )) do
+mj  true;
+if mediate == true or k (pk > pj  mk = = true) do
+send (wait!, (xi , pi ));
+else
+mediate  true;
+label each d  Di with the names of the agents
+that would be violated by setting di  d;
+send (evaluate!, (xi , pi , labeled Di ));
+end if;
+end do;
+when received (accept!, (d, xj , pj , dj , mj )) do
+di  d;
+mediate  false;
+send (ok?, (xi , pi , di , mi )) to all xj in agent view;
+update agent view with (xj , pj , dj , mj );
+check agent view;
+end do;
+Figure 6: Procedures for receiving an APO session.
+
+with one of its neighbors and is not expecting a session request from a higher priority
+agent. The mediation starts with the mediator sending out evaluate? messages to each
+of the agents in its good list. The purpose of this message is two-fold. First, it informs
+the receiving agent that a mediation is about to begin and tries to obtain a lock from that
+agent. This lock, referred to as mediate in the figures, prevents the agent from engaging
+in two sessions simultaneously or from doing a local value change during the course of a
+session. The second purpose of the message is to obtain information from the agent about
+the effects of making them change their local value. This is a key point. By obtaining this
+information, the mediator gains information about variables and constraints outside of its
+local view without having to directly and immediately link with those agents. This allows
+the mediator to understand the greater impact of its decision and is also used to determine
+how to extend its view once it makes its final decision.
+When an agent receives a mediation request, it responds with either a wait! or
+evaluate! message. The wait message indicates to the requester that the agent is
+currently involved in a session or is expecting a request from an agent of higher priority
+than the requester, which in fact could be itself. If the agent is available, it labels each of
+its domain elements with the names of the agents that it would be in conflict with if it were
+asked to take that value. This information is returned in the evaluate! message.
+The size of the evaluate! message is strongly related to the number of variables and the
+size of the agents domain. In cases where either of these are extremely large, a number of
+techniques can be used to reduce the overall size of this message. Some example techniques
+539
+
+fiMailler & Lesser
+
+include standard message compression, limiting the domain elements that are returned to be
+only ones that actually create conflict or simply sending relevant value/variable pairs so the
+mediator can actually do the labeling. This fact means that the largest evaluate! message
+ever actually needed is polynomial in the number of agents (O(V )). In this implementation,
+for graph coloring, the largest possible evaluate! message is O(|D i | + |V |).
+It should be noted that the agents do not need to return all of the names when they
+have privacy or security reasons. This effects the completeness of the algorithm, because
+the completeness relies on one or more of the agents eventually centralizing the entire
+problem in the worst case. As was mentioned in section 3.2, whenever an agent attempts to
+completely hide information about a shared variable or constraint in a distributed problem,
+the completeness is necessarily effected.
+When the mediator has received either a wait! or evaluate! message from the agents
+that it sent a request to, it chooses a solution. The mediator determines that it has received
+all of the responses by using the counter variable which is set to the size of the good list
+when the evaluate? messages are first sent. As the mediator receives either a wait! or
+evaluate! message, it decrements this counter. When it reaches 0, all of the agents have
+replied.
+Agents that sent a wait! message are dropped from the mediation while for agents
+that sent an evaluate! message their labeled domains specified in the message are recorded
+and used in the search process. The mediator then uses the current values along with the
+labeled domains it has received in the evaluate! messages to conduct a centralized search.
+Currently, solutions are generated using a Branch and Bound search (Freuder & Wallace,
+1992) where all of the constraints in the good list must be satisfied and the number of outside
+conflicts are minimized. This is very similar to the the min-conflict heuristic (Minton,
+Johnston, Philips, & Laird, 1992). Notice that although this search takes all of the variables
+and constraints in its good list into consideration, the solution it generates may not adhere
+to the variable values of the agents that were dropped from the session. These variables are
+actually considered outside of the session and the impact of not being able to change their
+values is calculated as part of the min-conflict heuristic. This causes the search to consider
+the current values of dropped variables as weak-constraints on the final solution.
+In addition, the domain for each of the variables in the good list is ordered such that
+the variables current value is its first element. This causes the search to use the current
+value assignments as the first path in the search tree and has the tendency to minimize the
+changes being made to the current assignments. These heuristics, when combined together,
+form a lock and key mechanism that simultaneously exploits the work that was previously
+done by other mediators and acts to minimize the number of changes in those assignments.
+As will be presented in section 5, these simple feed-forward mechanisms, combined with the
+limited centralization needed to solve problems, account for considerable improvements in
+the algorithms runtime performance.
+If no satisfying assignments are found during this search, the mediator announces that
+the problem is unsatisfiable and the algorithm terminates. Once the solution is chosen,
+accept! messages are sent to the agents in the session, who, in turn, adopt the proposed
+answer.
+The mediator also sends ok messages to the agents that are in its agent view, but for
+whatever reason were not in the session. This simply keeps those agents agent views up540
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+to-date, which is important for determining if a solution has been reached. Lastly, using the
+information provided to it in the evaluate! messages, the mediator sends init messages
+to any agent that is outside of its agent view, but it caused conflict for by choosing a
+solution. This linking step extends the mediators view along paths that are likely to be
+critical to solving the problem or identifying an over-constrained condition. This step also
+ensures the completeness of the protocol.
+Although termination detection is not explicitly part of the APO protocol, a technique
+similar to (Wellman & Walsh, 1999) could easily be added to detect quiescence amongst
+the agents.
+4.1.4 Multiple Variables and n-ary Constraints
+Removing the restrictions presented in section 2 is a fairly straightforward process. Because
+APO uses linking as part of the problem solving process, working with n-ary constraints
+simply involves linking with the n agents within the constraint during initialization and
+when a post-mediation linking needs to occur. Priorities in this scheme are identical to
+those used for binary constraints.
+Removing the single agent per variable restriction is also not very difficult and in fact is
+one of the strengths of this approach. By using a spanning tree algorithm on initialization,
+the agents can quickly identify the interdependencies between their internal variables which
+they can then use to create separate good lists for each of the disconnected components
+of their internal constraint graph. In essence, on startup, the agents would treat each
+of these decomposed problems as a separate problem, using a separate m i flag, priority,
+good list, etc. As the problem solving unfolds, and the agent discovers connections between
+the internal variables (through external constraints), these decomposed problems could be
+merged together and utilize a single structure for all of this information.
+This technique has the advantages of being able to ensure consistency between dependent internal variables before attempting to mediate (because of the local checking before
+mediation), but allows the agent to handle independent variables as separate problems.
+Using a situation aware technique such as this one has been shown to yield the best results
+in previous work(Mammen & Lesser, 1998). In addition, this technique allows the agents
+to hide variables that are strictly internal. By doing pre-computation on the decomposed
+problems, the agents can construct constraints which encapsulate each of the subproblems
+as n-ary constraints where n is the number of variables that have external links. These derived constraints can then be sent as part of the init message whenever the agent receives
+a link request for one of its external variables.
+4.2 An Example
+Consider the 3-coloring problem presented in figure 7. In this problem, there are 8 agents,
+each with a variable and 12 edges or constraints between them. Because this is a 3-coloring
+problem, each variable can only be assigned one of the three available colors {Black, Red,
+or Blue}. The goal is to find an assignment of colors to the variables such that no two
+variables, connected by an edge, have the same color.
+In this example, four constraints are in violation: (ND0,ND1), (ND1,ND3), (ND2,ND4),
+and (ND6,ND7). Following the algorithm, upon startup each agent adds itself to its
+541
+
+fiMailler & Lesser
+
+Figure 7: An example of a 3-coloring problem with 8 nodes and 12 edges.
+good list and sends an init message to its neighbors. Upon receiving these messages,
+the agents add each of their neighbors to their good list because they are able to identify a
+shared constraint with themselves.
+Once the startup has been completed, each of the agents checks its agent view. All of
+the agents, except ND5, find that they have conflicts. ND0 (priority 3) waits for ND1 to
+mediate (priority 5). ND6 and ND7, both priority 4, wait for ND4 (priority 5, tie with
+ND3 broken using lexicographical ordering). ND1, having an equal number of agents in
+its good list, but a lower lexicographical order, waits for ND4 to start a mediation. ND3,
+knowing it is highest priority amongst its neighbors, first checks to see if it can resolve
+its conflict by changing its value, which in this case, it cannot. ND3 starts a session that
+involves ND1, ND5, ND6, and ND7. It sends each of them an evaluate? message. ND4
+being highest priority amongst its neighbors, and unable to resolve its conflict locally, also
+starts a session by sending evaluate? messages to ND1, ND2, ND6, and ND7.
+When each of the agents in the mediation receives the evaluate? message, they first
+check to see if they are expecting a mediation from a higher priority agent. In this case,
+ND1, ND6, and ND7 are expecting from ND4 so tell ND3 to wait. Then they label their
+domain elements with the names of the variables that they would be in conflict with as
+a result of adopting that value. This information is sent in an evaluate! message. The
+following are the labeled domains for the agents that are sent to ND4:
+ ND1 - Black causes no conflicts; Red conflicts with ND0 and ND3; Blue conflicts with
+ND2 and ND4
+ ND2 - Black causes no conflicts; Red conflicts with ND0 and ND3; Blue conflicts with
+ND4
+ ND6 - Black conflicts with ND7; Red conflicts with ND3; Blue conflicts with ND4
+ ND7 - Black conflicts with ND6; Red conflicts with ND3; Blue conflicts with ND4
+
+542
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+Figure 8: The state of the sample problem after ND3 leads the first mediation.
+The following are the responses sent to ND3:
+ ND1 - wait!
+ ND5 - Black causes no conflicts; Red conflicts with ND3; Blue causes no conflicts
+ ND6 - wait!
+ ND7 - wait!
+Once all of the responses are received, the mediators, ND3 and ND4, conduct a branch
+and bound searches that attempt to find a satisfying assignment to their subproblems and
+minimizes the amount of conflict that would be created outside of the mediation. If either
+of them cannot find at least one satisfying assignment, it broadcasts that a solution cannot
+be found.
+In this example, ND3, with the limited information that it has, computes a satisfying
+solution that changes its own color and to remain consistent would have also changed the
+colors of ND6 and ND7. Since it was told by ND6 and ND7 to wait, it changes its color,
+sends an accept ! message to ND5 and ok? messages to ND1, ND6 and ND7. Having
+more information, ND4 finds a solution that it thinks will solve its subproblem without
+creating outside conflicts. It changes its own color to red, ND7 to blue, and ND1 to black
+leaving the problem in the state shown in figure 8.
+ND1, ND4, ND5, ND6 and ND7 inform the agents in their agent view of their new
+values, then check for conflicts. This time, ND1, ND3, and ND6 notice that their values are
+in conflict. ND3, having the highest priority, becomes the mediator and mediates a session
+with ND1, ND5, ND6, and ND7. Following the protocol, ND3 sends out the evaluate?
+messages and the receiving agents label and respond. The following are the labeled domains
+that are returned:
+ ND1 - Black conflicts with ND3; Red conflicts with ND0 and ND4; Blue conflicts with
+ND2
+543
+
+fiMailler & Lesser
+
+Figure 9: The final solution after ND2 leads the second mediation.
+ ND5 - Black conflicts with ND3; Red causes no conflicts; Blue causes no conflicts
+ ND6 - Black conflicts with ND3; Red conflicts with ND4; Blue conflicts with ND7
+ ND7 - Black conflicts with ND3 and ND6; Red conflicts with ND4; Blue causes no
+conflicts
+ND3, after receiving these messages, conducts its search and finds a solution that solves
+its subproblem. It chooses to change its color to red. ND1, ND3, ND5, ND6, and ND7
+check their agent view and find no conflicts. Since, at this point, none of the agents have
+any conflict, the problem is solved (see figure 9).
+4.3 Soundness and Completeness
+In this section we will show that the APO algorithm is both sound and complete. For these
+proofs, it is assumed that all communications are reliable, meaning that if a message is sent
+from xi to xj that xj will receive the message in a finite amount of time. We also assume
+that if xi sends message m1 and then sends message m2 to xj , that m1 will be received
+before m2 . Lastly, we assume that the centralized solver used by the algorithm is sound and
+complete. Before we prove the soundness and completeness, it helps to have a few principal
+lemmas established.
+Lemma 1 Links are bidirectional. i.e. If xi has xj in its agent view then eventually xj
+will have xi in its agent view.
+Proof:
+Assume that xi has xj in its agent view and that xi is not in the agent view of xj . In
+order for xi to have xj in its agent view, xi must have received an init message at some
+point from xj . There are two cases.
+Case 1: xj is in the initList of xi . In this case, xi must have sent xj an init message
+first, meaning that xj received an init message and therefore has xi in its agent view, a
+contradiction.
+544
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+Case 2: xj is not in the initList of xi . In this case, when xi receives the init message
+from xj , it responds with an init message. That means that if the reliable communication
+assumption holds, eventually xj will receive xi s init message and add xi to its agent view.
+Also a contradiction.
+Lemma 2 If agent xi is linked to xj and xj changes its value, then xi will eventually be
+informed of this change and update its agent view.
+Proof:
+Assume that xi has a value in its agent view for xj that is incorrect. This would mean
+that at some point xj altered its value without informing xi . There are two cases:
+Case 1: xj did not know it needed to send xi an update. i.e. xi was not in xj s
+agent view. Contradicts lemma 1.
+Case 2: xj did not inform all of the agents in its agent view when it changes its value.
+It is clear from the code that this cannot happen. Agents only change their values in the
+check agent view, choose solution, and accept! procedures. In each of these cases, it informs
+all of the agents within its agent view by either sending an ok? or through the accept!
+message that a change to its value has occurred. A contradiction.
+Lemma 3 If xi is in conflict with one or more of its neighbors, does not expect a mediation
+from another higher priority agent in its agent view, and is currently not in a session, then
+it will act as mediator.
+Proof:
+Directly from the procedure check agent view.
+Lemma 4 If xi mediates a session that has a solution, then each of the constraints between
+the agents involved in the mediation will be satisfied.
+Proof:
+Assume that there are two agents xj and xk (either of them could be xi ), that were
+mediated over by xi and after the mediation there is a conflict between xj and xk . There
+are two ways this could have happened.
+Case 1: One or both of the agents must have a value that xi did not assign to it as
+part of the mediation.
+Assume that xj and/or xk has a value that xi did not assign. We know that since xi
+mediated a session including xj and xk , that xi did not receive a wait! message from
+either of xj or xk . This means that they could not have been mediating. This also means
+that they must have set their mediate flags to true when xi sent them the evaluate?
+message. Since the only times an agent can change its value is when its mediate flag is
+false, it is mediating, or has been told to by a mediator, xj and/or xk could only have
+changed their values is if xi told them to, which contradicts the assumption.
+Case 2: xi assigned them a value that caused them to be in conflict with one another.
+Lets assume that xi assigned them conflicting values. This means that xi chose a
+solution that did not take into account the constraints between xj and xk . But, we know
+that xi only chooses satisfying solutions that include all of the constraints between all of
+the agents in the good list. This leads to a contradiction.
+545
+
+fiMailler & Lesser
+
+This lemma is important because it says that once a mediator has successfully concluded
+its session, the only conflicts that can exist are on constraints that were outside of the
+mediation. This can be viewed as the mediator pushing the constraint violations outside
+of its view. In addition, because mediators get information about who the violations are
+being pushed to and establish links with those agents, over time, they gain more context.
+This is a very important point when considering the completeness of the algorithm.
+Theorem 1 The APO algorithm is sound. i.e. It reaches a stable state only if it has either
+found an answer or no solution exists.
+Proof:
+In order to be sound, the agents can only stop when they have reached an answer. The
+only condition in which they would stop without having found an answer is if one or more
+of the agents is expecting a mediation request from a higher priority agent that does not
+send it. In other words, the protocol has deadlocked.
+Lets say we have 3 agents, xi , xj , and xk with pi < pj  pk < pj (i could be equal to k)
+and xk has a conflict with xj . There are two cases in which xj would not mediate a session
+that included xi , when xi was expecting it to:
+Case 1: xi has mj = true in its agent view when the actual value should be false.
+Assume that xi has mj = true in its agent view when the true value of mj = false.
+This would mean that at some point xj changed the value of mj to false without informing
+xi . There is only one place that xj changes the value of mj , this is in the check agent view
+procedure (see figure 3). Note that in this procedure, whenever the flag changes value from
+true to false, the agent sends an ok message to all the agents in its agent view. Since
+by lemma 1 we know that xi is in the agent view of xj , xi must have received the message
+saying that mj = false, contradicting the assumption.
+Case 2: xj believes that xi should be mediating when xi does not believe it should be.
+i.e. xj thinks that mi = true and pi > pj .
+By the previous case, we know that if xj believes that mi = true that this must be the
+case. We only need to show that pi < pj . Lets say that p0i is the priority that xj believes
+xi has and assume that xj believes that p0i > pj when, in fact pi < pj . This means that at
+some point xi sent a message to xj informing it that its current priority was p0i . Since we
+know that priorities only increase over time (the good list only gets larger), we know that
+p0i  pi (xj always has the correct value or underestimates the priority of xi ). Since pj > pi
+and pi  p0i then pj > p0i which contradicts the assumption.
+This is also an important point when considering how the algorithm behaves. This proof
+says that agents always either know or underestimate the true value of their neighbors
+priorities. Because of this, the agents will attempt to mediate when in fact sometimes,
+they shouldnt. The side effect of this attempt, however, is that the correct priorities are
+exchanged so the same mistake doesnt get repeated. The other important thing to mention
+is the case were the priority values become equal. In this case, the tie is broken by using
+the alphabetical order of names of the agents. This ensures that there is always a way to
+break ties.
+Definition 1 Oscillation is a condition that occurs when a subset V 0  V of the agents are
+infinitely cycling through their allowable values without reaching a solution. In other words,
+the agents are live-locked
+546
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+By this definition, in order to be considered part of an oscillation, an agent within the
+subset must be changing its value (if its stable, its not oscillating) and it must be connected
+to the other members of the subset by a constraint (otherwise, it is not actually a part of
+the oscillation).
+Theorem 2 The APO algorithm is complete. i.e. if a solution exists, the algorithm will
+find it. If a solution does not exist, it it will report that fact.
+Proof:
+A solution does not exist whenever the problem is over-constrained. If the problem
+is over-constrained, the algorithm will eventually produce a good list where the variables
+within it and their associated constraints lead to no solution. Since a subset of the variables
+is unsatisfiable, the entire problem is unsatisfiable, therefore, no solution is possible. The
+algorithm terminates with failure if and only if this condition is reached.
+Since we have now shown in Theorem 1 that whenever the algorithm reaches a stable
+state, the problem is solved and that when it finds a subset of the variables that is unsatisfiable it terminates, we only need to show that it reaches one of these two states in finite
+time. The only way for the agents to not reach a stable state is when one or more of the
+agents in the system is in an oscillation.
+There are two cases to consider, the easy case is when a single agent is oscillating
+(|V 0 | = 1) and the other case is when more than one agent is oscillating (|V 0 | > 1).
+Case 1: There is an agent xi that is caught in an infinite loop and all other agents are
+stable.
+Lets assume that xi is in an infinite processing loop. That means that no matter what
+it changes its value to, it is in conflict with one of its neighbors, because if it changed its
+value to something that doesnt conflict with its neighbors, it would have a solution and
+stop. If it changes its value to be in conflict with some xj that is higher priority than it,
+then xj will mediate with xi , contradicting the assumption that all other agents are stable.
+If xi changes its value to be in conflict with a lower priority agent, then by lemma 3, it will
+act as mediator with its neighbors. Since it was assumed that each of the other agents is
+in a stable state, then all of the agents in xi s good list will participate in the session and
+by lemma 4, agent xi will have all of its conflicts removed. This means that xi will be in a
+stable state contradicting the assumption that it was in an infinite loop.
+Case 2: Two or more agents are in an oscillation.
+Lets say we have a set of agents V 0  V that are in an oscillation. Now consider an
+agent xi that is within V 0 . We know that the only conditions in which xi changes its value
+is when it can do so and solve all of its conflicts (a contradiction because x i wouldnt be
+considered part of the oscillation), as the mediator, or as the receiver of a mediation from
+some other agent in V 0 . The interesting case is when an agent acts as the mediator.
+Consider the case when xi is the mediator and call the set of agents that it is mediating
+over Vi . We know according to definition 1 that after the mediation, that at least one
+conflict must be created or remain otherwise the oscillation would stop and the problem
+would be solved. In fact, we know that each of the remaining conflicts must contain an
+agent from the set V 0  Vi by lemma 4. We also know that for each violated constraint that
+has a member from Vi , that xi will link with any agent that is part of those constraints and
+547
+
+fiMailler & Lesser
+
+not a member of Vi . The next time xi mediates, the set Vi will include these members and
+the number of agents in the set V 0  Vi is reduced. In fact, whenever xi mediates the set
+V 0  Vi will be reduced (assuming it is not told to wait! by one or more agents. In this
+case, it takes longer to reduce this set, but the proof still holds). Eventually, after O(|V | 2 )
+mediations, some xi within V 0 must have Vi = V 0 (every agent within the set must have
+mediated |V 0 | times in order for this to happen). When this agent mediates it will push the
+violations outside of the set V 0 or it will solve the subproblem by lemma 4. Either of these
+conditions contradicts the oscillation assumption. Therefore, the algorithm is complete.
+QED
+It should be fairly clear that, in domains that are exponential, the algorithms worsecase runtime is exponential. The space complexity of the algorithm is, however, polynomial,
+because the agents only retain the names, priorities, values, and constraints of other agents.
+
+5. Evaluation
+A great deal of testing and evaluation has been conducted on the APO algorithm. Almost
+exclusively, these test are done comparing the APO algorithm with the currently fastest
+known, complete algorithm for solving DCSPs called the Asynchronous Weak Commitment
+(AWC) protocol. In this section we will describe the AWC protocol (section 5.1), then will
+describe the distributed 3-coloring domain and present results from extensive testing done
+in this domain (section 5.2). This testing compares these two algorithms across a variety
+of metrics, including the cycle time, number of messages, and serial runtime.
+Next, we will describe the tracking domain (section 5.3) and present results from testing
+in this domain as well. For this domain, we modified the core search algorithm of APO to
+take advantage of the polynomial complexity of this problem. This variant called, APOFlow, will also be described.
+5.1 The Asynchronous Weak Commitment (AWC) Protocol
+The AWC protocol (Yokoo, 1995) was one of the first algorithms used for solving DCSPs.
+Like the APO algorithm, AWC is based on variable decomposition. Also, like APO, AWC
+assigns each agent a priority value that dynamically changes. AWC, however, uses the
+weak-commitment heuristic (Yokoo, 1994) to assign these priorities values which is where
+it gets its name.
+Upon startup, each of the agents selects a value for its variable and sends ok? messages
+to its neighbors (agents it shares a constraint with). This message includes the variables
+value and priority (they all start at 0).
+When an agent receives an ok? message, it updates its agent view and checks its
+nogood list for violated nogoods. Each nogood is composed of a set of nogood pairs which
+describe the combination of agents and values that lead to an unsatisfiable condition. Initially, the only nogoods in an agents nogood list are the constraints on its variable.
+When checking its nogood list, agents only check for violations of higher priority nogoods. The priority of a nogood is defined as the priority of the lowest priority variable in
+the nogood. If this value is greater than the priority of the agents variable, the nogood is
+higher priority. Based on the results from this check, one of three things can happen:
+548
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+1. If no higher priority nogoods are violated, the agent does nothing.
+2. If there are higher priority nogoods that are violated and this can be repaired by
+simply changing the agents variable value, then the agent changes its value and sends
+out ok? messages to the agents in its agent view. If there are multiple possible
+satisfying values, then the agent chooses the one that minimizes the number of violated
+lower priority nogoods.
+3. If there are violated higher priority nogoods and this cannot be repaired by changing
+the value of its variable, the agent generates a new nogood. If this nogood is the
+same as a previously generated nogood, it does nothing. Otherwise, it then sends this
+new nogood to every agent that has a variable contained in the nogood and raises the
+priority value of its variable. Finally, it changes its variable value to one that causes
+the least amount of conflict and sends out ok? messages.
+Upon receiving a nogood message from another agent, the agent adds the nogood to
+its nogood list and rechecks for nogood violations. If the new nogood includes the names
+of agents that are not in its agent view it links to them. This linking step is essential to
+the completeness of the search(Yokoo et al., 1992), but causes the agents to communicate
+nogoods and ok? messages to agents that are not their direct neighbors in the constraint
+graph. The overall effect is an increase in messages and a reduction in the amount of
+privacy being provided to the agents because they communicate potential domain values
+and information about their constraints through the exchange of ok? and nogood messages
+with a larger number of agents.
+One of the more recent advances to the AWC protocol has been the addition of resolventbased nogood learning (Hirayama & Yokoo, 2000) which is an adaptation of classical nogood
+learning methods (Ginsberg, 1993; Cha & Iwana, 1996; Frost & Dechter, 1994).
+The resolvent method is used whenever an agent finds that it needs to generate a new
+nogood. Agents only generate new nogoods when each of their domain values are in violation
+with at least one higher priority nogood already in their nogood list. The resolvent method
+works by selecting one of these higher priority nogoods for each of the domain values and
+aggregating them together into a new nogood. This is almost identical to a resolvent in
+propositional logic which is why it is referred to as resolvent-based learning. The AWC
+protocol used for all of our testing incorporates resolvent-based nogood learning.
+5.2 Distributed Graph Coloring
+Following directly from the definition for a CSP, a graph coloring problem, also known as
+a k-colorability problem, consists of the following:
+ a set of n variables V = {x1 , . . . , xn }.
+ a set of possible colors for each of the variables D = {D1 , . . . , Dn } where each Di is
+has exactly k allowable colors.
+ a set of constraints R = {R1 , . . . , Rm } where each Ri (di , dj ) is predicate which implements the not equals relationship. This predicate returns true iff the value assigned
+to xi differs from the value assigned to xj .
+549
+
+fiMailler & Lesser
+
+100
+
+APO
+AWC
+
+Cycles
+
+80
+
+60
+
+40
+
+20
+
+0
+10
+
+20
+
+30
+
+40
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+Variables
+
+Figure 10: Comparison of the number of cycles needed to solve satisfiable, low-density 3coloring problems of various sizes by AWC and APO.
+
+The problem is to find an assignment A = {d1 , . . . , dn |di  Di } such that each of the
+constraints in R is satisfied. Like the general CSP, graph coloring has been shown to be
+NP-complete for all values of k > 2.
+To test the APO algorithm, we implemented the AWC and APO algorithms and conducted experiments in the distributed 3-coloring domain. The distributed 3-coloring problem is a 3-coloring problem with n variables and m binary constraints where each agent is
+given a single variable. We conducted 3 sets of graph coloring based experiments to compare
+the algorithms computation and communication costs.
+5.2.1 Satisfiable Graphs
+In the first set of experiments, we created solvable graph instances with m = 2.0n (lowdensity), m = 2.3n (medium-density), and m = 2.7n (high-density) according to the method
+presented in (Minton et al., 1992). Generating graphs in this way involves partitioning the
+variables into k equal-sized groups. Edges are then added by selecting two of the groups at
+random and adding an edge between a random member of each group. This method ensures
+that the resulting graphs are satisfiable, but also tests a very limited and very likely easier
+subset of the possible graphs. These tests were done because they are traditionally used by
+other researchers in DCSPs.
+These particular values for m were chosen because they represent the three major regions
+within the phase-transition for 3-colorability (Culberson & Gent, 2001). A phase transition
+in a CSP is defined based on an order parameter, in this case the average node degree
+d. The transition occurs at the point where random graphs created with that order value
+yield half satisfiable and half unsatisfiable instances. Values of the order parameter that are
+550
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+200
+
+APO
+AWC
+
+Cycles
+
+150
+
+100
+
+50
+
+0
+10
+
+20
+
+30
+
+40
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+Variables
+
+Figure 11: Comparison of the number of cycles needed to solve satisfiable, medium-density
+3-coloring problems of various sizes by AWC and APO.
+
+lower than the transition point (more than 50% of the instance are satisfiable) are referred
+to being to the left of the transition. The opposite is true of values to the right.
+Phase transitions are important because that are strongly correlated with the overall difficulty of finding a solution to the graph (Cheeseman, Kanefsky, & Taylor, 1991; Monasson,
+Zecchina, Kirkpatrick, Selman, & Troyansky, 1999; Culberson & Gent, 2001). Within the
+phase transition, randomly created instances are typically difficult to solve. Interestingly,
+problems to the right and left of the phase transitions tend to be much easier.
+In 3-colorability, the value d = 2.0 is to the left of the phase transition. In this region,
+randomly created graphs are very likely to be satisfiable and are usually easy to find solve.
+At d = 2.3, which is in the middle of the phase transition the graph has about a 50% chance
+of being satisfiable and is usually hard to solve. For m = 2.7n, right of the phase transition,
+graphs are more than likely to be unsatisfiable and, again, are also easier to solve.
+A number of papers (Yokoo & Hirayama, 2000, 1996; Hirayama & Yokoo, 2000) have
+reported that m = 2.7n is within the critical phase transition for 3-colorability. This seems
+to have been caused by a misinterpretation of previous work in this area(Cheeseman et al.,
+1991). Although Cheeseman, Kanefsky, and Taylor reported that m = 2.7n was within the
+critical region for 3-colorability, they were using reduced graphs for their analysis.
+A reduced graph is one in which the trivially colorable nodes and non-relevant edges
+have been removed. For example, one can easily remove any node with just two edges in
+a 3-coloring problem because it can always be trivially colored. Additionally, nodes that
+possess a unique domain element from their neighbors can also be easily removed.
+In later work, Culberson and Gent identified the critical region as being approximately
+d = 2.3 and therefore was included in our tests(Culberson & Gent, 2001). One should note,
+however, that because phase transitions are typically done on completely random graphs
+551
+
+fiMailler & Lesser
+
+d
+
+2.0
+
+2.3
+
+2.7
+
+Nodes
+15
+30
+45
+60
+75
+90
+Overall
+15
+30
+45
+60
+75
+90
+Overall
+15
+30
+45
+60
+75
+90
+Overall
+
+APO
+Mean
+17.82
+27.07
+39.97
+53.24
+59.83
+80.75
+
+APO
+StDev
+8.15
+17.11
+25.79
+32.32
+35.35
+54.30
+
+AWC
+Mean
+17.38
+24.62
+43.76
+69.96
+80.32
+82.92
+
+AWC
+StDev
+12.70
+19.23
+30.98
+49.03
+103.76
+61.01
+
+15.04
+34.01
+47.72
+92.73
+114.02
+160.88
+
+5.55
+16.81
+26.58
+72.46
+75.84
+125.12
+
+20.49
+41.30
+109.99
+135.60
+185.84
+189.04
+
+11.27
+29.58
+74.85
+146.57
+119.94
+91.27
+
+13.83
+27.28
+42.47
+52.15
+64.54
+87.14
+
+3.56
+10.10
+18.01
+23.12
+26.26
+42.82
+
+20.29
+39.99
+62.92
+86.89
+104.09
+127.04
+
+10.32
+24.08
+35.23
+43.69
+46.62
+64.97
+
+p(AW C  AP O)
+0.77
+0.27
+0.34
+0.01
+0.07
+0.81
+0.01
+0.00
+0.04
+0.00
+0.01
+0.00
+0.07
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+
+Table 1: Comparison of the number of cycles needed to solve satisfiable 3-coloring problems
+of various sizes and densities by AWC and APO.
+
+552
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+APO
+
+140
+
+AWC
+120
+
+Cycles
+
+100
+80
+60
+40
+20
+0
+10
+
+20
+
+30
+
+40
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+Variables
+
+Figure 12: Comparison of the number of cycles needed to solve satisfiable, high-density
+3-coloring problems of various sizes by AWC and APO.
+
+and by its very definition involves both satisfiable and unsatisfiable instances, it is very
+hard to apply the phase-tranisition results to graphs created using the technique described
+at the beginning of the section because it only generates satisfiable instances. A detailed
+phase transition analysis has not been done on this graph generation technique and in fact,
+we believe that these graphs tend to be easier than randomly created satisfiable ones of the
+same size and order.
+To evaluate the relative strengths and weakness of each of the approaches, we measured
+the number of cycles and the number of messages used during the course of solving each
+of the problems. During a cycle, incoming messages are delivered, the agent is allowed
+to process the information, and any messages that were created during the processing are
+added to the outgoing queue to be delivered at the beginning of the next cycle. The actual
+execution time given to one agent during a cycle varies according to the amount of work
+needed to process all of the incoming messages. The random seeds used to create each
+graph instance and variable instantiation were saved and used by each of the algorithms for
+fairness.
+For this comparison between AWC and APO, we randomly generated 10 graphs of size
+n = 15, 30, 45, 60, 75, 90 and m = 2.0n, 2.3n, 2.7n and for each instance generated 10 initial
+variable assignments. Therefore, for each combination of n and m, we ran 100 trials making
+a total of 1800 trials. The results from this experiment can be seen in figures 10 through 15
+and table 1. We should mention that the results of the testing on AWC obtained from these
+experiments agree with previous results (Hirayama & Yokoo, 2000) verifying the correctness
+of our implementation.
+At first glance, figure 10 appears to indicate that for satisfiable low-density graph instances, AWC and APO perform almost identically in terms of cycles to completion. Look553
+
+fiMailler & Lesser
+
+APO
+
+AWC
+
+Nodes
+15
+30
+45
+60
+75
+90
+15
+30
+45
+60
+75
+90
+
+% Links
+Mean
+32.93
+17.24
+11.97
+9.30
+7.42
+6.51
+55.76
+32.89
+27.00
+26.47
+21.99
+20.11
+
+% Links
+StDev
+3.52
+2.59
+1.84
+1.30
+0.95
+0.96
+12.31
+8.88
+7.89
+9.12
+7.67
+7.89
+
+% Central
+Mean
+60.53
+42.53
+33.27
+29.00
+24.60
+24.93
+79.73
+60.97
+56.49
+56.98
+53.19
+50.38
+
+% Central
+StDev
+9.12
+8.06
+6.61
+7.31
+6.73
+6.16
+11.45
+10.98
+11.57
+14.23
+13.29
+13.78
+
+Table 2: Link statistics for satisfiable, low-density problems.
+
+APO
+
+AWC
+
+Nodes
+15
+30
+45
+60
+75
+90
+15
+30
+45
+60
+75
+90
+
+% Links
+Mean
+37.46
+21.24
+14.90
+12.85
+11.17
+10.07
+63.19
+42.84
+52.05
+43.69
+47.77
+44.04
+
+% Links
+StDev
+3.45
+2.85
+2.27
+2.99
+2.45
+3.10
+12.06
+11.83
+13.52
+14.59
+14.10
+10.84
+
+% Central
+Mean
+67.60
+51.37
+43.67
+42.98
+43.76
+40.47
+83.56
+72.20
+80.67
+74.93
+79.41
+77.98
+
+% Central
+StDev
+8.26
+9.32
+11.40
+13.06
+12.69
+14.55
+8.96
+12.09
+11.24
+14.56
+12.18
+10.52
+
+Table 3: Link statistics for satisfiable, medium-density problems.
+
+554
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+APO
+
+AWC
+
+Nodes
+15
+30
+45
+60
+75
+90
+15
+30
+45
+60
+75
+90
+
+% Links
+Mean
+43.28
+24.29
+18.07
+13.86
+11.85
+10.86
+78.87
+58.03
+54.06
+53.01
+49.63
+47.72
+
+% Links
+StDev
+2.86
+2.61
+2.06
+1.77
+1.57
+1.85
+12.29
+11.66
+13.44
+12.77
+11.36
+13.81
+
+% Central
+Mean
+74.53
+59.30
+52.62
+47.78
+46.37
+50.73
+93.60
+86.27
+82.67
+83.47
+81.91
+80.32
+
+% Central
+StDev
+8.34
+9.75
+10.21
+11.32
+11.32
+14.48
+7.75
+9.54
+13.34
+11.04
+9.93
+15.06
+
+Table 4: Link statistics for satisfiable, high-density problems.
+ing at the associated table (Table 1), however, reveals that overall, the pairwise T-test
+indicates that with 99% confidence, APO outperforms AWC on these graphs.
+As the density, or average degree, of the graph increases, the difference becomes more
+apparent. Figures 11 and 12 show that APO begins to scale much more efficiently than
+AWC. This can be attributed to the ability of APO to rapidly identify strong interdependencies between variables and to derive solutions to them using a centralized search of the
+partial subproblem.
+Tables 2 through 4, partially verify this statement. As you can see, on average, less than
+50% of the possible number of links (n  (n  1)) are used by APO in solving problems (%
+Links column). In addition, the maximum amount of centralization (% Central column)
+occuring within any single agent (i.e. the number of agents in its agent view) remains fairly
+low. The highest degree of centralization occurs for small, high-density graphs. Intuitively,
+this makes a lot of sense because in these graphs, a single node is likely to have a high
+degree from the very start. Combine this fact with the dynamic priority ordering and the
+result is large amounts of central problem solving.
+The most profound differences in the algorithms can be seen in figures 13, 14, and 15 and
+table 5. APO uses at least an order of magnitude less messages than AWC. Table 6 shows
+that these message savings lead to large savings in the number of bytes being transmitted as
+well. Even though APO uses about twice as many bytes per message as AWC (the messages
+were not optimized at all), the total amount of information be passed around is significantly
+less in almost every case.
+Again, looking at the linking structure that AWC produces gives some insights into why
+it uses some many more messages than APO. Because agents communicate with all of the
+agents they are linked to whenever their value changes, and a large number of changes can
+occur in single cycle, AWC can have a tremendous amount of thrashing behavior. APO,
+on the other hand, avoids this problem because the process of mediating implicitly creates
+555
+
+fiMailler & Lesser
+
+d
+
+2.0
+
+2.3
+
+2.7
+
+Nodes
+15
+30
+45
+60
+75
+90
+Overall
+15
+30
+45
+60
+75
+90
+Overall
+15
+30
+45
+60
+75
+90
+Overall
+
+APO
+Mean
+361.50
+1117.15
+2078.72
+3387.13
+4304.22
+6742.14
+
+APO
+StDev
+179.57
+844.33
+1552.98
+2084.69
+2651.15
+4482.54
+
+AWC
+Mean
+882.19
+2431.71
+6926.86
+18504.17
+21219.01
+33125.57
+
+AWC
+StDev
+967.21
+3182.51
+7395.22
+22281.59
+22714.98
+39766.56
+
+379.15
+1640.08
+3299.05
+8773.16
+14368.87
+25826.74
+
+188.69
+931.22
+2155.45
+9613.84
+12066.32
+29172.66
+
+1205.50
+6325.21
+44191.89
+70104.74
+178683.02
+201145.37
+
+923.85
+6914.79
+44693.33
+69050.66
+173493.21
+143236.26
+
+433.64
+1623.89
+3859.99
+5838.36
+9507.60
+16455.59
+
+164.12
+787.59
+1921.51
+3140.53
+4486.04
+10679.92
+
+1667.71
+9014.02
+28964.43
+66857.87
+116016.71
+196239.22
+
+1301.03
+8104.34
+22900.89
+53221.05
+82857.63
+163722.90
+
+p(AW C  AP O)
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.01
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+
+Table 5: Comparison of the number of messages needed to solve satisfiable 3-coloring problems of various sizes and densities by AWC and APO.
+
+556
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+d
+
+2.0
+
+2.3
+
+2.7
+
+Nodes
+15
+30
+45
+60
+75
+90
+Overall
+15
+30
+45
+60
+75
+90
+Overall
+15
+30
+45
+60
+75
+90
+Overall
+
+APO
+Mean
+10560.76
+32314.97
+59895.10
+97126.79
+123565.94
+192265.35
+
+APO
+StDev
+4909.09
+23138.55
+42740.82
+57428.70
+73493.72
+123384.05
+
+AWC
+Mean
+11590.38
+32409.93
+95061.77
+259529.42
+294502.71
+466084.60
+
+AWC
+StDev
+13765.19
+45336.65
+106391.51
+326087.70
+328696.59
+581963.72
+
+11370.13
+47539.20
+95098.49
+247417.78
+401618.24
+712035.13
+
+4951.75
+25486.74
+59312.25
+262844.89
+327990.65
+782835.83
+
+16260.19
+88946.59
+644007.01
+1018059.11
+2626178.31
+2935211.45
+
+13237.31
+101077.04
+675192.26
+1029273.23
+2606377.80
+2138087.17
+
+13415.51
+48542.24
+112541.02
+170174.55
+272391.95
+465571.42
+
+4280.15
+21331.96
+52729.10
+85705.12
+122177.07
+288265.82
+
+22393.61
+125072.76
+405535.81
+945039.32
+1641250.63
+2793725.78
+
+18578.25
+116518.80
+327349.47
+773937.60
+1204185.34
+2397839.47
+
+p(AW C  AP O)
+0.49
+0.98
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+
+Table 6: Comparison of the number of bytes transmitted by APO and AWC for satisfiable
+graph instances of various sizes and density.
+
+557
+
+fiMailler & Lesser
+
+35000
+
+APO
+AWC
+
+30000
+
+Messages
+
+25000
+20000
+15000
+10000
+5000
+0
+10
+
+20
+
+30
+
+40
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+Variables
+
+Figure 13: Comparison of the number of messages needed to solve satisfiable, low-density
+3-coloring problems of various sizes by AWC and APO.
+
+250000
+
+APO
+AWC
+
+Messages
+
+200000
+
+150000
+
+100000
+
+50000
+
+0
+10
+
+20
+
+30
+
+40
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+Variables
+
+Figure 14: Comparison of the number of messages needed to solve satisfiable, mediumdensity 3-coloring problems of various sizes by AWC and APO.
+
+regions of stability in the problem landscape while the mediator decides on a solution. In
+addition, because APO uses partial centralization to solve problems, it avoids having to use
+a large number of messages to discover implied constraints through trial and error.
+558
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+200000
+
+APO
+AWC
+
+Messages
+
+150000
+
+100000
+
+50000
+
+0
+10
+
+20
+
+30
+
+40
+
+50
+
+60
+
+70
+
+80
+
+90
+
+100
+
+Variables
+
+Figure 15: Comparison of the number of messages needed to solve satisfiable, high-density
+3-coloring problems of various sizes by AWC and APO.
+
+% Satisfiable
+
+1
+0.8
+0.6
+0.4
+0.2
+0
+1.8
+
+2
+
+2.2
+
+2.4
+
+2.6
+
+2.8
+
+Density
+
+Figure 16: Phase transition curve for the 60 node randomly generated graphs used in testing.
+
+As we will see in the next two experiments, the high degree of centralization caused
+by its unfocused linking degrades AWCs performance even more when solving randomly
+generated, possibly unsatisfiable, graph instances.
+559
+
+fiMailler & Lesser
+
+800
+
+APO
+
+700
+
+AWC
+
+Cycles
+
+600
+500
+400
+300
+200
+100
+0
+1.8
+
+2
+
+2.2
+
+2.4
+
+2.6
+
+2.8
+
+Density
+
+Figure 17: Number of cycles needed to solve completely random 60 variable problems of
+various density using AWC and APO.
+
+Density
+1.8
+2.0
+2.1
+2.3
+2.5
+2.7
+2.9
+Overall
+
+APO
+Mean
+49.88
+88.77
+116.79
+116.41
+56.21
+27.62
+17.74
+
+APO
+StDev
+41.98
+83.79
+107.21
+264.65
+45.12
+25.66
+13.69
+
+% APO
+Solved
+100
+100
+100
+100
+100
+100
+100
+
+AWC
+Mean
+52.51
+189.42
+377.54
+660.65
+640.66
+537.99
+476.20
+
+AWC
+StDev
+77.06
+237.17
+364.55
+362.80
+335.65
+324.87
+271.63
+
+% AWC
+Solved
+100
+96
+80
+55
+65
+83
+92
+
+p(AW C  AP O)
+0.62
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+
+Table 7: Number of cycles needed to solve completely random 60 variable problems of
+various density using AWC and APO.
+
+560
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+1.4e+06
+
+APO
+AWC
+
+1.2e+06
+
+Messages
+
+1e+06
+800000
+600000
+400000
+200000
+0
+1.8
+
+2
+
+2.2
+
+2.4
+
+2.6
+
+2.8
+
+Density
+
+Figure 18: Number of messages needed to solve completely random 60 variable problems of
+various density using AWC and APO.
+
+5.2.2 Random Graphs
+In the second set of experiments, we generated completely random 60 node graphs with
+average degrees from d = 1.8 to 2.9. This series was conducted to test the completeness of
+the algorithms, verify the correctness of their implementations, and to study the effects of
+the phase transition on their performance. For each value of d, we generated 200 random
+graphs each with a single set of initial values. Graphs were generate by randomly choosing
+two nodes and connecting them. If the edge already existed, another pair was chosen. The
+phase transition curve for these instances can be seen in figure 16.
+In total, 1400 graphs were generated and tested. Due to time constraints, we stopped
+the execution of AWC once 1000 cycles had completed (APO never reached 1000). The
+results of these experiments are shown in figures 17 and 18 and tables 7 and 8.
+On these graphs, APO significantly outperforms AWC on all but the simplest problems
+(see figure 17). These results can most directly be attributed to AWCs poor performance
+on unsatisfiable problem instances (Fernandez et al., 2003). In fact, in the region of the
+phase transition, AWC was unable to complete 45% of the graphs within the 1000 cycles.
+In addition, to solve these problems, AWC uses at least an order of magnitude more
+messages that APO. These results can be seen in figure 18. By looking at table 9, it is easy
+to see why this occurs. AWC has a very high degree of linking and centralization. In fact,
+on d = 2.9 graphs, AWC reaches an average of 93% centralization and 75% of complete
+inter-agent linking.
+To contrast this, APO has very loose linking throughout the entire phase transition and
+centralizes on average around 50% of the entire problem. These results are very encouraging and reinforce the idea that partial overlays and extending along critical paths yields
+improvements in the convergence on solutions.
+561
+
+fiMailler & Lesser
+
+Density
+1.8
+2.0
+2.1
+2.3
+2.5
+2.7
+2.9
+Overall
+
+APO
+Mean
+2822.61
+7508.33
+12642.68
+15614.37
+8219.74
+4196.58
+2736.20
+
+APO
+StDev
+3040.39
+9577.86
+16193.56
+15761.90
+7415.76
+4201.80
+2286.39
+
+AWC
+Mean
+12741.58
+126658.29
+356993.39
+882813.45
+1080277.25
+1047001.18
+1000217.83
+
+AWC
+StDev
+47165.70
+269976.18
+444899.21
+566715.73
+661909.63
+738367.27
+699199.90
+
+p(AW C  AP O)
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+
+Table 8: Number of messages needed to solve completely random 60 variable problems of
+various density using AWC and APO.
+
+APO
+
+AWC
+
+Density
+1.8
+2.0
+2.1
+2.3
+2.5
+2.7
+2.9
+1.8
+2.0
+2.1
+2.3
+2.5
+2.7
+2.9
+
+% Links
+Mean
+8.09
+10.93
+13.31
+15.56
+14.37
+13.19
+13.12
+16.28
+34.34
+46.52
+64.13
+70.06
+72.95
+75.19
+
+% Links
+StDev
+1.50
+3.28
+4.49
+4.94
+3.74
+3.32
+2.70
+6.58
+13.44
+13.95
+11.43
+10.51
+10.65
+9.62
+
+% Central
+Mean
+26.19
+36.92
+46.68
+55.91
+53.86
+47.33
+45.26
+41.08
+65.00
+75.24
+86.06
+89.46
+91.71
+92.78
+
+% Central
+StDev
+6.94
+13.77
+15.86
+18.18
+18.25
+19.59
+17.55
+12.42
+14.41
+10.66
+5.61
+4.55
+3.80
+5.63
+
+Table 9: Link statistics for 60 node random problems.
+5.2.3 Runtime Tests
+In the third set of experiments, we directly compared the serial runtime performance of
+AWC against APO. Serial runtime is measured using the following formula:
+
+serialtime =
+
+cycles
+X
+
+X
+
+i=0 aagents
+
+562
+
+time(a, i)
+
+fiSeconds
+
+Asynchronous Partial Overlay: A New Algorithm for DCSP
+
+23900
+14160
+8390
+4970
+2940
+1740
+1030
+610
+360
+210
+120
+70
+40
+20
+10
+
+APO
+AWC
+Backtracking
+
+15
+
+25
+
+35
+
+45
+
+55
+
+65
+
+Nodes
+
+Seconds
+
+Figure 19: Comparison of the number of seconds needed to solve random, low-density 3coloring problems of various sizes by AWC, APO, and centralized Backtracking.
+
+92350
+51680
+28920
+16180
+9050
+5060
+2830
+1580
+880
+490
+270
+150
+80
+40
+20
+10
+
+APO
+AWC
+Backtracking
+
+15
+
+25
+
+35
+
+45
+
+55
+
+65
+
+Nodes
+
+Figure 20: Comparison of the number of seconds needed to solve random, medium-density
+3-coloring problems of various sizes by AWC, APO, and centralized Backtracking.
+
+563
+
+fiSeconds
+
+Mailler & Lesser
+
+3620
+2360
+1540
+1000
+650
+420
+270
+170
+110
+70
+40
+20
+10
+
+APO
+AWC
+Backtracking
+
+15
+
+25
+
+35
+
+45
+
+55
+
+65
+
+Nodes
+
+Figure 21: Comparison of the number of seconds needed to solve random, high-density 3coloring problems of various sizes by AWC, APO, and centralized Backtracking.
+
+d
+2.0
+
+2.3
+
+2.7
+
+Nodes
+15
+30
+45
+60
+15
+30
+45
+60
+15
+30
+45
+60
+
+APO
+Mean
+0.26
+0.78
+1.27
+2.02
+0.18
+0.98
+2.19
+10.51
+0.09
+0.40
+0.66
+5.47
+
+APO
+StDev
+0.21
+0.66
+1.18
+1.74
+0.23
+0.88
+2.26
+12.97
+0.06
+0.39
+0.63
+5.44
+
+AWC
+Mean
+2.72
+10.52
+257.88
+890.12
+3.96
+112.95
+1236.27
+32616.24
+3.51
+61.43
+460.56
+4239.16
+
+AWC
+StDev
+4.40
+18.99
+1252.25
+4288.43
+3.23
+144.24
+1777.51
+62111.52
+2.90
+59.77
+690.98
+4114.30
+
+BT
+Mean
+0.02
+1.65
+245.14
+27183.64
+0.03
+0.86
+150.73
+92173.71
+0.02
+0.29
+35.58
+2997.04
+
+BT
+StDev
+0.02
+4.14
+587.31
+56053.26
+0.01
+1.07
+241.02
+222327.59
+0.01
+0.36
+57.75
+4379.97
+
+Table 10: Comparison of the number of seconds needed to solve random 3-coloring problems
+of various sizes and densities using AWC, APO, and centralized Backtracking.
+
+564
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+Which is just the total accumulated runtime needed to solve the problem when only one
+agent is allowed to process at a time.
+For these experiments, we again generated random graphs, this time varying the size
+and the density of the graph. We generated 25 graphs for the values of n = 15, 30, 45, 60 and
+the densities of d = 2.0, 2.3, 2.7, for a total of 300 test cases. To show that the performance
+difference in APO and AWC was not caused by the speed of the central solver, we ran a
+centralized backtracking algorithm on the same graph instances. Although, APO uses the
+branch and bound algorithm, the backtracking algorithm used in this test provides a best
+case lower bound on the runtime of APOs internal solver.
+Each of the programs used in this test was run on an identical 2.4GHz Pentium 4 with
+768 Mbytes of RAM. These machines where entirely dedicated to the tests so there was a
+minimal amount of interference by competing processes. In addition, no computational cost
+was assigned to message passing because the simulator passes messages between cycles. The
+algorithms were, however, penalized for the amount of time they took to process messages.
+Although we realize that the specific implementation of an algorithm can greatly effect its
+runtime performance, every possible effort was made to optimize the AWC implementation
+used for these experiments in an effort to be fair.
+The results of this test series can be seen in figures 19, 20, and 21. You should note
+that the scale used for these graphs is logarithmic. From looking at these results, two
+things should become apparent. Obviously, the first is that APO outperforms AWC in
+every case. Second, APO actually outperforms its own centralized solver on graphs larger
+than 45 nodes. This indicates two things. First, the solver that is currently in APO is
+very poor and second that APOs runtime performance is not a direct result of the speed of
+centralized solver that it is using. In fact, these tests show that the improved performance
+of APO over AWC is caused by APOs ability to take advantage of the problems structure.
+If we were to replace the centralized solver used in these tests with a state-of-the-art
+solver, we would expect two things. The first is that we would expect the serial runtime of
+the APO algorithm to decrease simply from the speedup caused by the centralized solver.
+The second, and more importantly, is that the centralized solver would always outperform
+APO. This is because current CSP solvers take advantage of problem structure unlike the
+solver used in these tests. We are in no way making a claim that APO improves any
+centralized solver. We are simply stating that APO outperforms AWC for reasons other
+than the speed of its current internal solver.
+5.3 Tracking Domain
+To test APOs adaptability to various centralized solvers, we created an implementation
+of the complete-compatibility version of the SensorDCSP formulation (Bejar et al., 2001;
+Krishnamachari, Bejar, & Wicker, 2002; Fernandez et al., 2003). In this domain, there
+are a number of sensors and a number of targets randomly placed within an environment.
+Because of range restrictions, only sensors that are within some distance dist can see a
+target. The goal is to find an assignment of sensors to targets such that each target has
+three sensors tracking it.
+Following directly from the definition for a CSP, a SensorDCSP problem consists of the
+following:
+565
+
+fiMailler & Lesser
+
+Figure 22: An example of a tracking problem. There are 30 targets (labeled with their
+name) and 224 sensors (black dots). Lines connecting sensors and targets indicate that the sensor is assigned to tracking the target.
+
+566
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+ a set of n targets T = {T1 , . . . , Tn }.
+ a set of possible sensors that can see each of the targets D = {D 1 , . . . , Dn }.
+ a set of constraints R = {R1 , . . . , Rm } where each Ri (ai , aj ) is predicate which implements the not intersects relationship. This predicate returns true iff the sensors
+assigned to Ti does not have any elements in common with the sensors assigned to Tj .
+The problem is to find an assignment A = {a1 , . . . , an } such that each of the constraints
+in R is satisfied and each ai is a set of |Dci | sensors from Di where c = min(|Di |, 3). This
+indicates that each target requires 3 sensors, if enough are available, or all of the sensors, if
+there are less than 3.
+Since, in this implementation, each of the sensors is compatible with one another, the
+overall complexity of the problem is polynomial, using a reduction to feasible flow in a
+bipartite graph(Krishnamachari, 2002). Because of this, the centralized solver used by
+the APO agents was changed to a modified version of the Ford-Fulkerson maximum flow
+algorithm (Ford & Fulkerson, 1962; Cormen, Leiserson, & Rivest, 1999), which has been
+proven to run in polynomial time.
+An example of the tracking problem can be seen in figure 22. In this example, there
+are 224 sensors (black dots) placed in an ordered pattern in the environment. There are
+30 targets (labeled with their names) which are randomly placed at startup. The lines
+connecting sensors to targets indicate that the sensor is assigned to the target. Note that
+this instance of the problem is satisfiable.
+5.3.1 Modifying APO for the Tracking Domain
+Because the tracking domain is so closely related to the general CSP formulation, very few
+changes were made to either AWC or APO for these tests. We did, however, decide to test
+the adaptability of APO to a new centralized problem solver. To do this, we changed the
+centralized problem solver to the Ford Fulkerson max-flow algorithm in figure 23. FordFulkerson works by repeatedly finding paths with remaining capacity through the residual
+flow network and augmenting the flows along those paths. The algorithm terminates when
+no additional paths can be found. A detailed explanation of the algorithm as well as a proof
+of its optimality can be found in (Cormen et al., 1999).
+Like mapping bipartite graphs into max-flow, the SensorDCSP problem is also easily
+mapped into max-flow. In figures 24 and 25 you can see the mapping of a simple sensor
+allocation problem into a max-flow problem. Notice that the capacity of the flow between
+the sensors and targets is 1. This ensures that a sensor cannot be used by more than a
+single target. Also, notice that the capacity of the targets to t is 3. In fact, this value is to
+min(|Di |, 3).
+To use this algorithm within APO, the mediator simply translates the problem into
+a network flow graph G using the following rules whenever it runs the choose solution
+procedure in figure 5:
+1. Add the nodes s and t to G.
+2. For each Ti  T add a node Ti and an edge (Ti , t) with capacity min(|Di |, 3) to G.
+567
+
+fiMailler & Lesser
+
+Ford-Fulkerson (G, s, t)
+for each edge (u, v)  E[G] do
+f [u, v]  0;
+f [v, u]  0;
+end do;
+while there exists a path p from s to t
+in the residual network Gf do
+cf (p)  min{cf (u, v) : (u, v)  p};
+for each edge (u, v)  p do
+f [u, v]  f [u, v] + cf (p);
+f [v, u]  f [u, v];
+end do;
+end do;
+end Ford-Fulkerson;
+Figure 23: The Ford-Fulkerson maximum flow algorithm.
+
+S1
+
+S2
+
+T1
+
+S3
+
+S4
+T2
+S5
+
+S6
+
+Figure 24: A simple sensor to target allocation problem.
+3. For each unique sensor Si in the domains of Ti  T , add a node Si , an edge (s, Si )
+with capacity 1, and an edge (Si , Ti ) with capacity 1 to G.
+
+568
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+S1
+1
+
+1
+S2
+
+1
+1
+
+S3
+
+1
+1
+1
+
+T1
+
+3
+
+s
+
+t
+1
+
+1
+3
+
+S4
+1
+S5
+
+1
+1
+
+T2
+
+1
+S6
+
+Figure 25: The flow network for the simple target allocation problem in figure 24.
+It then executes the Ford-Fulkerson algorithm. Once the algorithm finishes, the mediator
+checks the residual capacity of the edges between the targets and t. If any of these edges has
+residual flow, then the problem is unsatisfiable. Otherwise, the assignment can be derived
+by finding all of the (Si , Ti ) edges that have a flow of 1.
+One of the nicest characteristics of the Ford-Fulkerson algorithm is that it works regardless of the order that the paths in the residual network are chosen. In our implementation,
+we used a breadth-first search which, in addition to identifying paths in the residual network, minimized the cost of the path. Cost in this sense refers to the amount of external
+conflict that is created by having a sensor assigned to a target. This modification maintains
+the min-conflict heuristic which is an integral part of extending the mediators local view.
+5.3.2 Results
+To test APO and AWC in this domain, we ran a test series which used a 200f t  200f t
+environment with 224 sensors placed in an ordered grid-based pattern. We chose to place
+the sensors in an ordered fashion to reduce the variance obtained within the results. We ran
+a test series which varied the sensor to target ratio from 10:1 to 3.8:1 (22 to 59 targets) in
+increments of 0.2 which is across the spectrum from mostly satisfiable to mostly unsatisfiable
+instances (see figure 26). We then conducted 250 trial runs with a random target placement
+for each of these values to get a good statistical sampling.
+In total, 6750 test cases were used. For comparison, we measured the number of messages
+and cycles that were taken by the algorithms to find a solution. The random seeds used to
+place the targets were saved, so APO and AWC were both tested using identical problem
+569
+
+fiMailler & Lesser
+
+0.9
+0.8
+
+% Satisfiable
+
+0.7
+0.6
+0.5
+0.4
+0.3
+0.2
+0.1
+0
+20
+
+25
+
+30
+
+35
+
+40
+
+45
+
+50
+
+55
+
+60
+
+Targets
+
+Figure 26: Phase transition curve for the 224 sensor environment used for testing.
+
+APO
+AWC
+
+Cycles
+
+20
+
+15
+
+10
+
+5
+
+0
+20
+
+25
+
+30
+
+35
+
+40
+
+45
+
+50
+
+55
+
+60
+
+Targets
+
+Figure 27: Number of cycles needed to solve random target configurations in a field of 224
+sensors using AWC and APO.
+
+instances. The correctness of the algorithms was verified by cross-checking the solutions
+(satisfiable/unsatisfiable) obtained during these tests, which matched identically.
+As can be seen in figure 27 and 28 and tables 11 and 12, APO outperforms AWC on all
+but the simplest cases. Part of the reason for this is the minimum 3 cycles it takes APO to
+finish a mediation session. In problems that have very sparsely connected interdependencies,
+this cost tends to dominate. All-in-all, as the T-tests indicate, APO is significantly better
+than AWC in terms of both cycles to completion and number of messages used for problems
+in this domain.
+570
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+Targets
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+39
+40
+41
+43
+45
+47
+49
+51
+53
+56
+59
+Overall
+
+APO
+Mean
+6.36
+6.65
+7.12
+6.55
+6.80
+7.09
+7.38
+7.10
+7.55
+7.18
+6.88
+7.62
+7.47
+7.56
+8.08
+7.48
+7.55
+6.45
+7.45
+5.96
+4.80
+5.15
+4.53
+3.52
+4.12
+3.14
+3.28
+
+APO
+StDev
+2.33
+3.39
+4.72
+3.24
+4.28
+5.02
+5.88
+4.89
+5.99
+6.11
+6.31
+7.59
+7.81
+7.49
+9.89
+8.38
+10.87
+10.54
+13.11
+7.79
+7.25
+8.31
+5.90
+2.00
+5.82
+0.59
+2.26
+
+AWC
+Mean
+5.88
+7.32
+8.83
+7.15
+9.65
+10.85
+11.05
+9.24
+13.15
+12.42
+11.73
+12.32
+15.88
+14.74
+15.70
+20.70
+16.12
+15.74
+17.56
+16.10
+17.61
+18.52
+15.33
+14.34
+13.13
+10.45
+7.46
+
+AWC
+StDev
+6.61
+10.55
+19.96
+10.56
+15.78
+19.89
+15.89
+13.76
+25.58
+22.22
+18.21
+24.04
+28.82
+29.01
+25.46
+39.63
+26.43
+21.66
+30.98
+22.91
+28.50
+30.27
+25.28
+22.60
+22.55
+20.81
+10.47
+
+p(AW C  AP O)
+0.29
+0.36
+0.18
+0.39
+0.01
+0.00
+0.00
+0.02
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+
+Table 11: Number of cycles needed to solve random target configurations in a field of 224
+sensors using AWC and APO.
+
+571
+
+fiMailler & Lesser
+
+Targets
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+39
+40
+41
+43
+45
+47
+49
+51
+53
+56
+59
+Overall
+
+APO
+Mean
+78.28
+89.52
+105.53
+102.92
+116.36
+128.58
+149.23
+145.72
+167.50
+169.30
+174.32
+212.59
+218.74
+221.93
+258.41
+258.95
+303.64
+293.24
+342.33
+274.39
+277.26
+311.91
+303.66
+269.37
+333.42
+296.36
+339.21
+
+APO
+StDev
+32.58
+54.01
+90.36
+57.18
+86.58
+98.63
+144.81
+93.24
+144.27
+152.83
+152.89
+237.60
+246.18
+230.44
+354.13
+342.97
+501.10
+649.42
+724.64
+267.95
+414.19
+405.1
+299.13
+110.57
+390.08
+45.54
+202.98
+
+AWC
+Mean
+95.68
+133.12
+184.19
+149.18
+245.99
+263.32
+279.49
+231.98
+378.89
+404.40
+362.63
+410.05
+811.58
+613.64
+671.00
+947.95
+815.32
+884.32
+912.65
+1279.97
+1334.38
+1471.82
+1487.65
+1571.46
+1804.47
+1895.23
+1765.18
+
+AWC
+StDev
+133.53
+237.74
+616.36
+298.85
+566.03
+587.30
+493.05
+335.98
+874.99
+997.82
+570.41
+923.25
+2243.79
+1422.33
+1333.50
+2116.98
+1373.29
+1407.99
+1517.10
+2194.84
+2470.13
+2172.13
+2503.62
+2157.52
+2815.94
+3731.98
+3676.16
+
+p(AW C  AP O)
+0.04
+0.00
+0.04
+0.02
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+
+Table 12: Number of messages needed to solve random target configurations targets in a
+field of 224 sensors using AWC and APO.
+
+572
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+APO
+
+Messages
+
+2000
+
+AWC
+
+1500
+
+1000
+
+500
+
+0
+20
+
+25
+
+30
+
+35
+
+40
+
+45
+
+50
+
+55
+
+60
+
+Targets
+
+Figure 28: Number of messages needed to solve random target configurations targets in a
+field of 224 sensors using AWC and APO.
+
+6. Conclusions and Future Directions
+In this article, we presented a new complete, distributed constraint satisfaction protocol
+called Asynchronous Partial Overlay (APO). Like AWC, APO allows the agents to retain
+their autonomy because they can obscure or completely hide internal variables and constraints. In addition, agents can refuse solutions posed by a mediator, instead taking over
+as the mediator if for some reason they are unhappy with a proposed solution. We also
+presented an example of its execution on a simple problem (section 4.2) and proved the
+soundness and completeness of the algorithm (section 4.3). Through extensive empirical
+testing on 10,250 graph instances from the graph coloring and tracking domain, we also
+showed that APO significantly outperforms the currently best known distributed constraint
+satisfaction algorithm, AWC (Yokoo, 1995). These tests have shown that APO is better
+than AWC in terms of cycles to completion, message usage, and runtime performance. We
+have also shown that the runtime characteristics can not be directly attributed to the speed
+of the centralized solver.
+APOs performance enhancements can be attributed to a number of things. First,
+APO exhibits a hill-climbing nature early in the search which becomes more focused and
+controlled as time goes on. Like other hill-climbing techniques this often leads to a satisfiable
+solution early in the search. Second, by using partial overlaying of the information that the
+agents use in decision making, APO exploits the work that has been previously done by
+other mediators. This forms a lock and key mechanism which promotes solution stability.
+Lastly, and most importantly, because APO uses dynamic, partial centralization, the agents
+work on smaller, highly relevant portions of the overall problem. By identifying these areas
+of decomposability, the search space can be greatly reduced which, in some cases, improves
+the efficiency of the centralized search algorithm.
+There are a vast number of improvements planned for APO in the future. Probably the
+most important is to improve the centralized solver that it uses. In this article, an inefficient
+solver was chosen to show the strengths of the distributed portions of APO. We expect
+573
+
+fiMailler & Lesser
+
+that additional improvements in the algorithms runtime performance can be obtained by
+using a faster centralized search engine. In addition, modern solvers often use methods
+like graph reductions, unit propagation and backbone guided search. It is conceivable that
+information gained from the centralized search engine could be used to prune the domains
+from the variables for consistency reasons and variables from the centralized subproblem
+for relevance reasons. We expect this will further focus the efforts of the agents additionally
+reducing the search time and communications usage of the algorithm.
+Along with these improvements is the selective use of memory for recording nogoods.
+Unlike AWC which uses the nogoods to ensure a complete search, APOs completeness relies
+on one of the agents centralizing the entire problem in the worst case. Because of this key
+difference, APO can be improved by simply remembering a small, powerful subset of the
+nogoods that it discovers from mediation session to session. This would allow the algorithm
+to improve future search by exploiting work that it had done previously.
+What should be clear is that APO, and the cooperative mediation methodology as a
+whole, opens up new areas for future exploration and new questions to be answered in
+distributed problem solving. We believe that this work shows a great deal of promise for
+addressing a vast number of problems and represents a bridge between centralized and
+distributed problem solving techniques.
+
+Acknowledgments
+Special thanks to Bryan Horling for his design and implementation of the Farm simulation
+environment in which the experiment were run and to Shlomo Zilberstein, Bart Selman,
+Neil Immerman, and Jose Vidal for making numerous suggestions during the development
+of this work. Lastly, the authors would like to thank the JAIR reviewers for their helpful
+feedback and suggestions and Carlos Ansotegui and Jean-Charles Regin for their lengthy
+discussion during the final revision to this article.
+The effort represented in this paper has been sponsored by the Defense Advanced Research Projects Agency (DARPA) and Air Force Research Laboratory, Air Force Materiel
+Command, USAF, under agreement number F30602-99-2-0525. The views and conclusions
+contained herein are those of the authors and should not be interpreted as necessarily representing the official policies or endorsements, either expressed or implied, of the Defense
+Advanced Research Projects Agency (DARPA), Air Force Research Laboratory, or the U.S.
+Government. The U.S. Government is authorized to reproduce and distribute reprints for
+Governmental purposes notwithstanding any copyright annotation thereon.
+
+References
+Bejar, R., Krishnamachari, B., Gomes, C., & Selman, B. (2001). Distributed constraint
+satisfaction in a wireless sensor tracking system. In Workshop on Distributed Constraint Reasoning, International Joint Conference on Artificial Intelligence, Seattle,
+Washington.
+Cammarata, S., McArthur, D., & Steeb, R. (1983). Strategies of cooperation in distributed
+problem solving. In Proceedings of the 8th International Joint Conference on Artificial
+574
+
+fiAsynchronous Partial Overlay: A New Algorithm for DCSP
+
+Intelligence (IJCAI-83), Vol. 2, pp. 767770.
+Cha, B., & Iwana, K. (1996). Adding new clauses for faster local search. In Proceedings of
+the Thirteenth National Conference on Artificial Intelligence (AAAI), pp. 332337.
+Cheeseman, P., Kanefsky, B., & Taylor, W. (1991). Where the really hard problems are.
+In Proceedings of the 12th International Joint Conference on Artificial Intelligence
+(IJCAI-91), pp. 331337.
+Conry, S. E., Kuwabara, K., Lesser, V. R., & Meyer, R. A. (1991). Multistage negotiation
+for distributed constraint satisfaction. IEEE Transactions on Systems, Man, and
+Cybernetics, 21 (6).
+Cormen, T. H., Leiserson, C. E., & Rivest, R. L. (1999). Introduction to Algorithms.
+McGraw-Hill.
+Culberson, J., & Gent, I. (2001). Frozen development in graph coloring. Theoretical Computer Science, 265 (12), 227264.
+Fernandez, C., Bejar, R., Krishnamachari, B., Gomes, C., & Selman, B. (2003). Distributed
+Sensor Networks: A Multiagent Perspective, chap. Communication and Computation
+in Distributed CSP Algorithms, pp. 299317. Kluwer Academic Publishers.
+Ford, L. R., & Fulkerson, D. (1962). Flows in Networks. Princeton University Press.
+Freuder, E. C., & Wallace, R. J. (1992). Partial constraint satisfaction. Artificial Intelligence, 58 (13), 2170.
+Frost, D., & Dechter, R. (1994). Dead-end driven learning. In Proceedings of the Twelfth
+Natioanl Conference on Artificial Intelligence, pp. 294300.
+Ginsberg, M. L. (1993). Dynamic backtracking. Journal of Artificial Intelligence Research,
+1, 2546.
+Hayden, S., Carrick, C., & Yang, Q. (1999). Architectural design patterns for multi-agent
+coordination. In Proceedings of the International Conference on Agent Systems, Seattle, WA.
+Hirayama, K., & Yokoo, M. (2000). The effect of nogood learning in distributed constraint
+satisfaction. In The 20th International Conference on Distributed Computing Systems
+(ICDCS), pp. 169177.
+Krishnamachari, B., Bejar, R., & Wicker, S. (2002). Distributed problem solving and the
+boundaries of self-configuration in multi-hop wireless networks. In Hawaii International Conference on System Sciences (HICSS-35).
+Krishnamachari, B. (2002). Phase Transitions, Structure, and Compleixty in Wireless Networks. Ph.D. thesis, Cornell University, Ithaca, NY.
+Mammen, D. L., & Lesser, V. R. (1998). Problem Structure and Subproblem Sharing in
+Multi-Agent Systems. Third International Conference on Multi-Agent Systems, 174
+181.
+Merriam-Webster (Ed.). (1995). The Merriam-Webster Dictionary (Home and Office edition). Springfield, IL.
+575
+
+fiMailler & Lesser
+
+Minton, S., Johnston, M. D., Philips, A. B., & Laird, P. (1992). Minimizing conflicts: A
+heuristic repair method for constraint satisfaction and scheduling problems. Artificial
+Intelligence, 58 (1-3), 161205.
+Monasson, R., Zecchina, R., Kirkpatrick, S., Selman, B., & Troyansky, L. (1999). Determining computational complexity from characteristic phase transitions. Nature, 400,
+133137.
+Rao, V. N., & Kumar, V. (1993). On the efficiency of parallel backtracking. IEEE Transactions on Parallel and Distributed Systems, 4 (4), 427437.
+Sycara, K., Roth, S., Sadeh, N., & Fox, M. (1991). Distributed constrained heuristic search.
+IEEE Transactions on Systems, Man, and Cybernetics, 21 (6), 14461461.
+Sycara, K. (1988). Resolving goal conflicts via negotiation. In Proceedings of the Seventh
+National Conference on Artificial Intelligence, pp. 245250.
+Wellman, M., & Walsh, W. (1999). Distributed quiescence detection in multiagent negotiation. In In AAAI-99 Workshop on Negotiation: Settling Conflicts and Identifying
+Opportunities.
+Werkman, K. J. (1990). Knowledge-based model of negotiation using shared perspectives. In
+Proceedings of the 10th International Workshop on Distributed Artificial intelligence,
+Bandera, TX.
+Yokoo, M. (1994). Weak-commitment search for solving constraint satisfaction problems.
+In Proceedings of the 12th National Conference on Artificial Intelligence (AAAI-94);
+Vol. 1, pp. 313318, Seattle, WA, USA. AAAI Press, 1994.
+Yokoo, M. (1995). Asynchronous weak-commitment search for solving distributed constraint
+satisfaction problems.. In Proceedings of the First International Conference on Principles and Practice of Constraint Programming (CP-95), Lecture Notes in Computer
+Science 976, pp. 88102. Springer-Verlag.
+Yokoo, M., Durfee, E. H., Ishida, T., & Kuwabara, K. (1992). Distributed constraint satisfaction for formalizing distributed problem solving. In International Conference on
+Distributed Computing Systems, pp. 614621.
+Yokoo, M., & Hirayama, K. (1996). Distributed breakout algorithm for solving distributed
+constraint satisfaction problems.. In International Conference on Multi-Agent Systems
+(ICMAS).
+Yokoo, M., & Hirayama, K. (2000). Algorithms for distributed constraint satisfaction: A
+review. Autonomous Agents and Multi-Agent Systems, 3 (2), 198212.
+Yokoo, M., Suzuki, K., & Hirayama, K. (2002). Secure distributed constraint satisfaction: Reaching agreement without revealing private information. In Proceeding of the
+Eighth International Conference on Principles and Practice of Constraint Programming (CP).
+
+576
+
+fi

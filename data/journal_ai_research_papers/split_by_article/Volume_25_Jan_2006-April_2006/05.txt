@@ -1,0 +1,3399 @@
+Journal of Artificial Intelligence Research 25 (2006) 187-231
+
+Submitted 03/05; published 02/06
+
+An Approach to Temporal Planning and Scheduling in
+Domains with Predictable Exogenous Events
+Alfonso Gerevini
+Alessandro Saetti
+Ivan Serina
+
+gerevini@ing.unibs.it
+saetti@ing.unibs.it
+serina@ing.unibs.it
+
+Dipartimento di Elettronica per lAutomazione
+Universita degli Studi di Brescia
+Via Branze 38, I-25123 Brescia, Italy
+
+Abstract
+The treatment of exogenous events in planning is practically important in many realworld domains where the preconditions of certain plan actions are affected by such events.
+In this paper we focus on planning in temporal domains with exogenous events that happen
+at known times, imposing the constraint that certain actions in the plan must be executed
+during some predefined time windows. When actions have durations, handling such temporal constraints adds an extra difficulty to planning. We propose an approach to planning
+in these domains which integrates constraint-based temporal reasoning into a graph-based
+planning framework using local search. Our techniques are implemented in a planner that
+took part in the 4th International Planning Competition (IPC-4). A statistical analysis
+of the results of IPC-4 demonstrates the effectiveness of our approach in terms of both
+CPU-time and plan quality. Additional experiments show the good performance of the
+temporal reasoning techniques integrated into our planner.
+
+1. Introduction
+In many real-world planning domains, the execution of certain actions can only occur during
+some predefined time windows where one or more necessary conditions hold. For instance,
+a car can be refueled at a gas station only when the gas station is open, or a space telescope
+can take a picture of a certain planet region only when this region is observable. The truth
+of these conditions is determined by some exogenous events that happen at known times,
+and that cannot be influenced by the actions available to the planning agent (e.g., the
+closing of the gas station or the planet movement).
+Several frameworks supporting action durations and time windows have been proposed
+(e.g., Vere, 1983; Muscettola, 1994; Laborie & Ghallab, 1995; Schwartz & Pollack, 2004;
+Kavuluri & U, 2004; Sanchez, Tang, & Mali, 2004). However, most of them are domaindependent systems or are not fast enough on large-scale problems. In this paper, we propose
+a new approach to planning with these temporal features, integrating constraint-based
+temporal reasoning into a graph-based planning framework.
+The last two versions of the domain definition language of the International planning competition (IPC) support action durations and predictable (deterministic) exogenous
+events (Fox & Long, 2003; Edelkamp & Hoffmann, 2004). In PDDL2.1, predictable exogenous events can be implicitly represented (Fox, Long, & Halsey, 2004), while in PDDL2.2
+they can be explicitly represented through timed initial literals, one of the two new PDDL
+c
+2006
+AI Access Foundation. All rights reserved.
+
+fiGerevini, Saetti & Serina
+
+features on which the 2004 competition (IPC-4) focused. Timed initial literals are specified
+in the description of the initial state of the planning problem through assertions of the form
+(at t L), where t is a real number, and L is a ground literal whose predicate does not
+appear in the effects of any domain action. The obvious meaning of (at t L) is that L is
+true from time t. A set of these assertions involving the same ground predicate defines a
+sequence of disjoint time windows over which the timed predicate holds. An example in the
+well-known ZenoTravel domain (Penberthy, 1993; Long & Fox, 2003a) is
+(at
+(at
+(at
+(at
+
+8 (open-fuelstation city1))
+12 (not (open-fuelstation city1)))
+15 (open-fuelstation city1))
+20 (not (open-fuelstation city1))).
+
+These assertions define two time windows over which (open-fuelstation city1) is true,
+i.e., from 8 to 12 (excluded) and from 15 to 20 (excluded). A timed initial literal is relevant
+to the planning process when it is a precondition of a domain action, which we call a timed
+precondition of the action. Each timed precondition of an action can be seen as a temporal
+scheduling constraint for the action, defining the feasible time window(s) when the action
+can be executed. When actions in a plan have durations and timed preconditions, computing
+a valid plan requires planning and reasoning about time to be integrated, in order to check
+whether the execution of the planned actions can satisfy their scheduling constraints. If an
+action in the plan cannot be scheduled, then the plan is not valid and it must be revised.
+The main contributions of this work are: (i) a new representation of temporal plans
+with action durations and timed preconditions, called Temporally-Disjunctive Action Graph,
+(TDA-graph) integrating disjunctive constraint-based temporal reasoning into a recent
+graph-based approach to planning; (ii) a polynomial method for solving the disjunctive temporal reasoning problems that arise in this context; (iii) some new local search techniques
+to guide the planning process using our representation; and (iv) an experimental analysis
+evaluating the performance of our methods implemented in a planner called lpg-td, which
+took part in IPC-4 showing very good performance in many benchmark problems.
+The td extension in the name of our planner is an abbreviation of timed initial literals
+and derived predicates, the two main new features of PDDL2.2.1 In lpg-td, the techniques
+for handling timed initial literals are quite different from the techniques for handling derived
+predicates. The first ones concern representing temporal plans with predictable exogenous
+events and fast temporal reasoning for action scheduling during planning; the second ones
+concern incorporating a rule-based inference system for efficient reasoning about derived
+predicates during planning. Both timed initial literals and derived predicates require to
+change the heuristics guiding the search of the planner, but in a radically different way. In
+this paper, we focus on timed initial literals, which are by themselves a significant and useful
+extension to PDDL2.1. Moreover, an analysis of the results of IPC-4 shows that lpg-td was
+top performer in the benchmark problems involving this feature. The treatment of derived
+predicates in lpg-td is presented in another recent paper (Gerevini et al., 2005b).
+1. Derived predicates allow us to express in a concise and natural way some indirect action effects. Informally, they are predicates which do not appear in the effect of any action, and their truth is determined
+by some domain rules specified as part of the domain description.
+
+188
+
+fiAn Approach to Temporal Planning and Scheduling
+
+The paper is organized as follows. In Section 2, after some necessary background, we
+introduce the TDA-graph representation and a method for solving the disjunctive temporal
+reasoning problems that arise in our context. In Section 3, we describe some new local
+search heuristics for planning in the space of TDA-graphs. In Section 4, we present the
+experimental analysis illustrating the efficiency of our approach. In Section 5, we discuss
+some related work. Finally, in Section 6 we give the conclusions.
+
+2. Temporally Disjunctive Action Graph
+Like in partial-order causal-link planning, (e.g., Penberthy & Weld, 1992; McAllester &
+Rosenblitt, 1991; Nguyen & Kambhampati, 2001), in our framework we search in a space
+of partial plans. Each search state is a partial temporal plan that we represent by a
+Temporally-Disjunctive Action Graph (TDA-graph). A TDA-graph is an extension of the
+linear action graph representation (Gerevini, Saetti, & Serina, 2003) which integrates disjunctive temporal constraints for handling timed initial literals. A linear action graph is
+a variant of the well-known planning graph (Blum & Furst, 1997). In this section, after
+some necessary background on linear action graphs and disjunctive temporal constraints,
+we introduce TDA-graphs, and we propose some techniques for temporal reasoning in the
+context of this representation that will be used in the next section.
+2.1 Background: Linear Action Graph and Disjunctive Temporal Constraints
+A linear action graph (LA-graph) A for a planning problem  is a directed acyclic leveled
+graph alternating a fact level, and an action level. Fact levels contain fact nodes, each of
+which is labeled by a ground predicate of . Each fact node f at a level l is associated
+with a no-op action node at level l representing a dummy action having the predicate of f
+as its only precondition and effect. Each action level contains one action node labeled by
+the name of a domain action that it represents, and the no-op nodes corresponding to that
+level.
+An action node labeled a at a level l is connected by incoming edges from the fact nodes
+at level l representing the preconditions of a (precondition nodes), and by outgoing edges
+to the fact nodes at level l + 1 representing the effects of a (effect nodes). The initial level
+contains the special action node astart , and the last level the special action node aend . The
+effect nodes of astart represent the positive facts of the initial state of , and the precondition
+nodes of aend the goals of .
+A pair of action nodes (possibly no-op nodes) can be constrained by a persistent mutex
+relation (Fox & Long, 2003), i.e., a mutually exclusive relation holding at every level of the
+graph, imposing that the involved actions can never occur in parallel in a valid plan. Such
+relations can be efficiently precomputed using an algorithm that we proposed in a previous
+work (Gerevini et al., 2003).
+An LA-graph A also contains a set of ordering constraints between actions in the (partial) plan represented by the graph. These constraints are (i) constraints imposed during
+search to deal with mutually exclusive actions: if an action a at level l of A is mutex with
+an action node b at a level after l, then a is constrained to finish before the start of b; (ii)
+constraints between actions implied by the causal structure of the plan: if an action a is
+189
+
+fiGerevini, Saetti & Serina
+
+used to achieve a precondition of an action b, then a is constrained to finish before the start
+of b.
+The effects of an action node can be automatically propagated to the next levels of
+the graph through the corresponding no-ops, until there is an interfering (mutex) action
+blocking the propagation, or the last level of the graph has been reached (Gerevini et al.,
+2003). In the rest of the paper, we assume that the LA-graph incorporates this propagation.
+A Disjunctive Temporal Problem (DTP) (Stergiou & Koubarakis, 2000; Tsamardinos
+& Pollack, 2003) is a pair hP, Ci, where P is a set of time point variables, C is a set of
+disjunctive constraints c1      cn , ci is of form yi  xi  ki , xi and yi are in P, and ki is a
+real number (i = 1...n). When C contains only unary constraints, the DTP is called Simple
+Temporal Problem (STP) (Dechter, Meiri, & Pearl, 1991).
+A DTP is consistent if and only if the DTP has a solution. A solution of a DTP is an
+assignment of real values to the variables of the DTP that is consistent with every constraint
+in the DTP. Computing a solution for a DTP is an NP-hard problem (Dechter et al., 1991),
+while computing a solution of an STP can be accomplished in polynomial time. Given
+an STP with a special start time variable s preceding all the others, we can compute a
+solution of the STP where each variable has the shortest possible distance from s in O(n  c)
+time, for n variables and c constraints in the STP (Dechter et al., 1991; Gerevini & Cristani,
+1997). We call such a solution an optimal solution of the STP. Clearly, a DTP is consistent if
+and only if we can choose from each constraint in the DTP a disjunct obtaining a consistent
+STP, and any solution of such an STP is also a solution of the original DTP.
+Finally, an STP is consistent if and only if the distance graph of the STP does not
+contain negative cycles (Dechter et al., 1991). The distance graph of an STP hP, Ci is a
+directed labeled graph with a vertex labeled p for each p  P, and with an edge from v  P
+to w  P labeled k for each constraint w  v  k  C.
+2.2 Augmenting the LA-graph with Disjunctive Temporal Constraints
+Let p be a timed precondition over a set W (p) of time windows. In the following, x  and x+
+indicate the start time and end time of x, respectively, where x is either a time window or an
+action. Moreover, al indicates an action node at level l of the LA-graph under consideration.
+For clarity of presentation, we will describe our techniques focusing on action preconditions
+that must hold during the whole execution of the action (except at the end point of the
+action), and on operator effects that hold at the end of the action execution, i.e., on PDDL
+conditions of type over all, and PDDL effects of type at end (Fox & Long, 2003). 2
+In order to represent plans where actions have durations and time windows for their
+execution, we augment the ordering constraints of an LA-graph with (i) action duration
+constraints and (ii) action scheduling constraints. Duration constraints have form
+a+  a = Dur(a),
+where Dur(a) denotes the duration of an action a (for the special actions a start and aend ,
++
+
++
+we have Dur(astart ) = Dur(aend ) = 0, since a
+start = astart and aend = aend ). Duration
+constraints are supported by the representation proposed in a previous work (Gerevini
+2. Our methods and planner support all the types of operator condition and effect that can be specified in
+PDDL 2.1 and 2.2.
+
+190
+
+fiAn Approach to Temporal Planning and Scheduling
+
+Level 1
+(0)
+p1
+
+Level 2
+
+Level 3
+
+Goal level
+
+()
+
+p1
+
+p1
+
+p1
+
+p1
+p
+
+mutex
+
+p2
+
+(0)
+
+(50)
+
+p5
+
+(50)
+
+p5
+
+(50)
+
+p5
+
+a3
+
+a1
+(0)
+
+astart
+
+(0)
+
+p3
+
+p3
+
+p3
+
+(0)
+
+p7
+
+p3
+mutex
+
+()
+
+astart
+
+p6
+
+(90)
+
+(70)
+
+a1
+
+aend
+
+(70)
+
+p8
+
+(70)
+
+p8
+
+p
+
+p10
+
+[15]
+(75)
+
+[50]
+(0)
+
+p
+
+(90)
+
+a2
+a3
+
+(70)
+
+p8
+
+aend
+
+a2
+(0)
+
+p4
+
+(0)
+
+p4
+
+(0)
+
+p4
+
+[70]
+(0)
+
+(70)
+
+p9
+
+(70)
+
+p9
+
+(70)
+
+p9
+
+(70)
+
+0
+
+25
+
+50
+
+75
+
+90
+
+125
+
+p9
+
+Figure 1: An example of LA-graph with nodes labeled by T -values (in round brackets),
+and the Gantt chart of the actions labeling the nodes of the LA-graph. Square
+nodes are action nodes; circle nodes are fact nodes. Action nodes are also marked
+by the duration of the represented actions (in square brackets). Unsupported
+precondition nodes are labeled (). Dashed edges form chains of no-ops blocked
+by mutex actions. Grey areas in the Gantt chart represent the time windows for
+the timed precondition p of a3 .
+
+et al., 2003), while the representation and treatment of scheduling constraints are a major
+contribution of this work.
+Let  be the plan represented by an LA-graph A. It is easy to see that the set C formed
+by the ordering constraints in A and the duration constraints of the actions in  can be
+encoded into an STP. For instance, if ai   is used to support a precondition node of aj ,
+
+then a+
+i  aj  0 is in C; if ai and aj are two mutex actions in , and ai is ordered before aj ,
+
+then a+
+i  aj  0 is in C. Moreover, for every action a  , the following STP-constraints
+are in C:
+a+  a  Dur(a), a  a+  Dur(a),
+which are equivalent to a+  a = Dur(a). A scheduling constraint imposes the constraint
+that the execution of an action must occur during the time windows associated with a timed
+precondition of the action. Syntactically, it is a disjunctive constraint c1      cn , where
+ci is of the form
+
+
+(yi  x
+i  hi )  (vi  ui  ki ),
+  
+u
+i , vi , xi , yi are action start times or action end times, and hi , ki  R . For every action
+a   with a timed precondition p, the following disjunctive constraint is added to C:
+
+191
+
+fiGerevini, Saetti & Serina
+
+_
+
+wW (p)
+
+
+
+  +
+ 3
+
+
++
+a+
+ a  a+
+.
+start  a  w
+start  w
+
+Definition 1 A temporally disjunctive action graph (TDA-graph) is a 4-tuple hA, T , P, Ci
+where
+ A is a linear action graph;
+ T is an assignment of real values to the nodes of A;
+ P is the set of time point variables corresponding to the start times and the end times
+of the actions labeling the action nodes of A;
+ C is a set of ordering constraints, duration constraints and scheduling constraints
+involving variables in P.
+A TDA-graph hA, T , P, Ci represents the (partial) plan formed by the actions labeling
+the action nodes of A with start times assigned by T . Figure 1 gives the LA-graph and
+T -values of a simple TDA-graph containing five action nodes (astart , a1 , a2 , a3 , aend ) and
+several fact nodes representing ten facts. The ordering constraints and duration constraints
+in C are:4
+
++
+
+a+
+1  a3  0, a2  a3  0,
+
++
++
+
++
+a1  a1 = 50, a2  a
+2 = 70, a3  a3 = 15.
+
+Assuming that p is a timed precondition of a3 with windows [25, 50) and [75, 125), the only
+scheduling constraint in C is:
+
++
++
++
+
++
++
+((a+
+start  a3  25)  (a3  astart  50))  ((astart  a3  75)  (a3  astart  125)).
+
+The pair hP, Ci defines a DTP D.5 Let Ds be the set of scheduling constraints in D.
+We have that D represents a set  of STPs, each of which consists of the constraints in
+D  Ds and one disjunct (pair of STP-constraints) for each disjunction in a subset D s0 of
+Ds (Ds0  Ds ). We call a consistent STP in  an induced STP of D. When an induced
+STP contains a disjunct for every disjunction in Ds (i.e., Ds0 = Ds ), we say that such a
+(consistent) STP is a complete induced STP of D.
+The values assigned by T to the action nodes of A are the action start times corresponding to an optimal solution of an induced STP. We call these start times a schedule of the
+actions in A. The T value labeling a fact node f of A is the earliest time t = Ta + Dur(a)
+3. Note that, if p is an over all timed condition of an action a, then the end of a can be the time when an
+exogenous event making p false happens, because in PDDL p is not required to be true at the end of a
+(Fox & Long, 2003).
+
++
+
+4. For brevity, in our examples we omit the constraints a+
+start  ai  0 and ai  aend  0, for each action
+ai , as well as the duration constraints of astart and aend , which have duration zero.
+5. The disjunctive constraints in C are not exactly in DTP-form. However, it is easy to see that every
+disjunctive constraint in C can be translated into an equivalent conjunction of constraints in exact DTPform. We use our more compact notation for clarity and efficiency reasons.
+
+192
+
+fiAn Approach to Temporal Planning and Scheduling
+
+such that a supports f in A, and a starts at Ta . If the induced STP from which we derive a
+schedule is incomplete, then T may violate the scheduling constraint of some action nodes,
+that we say are unscheduled in the current TDA-graph.
+The following definitions present the notions of optimality for a complete induced STP
+and of optimal schedule, which will be used in the next section.
+Definition 2 Given a DTP D with a point variable p, a complete induced STP of D is an
+optimal induced STP of D for p iff it has a solution assigning to p a value that is less
+than or equal to the value assigned to p by every solution of every other complete induced
+STP of D.
+Definition 3 Given a DTP D of a TDA-graph G, an optimal schedule for the actions
+in G is an optimal solution of an optimal induced STP of D for a
+end .
+Note that an optimal solution minimizes the makespan of the represented (possibly
+partial) plan. The DTP D of the previous example (Figure 1) has two induced STPs: one
+with no time window for p (S1 ), and one including the pair of STP-constraints imposing the
+time window [75, 125) to p (S2 ). The STP obtained by imposing the time window [25, 50)
+to p is not an induced STP of the DTP, because it is not consistent. S1 is a partial induced
+STP of D, while S2 is complete and optimal for the start time of aend . The temporal values
+derived from the optimal solution of S2 that are assigned by T to the action nodes of the
++
+
+
+
++
+
+TDA-graph are: a
+start = astart = 0, a1 = 0, a2 = 0, a3 = 75, aend = aend = 90.
+2.3 Solving the DTP of a TDA-graph
+In general, computing a complete induced STP of a DTP (if it exists) is an NP-hard problem
+that can be solved by a backtracking algorithm (Stergiou & Koubarakis, 2000; Tsamardinos
+& Pollack, 2003). However, given the particular structure of the temporal constraints
+forming a TDA-graph, we show that this task can be accomplished in polynomial time with
+a backtrack-free algorithm. Moreover, the algorithm computes an optimal induced STP for
+a
+end .
+In the following, we assume that each time window for a timed precondition is no shorter
+than the duration of its action (otherwise, the time window should be removed from those
+available for this precondition and, if no time window remains, then the action cannot be
+used in any valid plan). Moreover, without loss of generality, we can assume that each
+action has at most one timed precondition. It is easy to see that we can always replace a
+set of over all timed conditions of an action a with a single equivalent timed precondition,
+whose time windows are obtained by intersecting the windows forming the different original
+timed conditions of a. Also a set of at start timed conditions and a set of at end timed
+conditions can be compiled into single equivalent timed preconditions. This can be achieved
+by translating these conditions into conditions of type over all. The idea is similar to the
+one presented by Edelkamp (2004), with the difference that we can have more than one
+time window associated with a timed condition, while Edelkamp assumes that each timed
+condition is associated with a unique time window. Specifically, every at start timed
+condition p of an action a can be translated into an equivalent timed condition p 0 of type
+over all by replacing the scheduling constraint of p,
+193
+
+fiGerevini, Saetti & Serina
+
+p
+
+p
+
+Dur(a)
+
+Dur(a)
+
+q
+
+Dur(a)
+
+r
+
+r
+
+x
+0
+
+35 40
+
+50
+
+60
+
+80
+
+100
+
+120
+
+150
+
+180
+
+Figure 2: An example of a set of timed conditions compiled into a single timed precondition (x). The solid boxes represent the time windows associated with the timed
+conditions p (of type at start), q (of type at end), and r (of type over all) of
+an action a. A solid box extended by a dashed box indicates the extension of
+the time window in the translation of the corresponding timed condition into an
+over all timed condition for a.
+
+_
+
+wW (p)
+
+
+
+  
+
+
+
++
+a+
+ a  a+
+,
+start  a < w
+start < w
+
+forcing a to occur during one or more time windows, with
+_
+
+wW (p)
+
+
+
+ 6
+  +
++
+
+
+ a  a+
+a+
+start < w + Dur(a) .
+start  a < w
+
+Similarly, every at end timed condition p can be translated into an equivalent over all
+timed condition by replacing the scheduling constraint
+_
+
+wW (p)
+
+
+
+  +
+
++
+
++
+a+
+ a  a+
+,
+start  a < w
+start < w
+
+forcing a+ to occur during one or more time windows, with
+_
+
+wW (p)
+
+
+
+  +
+
++
+
+
++
+a+
+.
+start  a < w + Dur(a)  a  astart < w
+
+Clearly, this translation of the timed conditions of each domain action into a single timed
+precondition for the action can be accomplished by a preprocessing step in polynomial time.
+Figure 2 shows an example. Assume that action a has duration 20 and timed conditions
+p of type at start, q of type at end and r of type over all. Let [0, 50) and [100, 150) be
+the time windows of p, [35, 80) the time window of q, and finally [40, 60) and [120, 180) the
+time windows of r. We can compile these timed conditions into a new timed condition x
+with the time window [40, 60).
+6. Note that for timed conditions of type at start and at end we need to use < instead of . However,
+the properties and algorithms for STPs can be easily generalized to STPs extended with <-constraints
+(e.g., Gerevini & Cristani, 1997).
+
+194
+
+fiAn Approach to Temporal Planning and Scheduling
+
+Solve-DTP(X, S)
+Input: The set X of meta-variables in the meta CSP of a DTP, a partial solution S of the meta CSP;
+Output: Either a solution of the meta CSP or fail.
+1.
+2.
+3.
+4.
+5.
+6.
+7.
+8.
+9.
+10.
+
+if X =  then stop and return S;
+x  SelectVariable(X); X 0  X  {x};
+while D(x) 6=  do
+d  SelectValue(D(x));
+S 0  S  {x  d}; D(x)  D(x)  {d};
+D0 (x)  D(x); /* Saving the domain values */
+if ForwardCheck-DTP(X 0 , S 0 ) then
+Solve-DTP(X 0 , S 0 );
+D(x)  D 0 (x); /* Restoring the domain values */
+return fail; /* backtracking */
+
+ForwardCheck-DTP(X, S)
+Input: The set X of meta-variables, a (partial) solution S;
+Output: Either true or false.
+1.
+2.
+3.
+4.
+5.
+6.
+
+forall x  X do
+forall d  D(x) do
+if not Consistency-STP(S  {x  d}) then
+D(x)  D(x)  {d};
+if D(x) =  then return false; /* dead-end */
+return true.
+
+Figure 3: Basic algorithm for solving a DTP. D(x) is a global variable whose value is the
+current domain of the meta-variable x. Consistency-STP(S) returns true, if the
+STP formed by the variable values in the (partial) solution S has a solution, false
+otherwise.
+
+As observed by Stergiou and Kourbarakis (2000) and Tsamardinos and Pollack (2003),
+a DTP can be seen as a meta CSP: the variables of the meta CSP are the constraints
+of the original CSP, and the values of these (meta) variables are the disjuncts forming
+the constraints of the original CSP. The constraints of the meta CSP are not explicitly
+stated. Instead, they are implicitly defined as follows: an assignment  of values to the
+meta-variables satisfies the constraints of the meta CSP iff  forms a consistent STP (an
+induced STP of the DTP). A solution of the meta CSP is a complete induced STP of the
+DTP.
+Figure 3 shows an algorithm for solving the meta CSP of a DTP (Tsamardinos &
+Pollack, 2003), which is a variant of the forward-checking backtracking algorithm for solving
+general CSPs. By appropriately choosing the next meta-variable to instantiate (function
+SelectVariable) and its value (function SelectValue), we can show that the algorithm finds a
+solution with no backtracking (if one exists). Moreover, by a simple modification of Solve195
+
+fiGerevini, Saetti & Serina
+
+DTP, we can derive an algorithm that is backtrack free even when the input meta CSP has
+no solution. This can be achieved by exploiting the information in the LA-graph A of the
+TDA-graph to decompose its DTP D into a sequence of growing DTPs
+D1  D2  ...  Dlast = D
+where (i) last is the number of the levels in A, (ii) the variables Vi of Di (i = 1..last) are
+all the variables of D corresponding to the action nodes in A up to level i, and (iii) the
+constraints of Di are all the constraints of D involving only the variables in Vi . E.g., for the
+
++
+
++
+
++
+DTP of Figure 1, the point variables of D3 are a+
+start , a1 , a1 , a2 , a2 , a3 , a3 , and the set
+of constraints D3 is
+
++
+
++
+
++
+
++
+
+{ a+
+1  a3  0, a2  a3  0, a1  a1 = 50, a2  a2 = 70, a3  a3 = 15,
+
++
++
++
+
++
++
+((a+
+start a3  25)  (a3 astart  50))  ((astart a3  75)  (a3 astart  125))}.
+
+From the decomposed DTP, we can derive an ordered partition of the set of metavariables in the meta CSP of the original DTP
+X = X1  X2  ...  Xlast ,
+where Xi is the set of the meta-variables corresponding to the constraints in Di  Di1 ,
+if i > 1, and in D1 otherwise. This ordered partition is used to define the order in which
+SelectVariable chooses the next variable to instantiate, which is crucial to avoid backtracking. Specifically, every variable with a single domain value (i.e., an ordering constraint,
+a duration constraint, or a scheduling constraint with only one time window) is selected
+before every variable with more than one possible value (i.e., a scheduling constraint with
+more than one time window); moreover, if xi  Xi , xj  Xj and i < j, then xi is selected
+before xj .
+In order to avoid backtracking, the order in which SelectValue chooses the value for a
+meta-variable is very important as well: given a meta-variable with more than one value
+(time window) in its current domain, we choose the value corresponding to the earliest
+available time window. E.g., if the current domain of the selected meta-variable with m
+possible values is
+[ 
+
+i=1..m
+
+  +
+
+
++
++
+
+a+
+,
+start  a  wi  a  astart  wi
+
+then SelectValue chooses the j-th value such that |wj | < |wh |, for every h  {1, ..., m},
+j  {1, ..., m}, h 6= j.
+In the following we give a simple example illustrating the order in which SelectVariable
+and SelectValue select the meta-variables and their meta-values, respectively. Consider the
+TDA-graph in Figure 1 with the additional time window [150, 200) for the timed precondition p of a3 . The DTP of the extended TDA-graph has six meta-variables (x1 , x2 , . . . , x6 ),
+whose domains (the disjuncts of the corresponding constraints of the original CSP) are:
+
+x1 : {a+
+1  a3  0}
++
+
+x2 : {a2  a3  0}
+
+196
+
+fiAn Approach to Temporal Planning and Scheduling
+
+x3 :
+x4 :
+x5 :
+x6 :
+
+
+{a+
+1  a1 = 50}
++
+
+{a2  a2 = 70}
+
+{a+
+3  a3 = 15}
++
++
++
++
+
++
++
+{(astart  a
+3  25)  (a3  astart  50), (astart  a3  75)  (a3  astart  125),
++
+
++
++
+(astart  a3  150)  (a3  astart  200)}.
+
+By exploiting the level structure of the TDA-graph, we derive an ordered partition of the
+meta-variables formed by the following sets:
+X1 = {x3 }, X2 = {x4 }, X3 = {x1 , x2 , x5 , x6 }.
+Since x3 belongs to X1 while x4 belongs to X2 , SelectVariable selects x3 before selecting
+x4 . Similarly, the function selects x4 before the meta-variables in X3 . When the algorithm
+instantiates x6 , the first meta-value of x6 (i.e., the first time window of the timed precondition of a3 ) has been removed from its domain by forward checking, and SelectValue selects
+
++
++
++
+
++
++
+(a+
+start  a3  75)  (a3  astart  125) before (astart  a3  150)  (a3  astart  200),
+because the first meta-value corresponds to a time window starting at time 75, while the
+second one corresponds to a time window starting at time 150.
+By using these techniques for selecting the next meta-variable to instantiate and its
+value, we can prove the following theorem.
+Theorem 1 Given a DTP D for a TDA-graph, if the meta CSP X of D is solvable, then
+Solve-DTP finds a solution of X with no backtracking. Moreover, this solution is an optimal
+induced STP of D for a
+end .
+Proof. The proof has two key points: the way meta-variables are selected and instantiated
+by SelectVariable and SelectValue, respectively; the particular type of constraints of D, in
+which all disjunctive constraints have a specific form encoding a set of disjoint time windows,
+and, by construction of D, we have
+
+j i such that i < j and  |= a
+j < ai ,
+
+(1)
+
+
+where  is the set of ordering constraints and duration constraints in D, and a 
+i (aj ) is
+an endpoint of ai (aj ). Because of property (1),  cannot imply any restriction on the
+maximum distance between an endpoint of ai and endpoint of aj (while, of course, there
+can be a lower bound on this distance). I.e., for any positive quantity u we have
+
+j i such that i < j and  |= (a
+j  ai  u).
+
+(2)
+
+Let assume that SelectVariable chooses a meta-variable x that cannot be consistently
+instantiated to a value in D(x) (and this means that we have reached a backtracking point).
+We show that this cannot be the case.
+SelectVariable chooses the meta-variables of the STP-constraints of D before any metavariable of a scheduling constraint with more than one value (time window). Let X s be
+the set of the meta-variables associated with the scheduling constraints in D. We have
+that x must be a meta-variable in X s , because we are assuming that the meta CSP X is
+solvable. The use of the forward checking subroutine guarantees that at least one value of x
+is consistent with respect to the meta-variables that are instantiated in the current partial
+197
+
+fiGerevini, Saetti & Serina
+
+solution S. Hence, it should be the case that at step 7 of Solve-DTP ForwardCheck-DTP
+returns false for every value d (time window) in D(x), i.e., that for every d  D(x) there
+exists another uninstantiated meta-variable x0  X s such that, for every d0  D(x0 ), the
+check Consistency-STP(S  {x0  d0 }) executed by the forward checking subroutine returns
+false. However, if X has a solution (D is consistent), this cannot be the case because
+(i) the value chosen by SelectValue to instantiate x and the previously instantiated metavariables (step 4) is the earliest available time window in the current domain of the
+meta-variable under consideration, which is a least commitment assignment, and
+(ii) we have at most one scheduling constraint (meta-variable in X s ) for each level of the
+TDA-graph.
+Let a0 be the action constrained by the scheduling constraint associated with x 0 . Since
+SelectVariable selects x before x0 , by (ii) we have that a0 is at a level following the level of the
+action constrained by the scheduling constraint associated with x. Thus, by property (2),
+we have that if x0 could not be instantiated, then this would be because every time window
+of a0 constrains a0 to start too early: the current partial solution of X augmented with
+any of the possible values of x implies that the start time of a0 should be after the end of
+the last time window of a0 . But then, (i) and the assumption that X is solvable guarantee
+that this cannot be the case.
+Moreover, since the value of every instantiated meta-variable is propagated by forward
+checking to the unassigned variables, we have that the first value assigned to any metavariable is the same value assigned to that variable in the solution found for the CSP (if
+any)  it is easy to see that if the first value chosen by SelectValue(D(x)) is not feasible
+(ForwardCheck-DTP(X 0 , S 0 ) returns false), then every other next value chosen for x is not
+feasible.
+Finally, since the value chosen by SelectValue for a meta-variable corresponds to the
+earliest available window in the current domain of the meta-variable, it follows that the
+solution computed by the algorithm is a complete optimal induced STP of D for a 
+end . 2
+As a consequence of the previous theorem, if Solve-DTP performs backtracking (step 10),
+then the input meta CSP has no solution. Thus, we can obtain a general backtrack-free
+algorithm for the DTP of any TDA-graph by simply replacing step 10 with
+10. stop and return fail.
+The correctness of the modified algorithm, which we called Solve-DTP+ , follows from
+Theorem 1. The next theorem states that the runtime complexity of Solve-DTP + is polynomial.
+Theorem 2 Given a TDA-graph G with DTP D, Solve-DTP+ processes the meta CSP
+corresponding to D in polynomial time with respect to the number of action nodes in G and
+the maximum number of time windows in a scheduling constraint of D. 7
+7. It should be noted that here our main goal is to give a complexity bound that is polynomial. The use of
+improved forward checking techniques (e.g., Tsamardinos & Pollack, 2003) could lead to a complexity
+bound that is lower than the one given in the proof of the theorem.
+
+198
+
+fiAn Approach to Temporal Planning and Scheduling
+
+Proof. The time complexity depends on the number of times ForwardCheck-DTP is executed, and on its time complexity. D contains a linear number of variables with respect
+to the number n of domain action nodes in the LA-graph of the TDA-graph, O(n 2 ) ordering constraints, and O(n) duration constraints and scheduling constraints. Hence, the
+meta CSP of D has O(n2 ) meta-variables (one variable for each constraint of the original
+CSP). Let  be the maximum number of time windows in a scheduling constraint of D.
+ForwardCheck-DTP is executed at most  times for each meta-variable x, i.e., O( n 2 ) times
+in total. Consistency-STP decides the satisfiability of an STP involving O(n) variables, which
+can be accomplished in O(n3 ) time (Dechter et al., 1991; Gerevini & Cristani, 1997). (Note
+that the variables of the STP that is processed by Consistency-STP are the variables of the
+original CSP, i.e., they are the starting time and the end time of the actions in the plan.)
+Finally, Consistency-STP is run O(  n2 ) times during each run of ForwardCheck-DTP. It
+follows that the runtime complexity of Solve-DTP+ is O( 2  n7 ). 2
+By exploiting the structure of the temporal constraints forming the DTP of a TDAgraph, we can make the following additional changes to Solve-DTP+ improving the efficiency
+of the algorithm.
+ Instead of starting from an empty assignment S (no meta-variable is instantiated),
+initially every meta-variable associated with an ordering constraint or with a duration
+constraint is instantiated with its value, and X contains only meta-variables associated
+with the scheduling constraints. As observed in the proof of Theorem 1, if the meta
+CSP is solvable, the values assigned to the meta-variables by the initial S form a
+consistent STP.
+ Forward checking is performed only once for each meta-variable. This is because in
+the proof of Theorem 1 we have shown that, if the meta CSP is solvable, then the
+first value chosen by SelectValue should be feasible (i.e., ForwardCheck-DTP returns
+true). Thus, if the first value is not feasible, we can stop the algorithm and return fail
+because the meta CSP is not solvable. Moreover, we can omit steps 6 and 9 which
+save and restore the domain values of the meta-variables.
+ Finally, the improved algorithm can be made incremental by exploiting the particular
+way in which we update the DTP of the TDA-graph during planning (i.e., during the
+search of a solution TDA-graph described in the next section). As described in the
+next section, each search step is either an addition of a new action node to a certain
+level l, or the removal of an action node from l. In both cases, it suffices to recompute
+the sub-solution for the meta-variables in the subsets Xl , Xl+1 , ..., Xlast . The values
+assigned to the other meta-variables is the same as the assignment in the last solution
+computed before updating the DTP, and it is part of the input of the algorithm.
+Moreover, in order to use the local search techniques described in the next section, we
+need another change to the basic algorithm: when the algorithm detects that X has no
+solution, instead of returning failure, (i) it keeps processing the remaining meta-variables,
+and (ii) when it terminates, it returns the (partial) induced STP Si formed by the values
+assigned to the meta-variables. The optimal solution of Si defines the T -assignment of the
+TDA-graph.
+199
+
+fiGerevini, Saetti & Serina
+
+In the next section, SG denotes the induced STP for the DTP of a TDA-graph G computed by our method.
+
+3. Local Search Techniques for TDA-Graphs
+A TDA-graph hA, T , P, Ci can contain two types of flaw: unsupported precondition nodes
+of A, called propositional flaws, and action nodes of A that are not scheduled by T , called
+temporal flaws. If a level of A contains a flaw, we say that this level is flawed. For example,
+if the only time window for p in the TDA-graph of Figure 1 were [25, 50), then level 3 would
+be flawed, because the start time of a3 would be 70, which violates the scheduling constraint
+for a3 imposing that this action must be executed during [25, 50).
+A TDA-graph with no flawed level represents a valid plan and is called a solution graph.
+In this section, we present new heuristics for finding a solution graph in a search space of
+TDA-graphs. These heuristics are used to guide a local search procedure, called Walkplan,
+that was originally proposed by Gerevini and Serina (1999) and that is the heart of the
+search engine of our planner.
+The initial TDA-graph contains only astart and aend . Each search step identifies the
+neighborhood N (G) (successor states) of the current TDA-graph G (search state), which is
+a set of TDA-graphs obtained from G by adding a helpful action node to A or removing a
+harmful action node from A in an attempt to repair the earliest flawed level of G. 8
+In the following, for the sake of brevity when we refer to an action node of a TDA-graph,
+we are implicitly referring to an action node of the LA-graph of a TDA-graph. Similarly
+for the level of a TDA-graph. Moreover, we remind the reader that a l denotes the action
+at level l, while la denotes the level of action a.
+Definition 4 Given a flawed level l of a TDA-graph G, an action node is helpful for l iff
+its insertion into G at a level i  l would remove a propositional flaw at l.
+Definition 5 Given a flawed level l of a TDA-graph G, an action node at a level i  l
+is harmful for l iff its removal from G would remove a propositional flaw at l, or would
+decrease the T -value of al , if al is unscheduled.
+Examples of helpful action node and harmful action node
+An action node representing an action with effect p1 is helpful for level 3 of the TDA-graph
+of Figure 1 if it is added at level 2 or 3 (bear in mind that the insertion of an action node at
+level 3 determines an expansion of the TDA-graph postponing a3 to level 4; more details are
+given at the end of the examples). Action node a3 of Figure 1 is harmful for level 3, because
+its precondition node p1 is unsupported; action node a1 is harmful for level 3, because it
+blocks the no-op propagation of p1 at level 1, which would support the precondition node p1
+at level 3. Moreover, assuming W (p) = {[25, 50)}, a3 is unscheduled in the plan represented
+by the LA-graph. Action node a2 is harmful for level 3, because the removal of a2 from
+8. We have designed several flaw selection strategies that are described and experimentally evaluated in a
+recent paper (Gerevini, Saetti, & Serina, 2004). The strategy preferring flaws at the earliest level of the
+graph tends to perform better than the others, and so it is used as the default strategy of our planner.
+More details and a discussion about this strategy are given in the aforementioned paper.
+
+200
+
+fiAn Approach to Temporal Planning and Scheduling
+
+A would decrease the temporal value of a3 . On the contrary, a1 is not harmful for level 3,
+because its removal would not affect the possible scheduling of a3 . Notice that an action
+node can be both helpful and harmful: a3 is harmful for level 3, and it is helpful for the
+goal level (because it supports the precondition node p10 of aend ).
+When we add an action node to a level l that is not empty, the LA-graph is extended
+by one level, all action nodes from l are shifted forward by one level (i.e., they are moved
+to their next level), and the new action is inserted at level l . Similarly, when we remove
+an action node from level l, the graph is shrunk by removing level l. Some additional
+details about this process are given in another paper (Gerevini et al., 2003). Moreover, as
+pointed out in the previous section, the addition (removal) of an action node a requires us
+to update the DTP of G by adding (removing) the appropriate ordering constraints between
+a and other actions in the LA-graph of G, the duration constraint of a, and the scheduling
+constraint of a (if any). From the updated DTP, we can use the method described in the
+previous section to revise T , and to compute a possibly new schedule of the actions in G
+(i.e., an optimal solution of SG ).
+The elements in N (G) are evaluated using a heuristic evaluation function E consisting
+of two weighted terms, estimating their additional search cost and temporal cost, i.e., the
+number of search steps required to repair the new flaws introduced, and their contribution
+to the makespan of the represented plan, respectively. An element of N (G) with the lowest
+combined cost is then selected using a noise parameter randomizing the search to escape
+from local minima (Gerevini et al., 2003). In addition, in order to escape local minima, the
+new version of our planner uses a short tabu list (Glover & Laguna, 1997). In the rest of
+this section, we will focus on the search cost term of E. The techniques that we use for the
+evaluation of the temporal cost and the (automatic) setting of the term weights of E are
+similar to those that we introduced in a previous work (Gerevini et al., 2003).
+The search cost of adding a helpful action node a to repair a flawed level l of G is
+estimated by constructing a relaxed temporal plan  achieving
+(1) the unsupported precondition nodes of a, denoted by Pre(a)
+(2) the propositional flaws remaining at l after adding a, denoted by Unsup(l), and
+(3) the supported precondition nodes of other action nodes in G that would become
+unsupported by adding a, denoted by Threats(a).
+Moreover, we estimate the number of additional temporal flaws that the addition of a and
+ to G would determine, i.e., we count the number of
+(I) action nodes of G that would become unscheduled by adding a and  to G,
+(II) the unsatisfied timed preconditions of a, if a is unscheduled in the TDA-graph extended with a and ,
+(III) the action nodes of  with a scheduling constraint that we estimate cannot be satisfied
+in the context of  and of G.
+The search cost of adding a to G is the number of actions in  plus (I), (II) and (III),
+which are new terms of the heuristic evaluation. Note that the action nodes of (I) are
+201
+
+fiGerevini, Saetti & Serina
+
+aend (90)
+
+Goal level
+(90)
+
+p9
+
+p8
+[15]
+
+a3 (75)
+
+(70)
+
+p8
+
+Action
+b1
+b2
+b3
+b4
+
+(70)
+
+(70)
+
+p10
+p
+
+(70)
+
+p9
+
+(70)
+
+p9
+
+p5
+
+(70)
+
+(70)
+
+(70)
+
+(50)
+
+p1
+
+p7
+
+Est lower bound
+0
+0
+15
+50
+
+(35)
+[5]
+
+q
+
+p9
+
+p8
+
+p6
+
+Relaxed Plan 
+
+Level 3
+()
+
+Action
+b1
+b2
+b3
+b4
+
+N um acts
+0
+0
+1
+5
+
+anew (30)
+
+(20)
+
+p5 (50)
+
+p1
+
+p3
+
+Level 2
+p1
+p1
+
+p5
+mutex
+
+p1
+
+(0)
+
+[50]
+
+a1 (0)
+
+Level 1
+(0)
+
+(50)
+
+(0)
+
+p2
+
+mutex
+
+p6
+
+p3
+p3
+p3
+
+(0)
+
+(0)
+
+a2 [70]
+(0)
+()
+
+p4
+p4
+p4
+
+(30)
+
+q1
+
+q2
+[10]
+(20)
+
+(0)
+
+b3
+
+(20)
+
+q3
+
+(0)
+[15]
+
+p5
+
+(0)
+
+b1 (0)
+
+I
+astart (0)
+
+(0)
+
+p3
+
+[100]
+
+q
+p4
+
+b4 (50)
+
+(0)
+
+q4
+
+p5
+
+(50)
+
+[20]
+
+b2 (0)
+
+p4
+
+(0)
+
+(50)
+
+p5
+
+Figure 4: An example of relaxed temporal plan . Square nodes represent action nodes,
+while the other nodes represent fact nodes; solid nodes correspond to nodes in
+A  {anew }; dotted nodes correspond to the precondition nodes and action nodes
+that are considered during the construction of ; the gray dotted nodes are those
+selected for their inclusion in . Action nodes are marked by the duration of
+the represented actions (in square brackets) and by their estimated start time (in
+round brackets). The meaning of Num acts is described in the text; the lower
+bounds on the earliest action start times (Est lower bound) are computed by the
+algorithm in Appendix A.
+
+those that would have to be ordered after a (because a is used to achieve one of their
+preconditions, or these action nodes are mutex with a) and that, given the estimated end
+time of  and the duration of a, would excessively increase their start time. In (II) we
+consider the original formulation of the timed preconditions of a (i.e., the formulation before
+their possible compilation into one merged new precondition, as discussed in Section 2.3).
+Finally, to check the scheduling constraint of an action in , we consider the estimated end
+time of the relaxed subplan of  used to achieve the preconditions of this action.
+Example of relaxed temporal plan and additional temporal flaws (IIII)
+Figure 4 gives an example of  for evaluating the addition of anew at level 2 of the LAgraph on the left side of the figure (the same graph as the one used in Figure 1), which is a
+202
+
+fiAn Approach to Temporal Planning and Scheduling
+
+RelaxedTimePlan(G, I, A)
+Input: A set of goal facts (G), an initial state for the relaxed plan (I), a set of reusable actions (A);
+Output: The set of actions Acts forming a relaxed plan for G from I and the earliest time when all
+facts in G can be achieved.
+1.
+2.
+3.
+4.
+5.
+6.
+7.
+8.
+9.
+10.
+11.
+12.
+13.
+
+S
+Acts  A; F  aActs Add (a);
+t  M AX {T (g) | g  G  F or g  G  I};
+G  G  I;
+while G  F 6= 
+g  a fact in G  F ;
+b  BestAction(g);
+hA, t0 i  RelaxedTimePlan(Pre(b), I, Acts);
+T (b)  ComputeEFT (b, t0 );
+t  M AX{t, T (b)};
+forall f  Add(b) do
+
+T (f )  M IN T (f ),ST (b) + Dur(b) ;
+Acts  A  {b}; F  aActs Add (a);
+return hActs, ti.
+
+Figure 5: Algorithm for computing a relaxed temporal plan. ComputeEFT (b, t 0 ) returns
+the estimated earliest finishing time  of b that is consistent with the scheduling
+constraint of b (if any), and such that t0 + Dur(b)   (for an example see
+Appendix A). Add (a) denotes the set of the positive effects of a.
+
+helpful action node for the unsupported precondition p6 . The goals of  are the unsupported
+preconditions q1 and q2 of anew ; while the initial state I of  is formed by the fact nodes that
+are supported at level 2. The actions of  are anew , b2 and b3. The numbers in the name
+of the actions and facts of the relaxed plan indicate the order in which RelaxedTimePlan
+considers them. The estimated start time and end time of b3 are 20 and 30, respectively.
+Assume that the timed precondition q of anew has associated with it the time window [0, 20).
+Concerning point (I), there is no action node of G that would become unscheduled by adding
+anew and  to G. Concerning point (II), anew is unscheduled and has one timed precondition
+that is unsatisfied (q). Concerning point (III), we have that b3 cannot be scheduled in the
+context of  and the current TDA-graph G. Finally, since  contains three actions, and the
+sum of (I), (II) and (III) is 2, we have that the search cost of adding anew to G at level 2
+is 5.
+The evaluation of a TDA-graph derived by removing a harmful action node a for a
+flawed level l is similar, with  achieving
+ the precondition nodes supported by a that would become unsupported by removing
+a and
+ when la < l, the unsupported precondition nodes at level l that do not become supported by removing a.
+203
+
+fiGerevini, Saetti & Serina
+
+Regarding the second point, note that if l = la , then all flaws at l are eliminated because,
+when we remove an action, we also (automatically) remove all its precondition nodes. While,
+when la < l, the removal of a could leave some flaws at level l.
+Plan  is relaxed in the sense that its derivation ignores the possible (negative) interference between actions in , and the actions in  may be unscheduled. The derivation of
+ takes into account the actions already in the current partial plan (the plan represented
+by the TDA-graph G). In particular, the actions of the current plan are used to define an
+initial state I for , which is obtained by applying the actions of G up to level la 1, ordered
+according to their corresponding levels. Moreover, each fact f in I is marked by a temporal
+value, T (f ), corresponding to the time when f becomes true (and remains so in ) in the
+current subplan formed by the actions up to level la  1.
+The relaxed plan  is constructed using a backward process, called RelaxedTimePlan (see
+Figure 5), which is an extension of the RelaxedPlan algorithm that we proposed in a previous
+work (Gerevini et al., 2003). The algorithm outputs two values: a set of actions forming
+a (sub)relaxed plan, and its estimated earliest finishing time (used to defined the temporal
+cost term of E). The set of actions Acts forming  is derived by running RelaxedTimePlan
+twice: first with goals Pre(a), initial state I and an empty set of reusable actions; then with
+goals Unsup(l )  T hreats(a), initial state I  Threats(a)  Add (a), and a set of reusable
+actions formed by the actions computed by the first run plus a.
+The main novelty of the extended algorithm for computing  concerns the choice of the
+actions forming the relaxed plan. The action b chosen to achieve a (sub)goal g is an action
+minimizing the sum of
+ the estimated minimum number of additional actions required to support its propositional preconditions from I (Num acts(b, I)),
+ the number of supported precondition nodes in the LA-graph that would become
+unsupported by adding b to G (Threats(b)),
+ the number of timed preconditions of b that we estimate would be unsatisfied in G
+extended with  (TimedPre(b));
+ the number of action nodes scheduled by T that we estimate would become unscheduled when adding b to G (TimeThreats(b)).
+More formally, the action chosen by BestAction(g) at step 6 of RelaxedTimePlan to
+achieve a (sub)goal g is an action satisfying
+
+
+0
+0
+0
+0
+ARGMIN Num acts(a , I) + |Threats(a )| + |TimedPre(a )| + |TimeThreats(a )| ,
+{a0 Ag }
+
+where Ag = {a0  O | g  Add (a0 ), O is the set of all the domain actions whose preconditions
+are reachable from I}.
+Num acts(b, I) is computed by the algorithm given in Appendix A; Threats(b) is computed as in our previous method for deriving  (Gerevini et al., 2003), i.e., by considering
+the negative interactions (through mutex relations) of b with the precondition nodes that
+are supported at levels after al ; TimedPre(b) and TimeThreats(b) are new components of
+the action selection method, and they are computed as follows.
+204
+
+fiAn Approach to Temporal Planning and Scheduling
+
+In order to compute TimedPre(b), we estimate the earliest start time of b (Est(b)) and
+the earliest finishing time of b (Ef t(b)). Using these values, we count the number of the
+timed preconditions of b that cannot be satisfied. Ef t(b) is defined as Est(b) + Dur(b),
+while Est(b) is the maximum over
+ a lower bound on the possible earliest start time of b (Est lower bound of b), computed
+by the reachability analysis algorithm given in Appendix A;
+ the T -values of the action nodes ci in the current TDA-graph G, with i < la , that are
+
+mutex with b because the addition of b to G would occur the addition of c+
+i b  0
+to the DTP of G;
+ the maximum over an estimated lower bound on the time when all the preconditions of
+b are achieved in the relaxed plan; this estimate is computed from the causal structure
+of the relaxed plan, the duration and scheduling constraints of its actions, and the
+T -values of the facts in the initial state I.
+Example of TimedPre
+In the example of Figure 4, the estimated start time of b3 is the maximum between 15,
+which is the Est lower bound of b3, and 20, which is the maximum time over the estimated
+times when the preconditions of b3 are supported (p4 is supported in the initial state of 
+at time 0, while q3 is supported at time 20). Notice that a1 is not mutex with b3, and so the
+second point in the definition of Est(b3) does not apply here. Since the estimated earliest
+start time of b3 is 20 and the duration of b3 is 10, Ef t(b3) = 20 + 10. Thus, if we assume
+that q has associated with it the time window [0,20), then the timed precondition q of b3
+cannot be scheduled, i.e., q  TimedPre(b3).
+In order to compute TimeThreats(b), we use the following notion of time slack between
+action nodes.
+Definition 6 Given two action nodes ai and aj of a TDA-graph hA, T , P, Ci such that
+
+C |= a+
+i < aj , Slack(ai , aj ) is the maximum time by which the T -value of ai can be
+consistently increased in SG without violating the time window chosen for scheduling aj .
+In order to estimate whether an action b is a time threat for an action node a k in the
+current TDA-graph extended with the action node a that we are adding for repairing level
+l (l < k), we check if
+(b , a) > Slack(a, ak )
+holds, where b is the portion of the relaxed plan computed so far, and (b , a) is the
+estimated delay that adding the actions in b to G would cause to the start time of a.
+Examples of time slack and TimeThreat
+The slack between anew and a3 in the TDA-graph of Figure 4 extended with anew is 35,
+because even if anew started at 35, a3 could still be executed during the time window
+[75, 125) (imposed by the timed precondition p); while if anew started at 35 + , then a3
+would finish at 125+ (determined by summing the start time of anew , Dur(anew ), Dur(a2 ),
+205
+
+fiGerevini, Saetti & Serina
+
+and Dur(a3 )), and so the scheduling constraint of a3 would be violated. Assume that we
+are evaluating the inclusion of b4 in the relaxed plan of Figure 4 for achieving q2. We have
+(b4 , anew ) = 150,
+i.e. the estimated delay that the portion of the plan formed by b4 would add to the end
+time of anew is 150. Since the slack between anew and a3 is 35,
+Slack(anew , a3 ) < (b4 , anew ),
+and so a3  TimeThreats(b4). On the contrary, since
+Slack(anew , a3 ) > (b3 , anew ) = 30
+we have that a3 6 TimeThreats(b3).
+To conclude this section, we observe that the way we consider scheduling constraints
+during the evaluation of the search neighborhood has some similarity with a well-known
+technique used in scheduling. For example, suppose that we are evaluating the TDA-graphs
+obtained by adding a helpful action node a to one among some alternative possible levels of
+the graph, and that the current TDA-graph contains another action node c which is mutex
+with a. If the search neighborhood contains two TDA-graphs corresponding to (1) adding
+a to a level before lc  and (2) adding a to a level after lc , and (1) violates less scheduling
+constraints than (2), then, according to points (I)(III), (1) is preferred to (2). A similar
+heuristic method, called constraint-based analysis, has been proposed by Erschler, Roubellat
+and Vernhes (1976) to decide whether an action should be scheduled before or after another
+conflicting action, and it has been also used in other scheduling work for guiding the search
+toward a consistent scheduling of the tasks involved in the problem (e.g., Smith & Cheng,
+1993).
+
+4. Experimental Results
+We implemented our approach in a planner called lpg-td, which obtained the 2nd prize in
+the metric-temporal track (satisficing planners) of the 4th International Planning Competition (IPC-4). lpg-td is an incremental planner, in the sense that it produces a sequence
+of valid plans each of which improves the quality of the previous ones. Plan quality is
+measured using the metric expression that is specified in the planning problem description.
+The incremental process of lpg-td is described in another paper (Gerevini et al., 2003).
+Essentially, the process iterates the search of a solution graph with an additional constraint
+on the lower bound of the plan quality, which is determined by the quality of the previously
+generated plans. lpg-td is written in C and is available from http://lpg.ing.unibs.it.
+In this section, we present the results of an experimental study with two main goals:
+ testing the efficiency of our approach to temporal planning with predictable exogenous
+events by comparing the performance of lpg-td and other recent planners that at
+IPC-4 attempted the benchmark problems involving timed initial literals (Edelkamp,
+Hoffmann, Littman, & Younes, 2004);
+206
+
+fiAn Approach to Temporal Planning and Scheduling
+
+Planner
+
+lpg-td
+sgplan
+p-mep
+crikey
+lpg-ipc3
+downward (diag)
+downward
+marvin
+yahsp
+macro-ff
+fap
+roadmapper
+tilsapa
+optop
+
+Solved
+845
+1090
+98
+364
+306
+380
+360
+224
+255
+189
+81
+52
+63
+4
+
+Attempted
+1074
+1415
+588
+594
+594
+432
+432
+432
+279
+332
+193
+186
+166
+50
+
+Success ratio
+79%
+77%
+17%
+61%
+52%
+88%
+83%
+52%
+91%
+57%
+42%
+28%
+38%
+8%
+
+Planning capabilities at IPC-4
+Propositional + DP, Metric-Temporal +TIL
+Propositional + DP, Metric-Temporal +TIL
+Propositional, Metric-Temporal +TIL
+Propositional, Metric-Temporal
+Propositional, Metric-Temporal
+Propositional + DP
+Propositional + DP
+Propositional + DP
+Propositional
+Propositional
+Propositional
+Propositional
+TIL
+TIL
+
+Table 1: Number of problems attempted/solved and success ratio of the (satisficing) planners that took part in IPC-4. DP means derived predicates; TIL means timed
+initial literals; Propositional means STRIPS or ADL. The planning capabilities are the PDDL2.2 features in the test problems attempted by each planner at
+IPC-4.
+
+ testing the effectiveness of the proposed temporal reasoning techniques integrated
+into the planning process to understand, in particular, their impact on the overall
+performance of the system, and to compare them with other existing techniques.
+For the first analysis, we consider the test problems of the variant of the IPC-4 metrictemporal domains involving timed initial literals. A comparison of lpg-td and other IPC-4
+planners considering all the variants of the IPC-4 metric-temporal domains is given in
+Appendix B. Additional results are available from the web site of our planner.
+For the second experiments, we use new domains and problems obtained by extending
+two well-known benchmark domains (and the relative problems) from IPC-3 with timed
+initial literals (Long & Fox, 2003a).9
+All tests were conducted on an Intel Xeon(tm) 3 GHz, 1 Gbytes of RAM. We ran lpg-td
+with the same default settings for every problem attempted.
+4.1 LPG-td and Other IPC-4 Planners
+In this section, we use the official results of IPC-4 to compare the performance of lpg-td
+with those of other planners that took part in the competition. The performance of lpg-td
+corresponds to a single run. The CPU-time limit for the run was 30 minutes, after which
+termination was forced. lpg-td.s indicates the CPU-time required by our planner to derive
+the first plan; lpg-td.bq indicates the best quality plan found within the CPU-time limit.
+9. For a description of the IPC-4 domains and of the relative variants, the reader can visit the
+official web site of IPC-4 (http://ls5-www.cs.uni-dortmund.de/edelkamp/ipc-4/index.html).
+The extended versions of the IPC-3 domains used in our experiments are available from
+http://zeus.ing.unibs.it/lpg/TestsIPC3-TIL.tgz.
+
+207
+
+fiGerevini, Saetti & Serina
+
+Before focusing our analysis on the IPC-4 domains involving timed initial literals, in
+Table 1 we give a very brief overview of all the results of the IPC-4 (satisficing) planners, in
+terms of planning capabilities and problems attempted/solved by each planner. The table
+summarizes the results for all the domain variants of IPC-4. lpg-td and sgplan (Chen, Hsu,
+& Wah B., 2004) are the only planners supporting all the major features of PDDL2.1 and
+PDDL2.2. Both planners have a good success ratio (close to 80%). downward (Helmert,
+2004) and yahsp (Vidal, 2004) have a success ratio better than lpg-td and sgplan, but
+they handle only propositional domains (downward supports derived predicates, while
+yahsp does not). sgplan attempted more problems than lpg-td because it was also tested
+on the compiled version of the variants with derived predicates and timed initial literals. 10
+Moreover, lpg-td did not attempt the numerical variant of the two versions of the Promela
+domain and the ADL variant of PSR-large, because they use equality in some numerical
+preconditions or conditional effects, which currently our planner does not support.
+Figure 6 shows the performance of lpg-td in the variants of three domains involving
+predictable exogenous events with respect to the other (satisficing) planners of IPC-4 supporting timed initial literals: sgplan, p-mep (Sanchez et al., 2004) and tilsapa (Kavuluri
+& U, 2004). In Airport (upper plots of the figure), lpg-td solves 45 problems over 50,
+sgplan 43, p-mep 12, and tilsapa 7. In terms of CPU-time, lpg-td performs much better
+than p-mep and tilsapa. lpg-td is faster than sgplan in nearly all problems (except
+problems 1 and 43). In particular, the gap of performance in problems 2131 is nearly
+one order of magnitude. Regarding plan quality, the performance of lpg-td is similar to
+the performance of p-mep and tilsapa, while, overall, sgplan finds plan of worse quality
+(with the exception of problems 41 and 43, where sgplan performs slightly better, and the
+easiest problems where lpg-td and sgplan perform similarly).
+lpg-td and tilsapa are the only planners of IPC-4 that attempted the variant of
+PipesWorld with timed initial literals (central plots of Figure 6). lpg-td solves 23 problems over 30, while tilsapa solves only 3 problems. In this domain variant lpg-td performs
+much better than tilsapa.
+In the flaw version of Umts (bottom plots of Figure 6), lpg-td solves all 50 problems,
+while sgplan solves 27 problems (p-mep and tilsapa did not attempt this domain variant).
+Moreover, lpg-td is about one order of magnitude faster than sgplan in every problem
+solved. Compared to the other IPC-4 benchmark problems, the Umts problems are generally
+easier to solve. In these test problems, the main challenge is finding plans of good quality.
+Overall, the best quality plans of lpg-td are much better than sgplan plans, except for
+the simplest problems where the two planners generate plans of similar quality. In the basic
+version of Umts without flawed actions, sgplan solves all problems as lpg-td, but in terms
+of plan quality lpg-td performs much better.
+Figure 7 shows the results of the Wilcoxon sign-rank test, also known as the Wilcoxon
+matched pairs test (Wilcoxon & Wilcox, 1964), comparing the performance of lpg-td and
+the planners that attempted the benchmark problems of IPC-4 involving timed initial literals. The same test has been used by Long and Fox (2003a) for comparing the performance
+10. Such versions were generated for planners that do not support these features of PDDL2.2. During the
+competition we did not test lpg-td with the problems of the compiled domains because the planner
+supports the original version of these domains. lpg-td attempted every problem of the (uncompiled)
+IPC-4 domains that it could attempt in terms of the planning language it supports.
+
+208
+
+fiAn Approach to Temporal Planning and Scheduling
+
+Airport-Windows
+
+Milliseconds
+1e+07
+
+LPG-td.s (45 solved)
+P-MEP (12 solved)
+SGPlan (43 solved)
+TilSapa (7 solved)
+
+1e+06
+
+Airport-Windows
+
+Makespan
+1400
+
+LPG-td.bq (45 solved)
+P-MEP (12 solved)
+SGPlan (43 solved)
+TilSapa (7 solved)
+
+1200
+
+1000
+100000
+800
+10000
+600
+1000
+400
+100
+
+200
+
+10
+
+0
+0
+
+5
+
+10
+
+15
+
+20
+
+25
+
+30
+
+35
+
+40
+
+45
+
+PipesWorldNoTankage-Deadlines
+
+Milliseconds
+1e+07
+
+0
+
+5
+
+10
+
+15
+
+20
+
+25
+
+30
+
+35
+
+40
+
+45
+
+PipesWorldNoTankage-Deadlines
+
+Makespan
+30
+
+LPG-td.bq (23 solved)
+TilSapa (3 solved)
+
+LPG-td.s (23 solved)
+TilSapa (3 solved)
+1e+06
+
+25
+
+100000
+
+20
+
+10000
+
+15
+
+1000
+
+10
+
+100
+
+5
+
+10
+
+0
+0
+
+5
+
+10
+
+15
+
+20
+
+25
+
+30
+
+UmtsFlaw-Windows
+
+Milliseconds
+10000
+
+0
+
+5
+
+10
+
+15
+
+20
+
+25
+
+30
+
+UmtsFlaw-Windows
+
+Makespan
+1900
+
+LPG-td.s (50 solved)
+SGPlan (27 solved)
+
+LPG-td.bq (50 solved)
+SGPlan (27 solved)
+1850
+1800
+
+1000
+
+1750
+1700
+1650
+
+100
+
+1600
+1550
+1500
+
+10
+
+1450
+0
+
+5
+
+10
+
+15
+
+20
+
+25
+
+30
+
+35
+
+40
+
+45
+
+50
+
+0
+
+5
+
+10
+
+15
+
+20
+
+25
+
+30
+
+35
+
+40
+
+45
+
+Figure 6: CPU-time and plan quality of lpg-td, p-mep, sgplan, and tilsapa for three
+IPC-4 domains with timed initial literals. On the x-axis we have the problem
+names simplified by numbers. In the plots on the left, on the y-axis we have
+CPU-milliseconds (logarithmic scale); in the plots on the right, on the y-axis we
+have the plan makespan (the lower the better).
+209
+
+50
+
+fiGerevini, Saetti & Serina
+
+lpg-td.s vs p-mep
+5.841
+< 0.001
+45
+
+lpg-td.bq vs p-mep
+< 0.001
+12
+
+CPU-Time Analysis
+lpg-td.s vs sgplan
+3.162
+(0.0016)
+197
+
+lpg-td.s vs tilsapa
+10.118
+< 0.001
+136
+
+Plan Quality Analysis
+lpg-td.bq vs sgplan lpg-td.bq vs tilsapa
+9.837
+6.901
+< 0.001
+< 0.001
+154
+63
+
+Figure 7: Results of the Wilcoxon test for the performance of lpg-td compared with other
+IPC-4 (satisficing) planners in terms of CPU-times and plan quality for the benchmark problems with timed initial literals.
+
+lpg-td.s
+
+sgplan
+
+tilsapa
+
+p-mep
+
+CPU-Time
+
+lpg-td.bq
+
+sgplan
+
+tilsapa
+
+p-mep
+
+A
+
+B:
+
+A is consistently better than B
+
+A
+
+B:
+
+A is better than B a
+significant number of times
+(confidence level 99.84%)
+
+Plan Quality
+
+Figure 8: Partial order of the performance of the IPC-4 (satisficing) planners according
+to the Wilcoxon test for the benchmark problems with timed initial literals. A
+dashed arrow indicates that the performance relationship holds with a confidence
+level slightly less than 99.9%.
+
+of the IPC-3 planners. For the CPU-time analysis, we consider all the problems attempted
+by both the compared planners and solved by at least one of them (when a planner does
+not solve a problem, the corresponding CPU-time is the IEEE arithmetic representation of
+positive infinity). For the plan quality (makespan) analysis, we consider all the problems
+solved by both the compared planners.
+210
+
+fiAn Approach to Temporal Planning and Scheduling
+
+In order to carry out the Wilcoxon test, for each planning problem we computed the
+difference between the CPU-times of the two planners being compared, defining the samples
+of the test for the CPU-time analysis. Similarly, for the test concerning the plan quality
+analysis we computed the differences between the makespan of the plans generated by the
+two planners. The absolute values of these differences are ranked by increasing numbers
+starting from the lowest value. (The lowest value is ranked 1, the next lowest value is
+ranked 2, and so on.) Then we sum the ranks of the positive differences, and we sum the
+ranks of the negative differences. If the performance of the two planners is not significantly
+different, then the number of the positive differences will be approximately equal to the
+number of the negative differences, and the sum of the ranks in the set of the positive
+differences will be approximately equal to the sum of the ranks in the other set. Intuitively,
+the test considers a weighted sum of the number of times one planner performs better than
+the other. The sum is weighted because the test uses the performance gap to assign a rank
+to each performance difference.
+Each cell in Figure 7 gives the result of a comparison between the performance of
+lpg-td and another IPC-4 planner. When the number of the samples is sufficiently large,
+the T-distribution used by the Wilcoxon test is approximatively a normal distribution.
+Therefore, the cells of the figure contain the z-value and the p-value characterizing the
+normal distribution. The higher the z-value, the more significant the difference of the
+performance is. The p-value represents the level of significance in the performance gap.
+We use a confidence level of 99.9%; hence, if the p-value is lower than 0.001, then the
+performance of the compared planners is statistically different. When this information
+appears on the left (right) side of the cell, the first (second) planner named in the title of
+the cell performs better than the other planner.11 For the analysis comparing the CPUtime, the value under each cell is the number of the problems solved by at least one planner;
+while for the analysis comparing the plan quality, it is the number of problems solved by
+both the planners.
+Figure 8 shows a graphical description of the relative performance of the IPC-4 satisficing
+planners according to the Wilcoxon test for the benchmark problems with timed initial
+literals. A solid arrow from a planner A to a planner B (or a cluster of planners B)
+indicates that the performance of A is statistically different from the performance of B,
+and that A performs better than B (every planner in B). A dashed arrow from A to B
+indicates that A is better than B a significant number of times, but there is no significant
+Wilcoxon relationship between A and B with a confidence level of 99.9% (on the other
+hand, the relationship holds with a confidence level slightly less than 99.9%). The results
+of this analysis say that lpg-td is consistently faster than tilsapa and p-mep, while it is
+faster than sgplan a significant number of times. In terms of plan quality, lpg-td performs
+consistently better than p-mep, sgplan and tilsapa.
+Although lpg-td does not guarantee optimal plans, it is interesting to compare its
+performance with the optimal planners that took part in IPC-4, especially to see how good
+lpg-tds plans are. Figure 9 shows the performance of lpg-td and the best results over the
+results of all the other optimal IPC-4 planners (AllOthers-Opt) in the temporal variants
+of Airport and Umts (without flawed actions). The plots for the plan quality (makespan)
+11. The p-value in the cell comparing lpg-td and p-mep is omitted because the number of problems solved by
+both lpg-td and p-mep is not high enough to approximate the T-distribution to a normal distribution.
+
+211
+
+fiGerevini, Saetti & Serina
+
+Airport-Time
+
+Milliseconds
+1e+07
+
+Airport-Time
+
+Makespan
+1000
+
+LPG-td.s (44 solved)
+LPG-td.bq (44 solved)
+AllOthers-Opt (21 solved)
+
+LPG-td.s (44 solved)
+LPG-td.bq (44 solved)
+AllOthers-Opt (21 solved)
+
+900
+
+1e+06
+
+800
+700
+
+100000
+
+600
+10000
+
+500
+400
+
+1000
+
+300
+200
+
+100
+
+100
+10
+
+0
+0
+
+5
+
+10
+
+15
+
+20
+
+25
+
+30
+
+35
+
+40
+
+45
+
+UMTS-Time
+
+Milliseconds
+1e+07
+
+0
+
+5
+
+10
+
+15
+
+20
+
+30
+
+35
+
+40
+
+45
+
+UMTS-Time
+
+Makespan
+900
+
+LPG-td.s (50 solved)
+LPG-td.bq (50 solved)
+AllOthers-Opt (38 solved)
+
+25
+
+LPG-td.s (50 solved)
+LPG-td.bq (50 solved)
+AllOthers-Opt (38 solved)
+
+850
+
+1e+06
+800
+100000
+750
+
+10000
+
+700
+
+650
+1000
+600
+100
+550
+
+10
+
+500
+0
+
+5
+
+10
+
+15
+
+20
+
+25
+
+30
+
+35
+
+40
+
+45
+
+50
+
+0
+
+5
+
+10
+
+15
+
+20
+
+25
+
+30
+
+35
+
+40
+
+45
+
+50
+
+Figure 9: Performance of lpg-td and the best over all the optimal planners of IPC-4
+(AllOthers-Opt) in Airport-Time and Umts-Time: CPU-time in logarithmic scale
+(left plots) and plan makespan (right plots). On the x-axis we have the problem
+names simplified by numbers.
+
+show that, in nearly every problem of these domains, the best quality plan found by lpg-td
+is an optimal solution, and that the first plan found by lpg-td is generally a good solution.
+The plots for the CPU-time show that lpg-td finds a plan much more quickly than any
+optimal planner, and that the CPU-time required by lpg-td to find the best plan is often
+lower than the CPU-time required by AllOthers-Opt (except for problems 12, 16, 18 and
+20 of Airport). It should be noted that lpg-td.bq is the last plan over a sequence of
+computed plans with increasing quality (and CPU-time). The intermediate plans in this
+sequence could already have good quality. In particular, as shown by the plan quality plot
+for Airport, the first plan (lpg-td.s) solving problem 12 has near-optimal quality, but it is
+computed much more quickly than the lpg-td.bq plan and the AllOthers-Opt plan.
+212
+
+fiAn Approach to Temporal Planning and Scheduling
+
+Figure 10: Plan quality distance between the solutions found by lpg-td and the corresponding optimal solutions. On the x-axis, we have some classes of quality distance
+(e.g., 1025% means that the plan generated by lpg-td is worse than the
+optimal plan by a factor between 0.1 and 0.25). On the y-axis, we have the
+percentage of solved problems for each of these classes.
+
+Finally, Figure 10 gives the results of a more general analysis on the plan quality distance,
+considering all metric-temporal and STRIPS variants of the IPC-4 domains. 12 The analysis
+uses only the problems solved by at least one IPC-4 optimal planner. It is also important to
+note that we consider only the plans generated by the incremental process of lpg-td using
+no more CPU-time than the CPU-time required by the fastest optimal planner (AllOthersOpt). Overall, the results in Figure 10 provide significant empirical evidence supporting
+the claim that often an incremental local search approach allows us to compute plans with
+very good quality using less or no more CPU-time than an optimal approach. In particular,
+the bars for the 0%1% class in the plot of the metric-temporal problems show that the
+percentage of the test problems in which the best quality plan of lpg-td (lpg-td.bq) is
+optimal or nearly optimal (i.e., plan quality is worse than optimal by a factor between
+0 and 0.01, with 0 meaning no difference) is about 90%. Moreover, often the first plan
+computed by lpg-td (lpg-td.s) has good quality: 60% of all these plans have quality that
+is optimal or nearly optimal, and only about 25% of them have a quality that is worse than
+the optimal by a factor greater than 0.5.
+Interestingly, the plot on the right of Figure 10 shows similar results concerning the good
+quality of lpg-tds plans also for the STRIPS problems of IPC-4 (with a lower percentage
+of the lpg-td.s plans that are in the 0%1% class, and a slightly higher percentage of the
+lpg-td.bqs plans that are in the > 50% class).
+4.2 Temporal Reasoning in LPG-td
+We conducted two main experiments. The first was aimed at testing the performance
+of lpg-td when the number of windows for the timed initial literals varies in problems
+12. For the STRIPS problems, the plan quality metric is the number of the actions in the plan.
+
+213
+
+fiGerevini, Saetti & Serina
+
+having the same initial state and goals. The second experiment focused on our temporal
+reasoning techniques with the main goals of empirically evaluating their performance, and
+understanding their impact on the overall performance of lpg-td.
+For these experiments we used two well-known IPC-3 domains, which were modified to
+include timed initial literals: Rovers and ZenoTravel. The version of Rovers with timed
+initial literals was obtained from the IPC-3 temporal version as follows. In the problem
+specification, for each waypoint, we added a collection of pairs of timed initial literals of
+the type
+(at t1 (in sun waypoint0))
+(at t2 (not (in sun waypoint0)))
+
+where t1 < t2 . Each of these pairs defines a time window for the involved literal. In the
+operator specification file, the recharge operator has the precondition
+(over all (in sun ?w))
+
+which imposes the constraint that the recharging actions are applied only when the rover is
+in the sun (?w is the operator parameter representing the waypoint of the recharging action.)
+The modified version of ZenoTravel was obtained similarly. In the problem specification,
+for each city we added a collection of pairs of timed initial literals of the type
+(at t1 (open-station city0))
+(at t2 (not (open-station city0)))
+
+and in the operator specification file, we added the timed precondition
+(over all (open-station ?c))
+
+to the refuel operator, where ?c is the operator parameter representing the city where
+the refuel action is executed.
+Given a planning problem  and a collection of time windows W for a timed literal , it
+should be noted that, in general, the difficulty of solving  is affected by three parameters:
+the number of windows in W , their size, and the way they are distributed on the time
+line.13 We considered two methods for generating test problems taking account of these
+parameters ( indicates an original IPC-3 problem in either the Rovers or ZenoTravel
+domain, and n indicates the number of windows in W ):
+(I) Let  be the best (shortest makespan) plan among those generated by lpg-td for
+solving  within a certain CPU-time limit, and t the makespan of . The time
+interval [0, t] is divided into 2n  1 sub-intervals of equal size. The time windows for
+each timed literal  of the extended problem 0 are the odd sub-intervals of [0, t],
+i.e.,
+o
+nh
+ h
+
+h
+3t
+t
+2t
+, 2n1
+,
+t
+.
+W = 0, 2n1
+, 2n1
+, . . . , (2n2)t
+2n1
+(II) Let d be the maximum duration of an action in  with a timed precondition . The
+time interval  = [0, d  (2n  1)] is divided into 2n  1 sub-intervals of duration d.
+13. In general, these parameters influence not only the hardness of temporal reasoning during planning, but
+also the logical part of the planning process (i.e., the selection of the actions forming the plan, that in
+lpg-td is done using heuristics taking exogenous events into account).
+
+214
+
+fiAn Approach to Temporal Planning and Scheduling
+
+Rovers-Windows
+
+Milliseconds
+10000
+
+ZenoTravel-Windows
+
+Milliseconds
+1e+06
+
+1 time window per waypoint
+10 time windows per waypoint
+
+1 time window per city
+10 time windows per city
+
+100000
+
+1000
+10000
+
+1000
+100
+
+100
+
+10
+
+10
+0
+
+2
+
+4
+
+6
+
+8
+
+10
+
+12
+
+14
+
+16
+
+18
+
+20
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10
+
+12
+
+14
+
+16
+
+18
+
+20
+
+Figure 11: Performance of lpg-td in the Rovers and ZenoTravel domains extended with
+timed initial literals (1 and 10 time windows for each timed literal). The test
+problems were generated using method I. On the x-axis we have the problem
+names simplified by numbers; on the y-axis we have CPU-milliseconds (logarithmic scale).
+
+Similarly to method (I), the time windows for  in the extended problem 0 are the
+odd sub-intervals of .
+Notice that we can use the first method only when the number of windows is relatively
+small because, if there are too many time windows of small size, the extended problem can
+become unsolvable (no window is large enough to schedule into it a necessary action with
+a timed precondition). The second method was designed to avoid this problem, and it can
+be used to test our techniques on planning problems involving many time windows.
+Figures 11 and 12 give the results of the first experiment. The CPU-times in these plots
+are median values over five runs for each problem. For the results of Figure 11, we use
+the IPC-3 test problems modified by method I, while for the results of Figure 12 we use
+the IPC-3 test problems modified by method II. In both cases lpg-td solves all problems.
+The plots of Figure 11 indicate that the performance degradation when the number of
+windows increases from 1 to 10 is generally moderate, except in two cases. The plots of
+Figure 12 indicate that, when the number of windows increases exponentially from 1 to
+10,000, the approach scales up well for the benchmark problems considered. For instance,
+consider the first ZenoTravel problem. With 1 window lpg-td solves this problem in 10
+milliseconds, with 10 windows in 20 milliseconds, with 100 windows in 30 milliseconds,
+with 1000 windows in about 100 milliseconds, and with 10,000 windows in about 1 second.
+Moreover, we observed that the performance degradation is mainly determined by a heavier
+pre-processing phase (parsing and instantiation of the operators).
+Tables 2 and 3 give some results concerning the experiment about our temporal reasoning
+techniques implemented in lpg-td. We consider some of the problems with 10 time windows
+(for each timed fluent) used for the tests of Figure 11, and we examine the computational
+215
+
+fiGerevini, Saetti & Serina
+
+Performance of LPG-td in Rovers-TimeWindows
+
+Milliseconds
+100000
+
+Performance of LPG-td in ZenoTravel-TimeWindows
+
+Milliseconds
+1e+06
+
+1 time window per waypoint
+10 time windows per waypoint
+100 time windows per waypoint
+1000 time windows per waypoint
+10,000 time windows per waypoint
+
+1 time window per city
+10 time windows per city
+100 time windows per city
+1000 time windows per city
+10,000 time windows per city
+
+100000
+
+10000
+
+10000
+1000
+1000
+
+100
+100
+
+10
+
+10
+0
+
+2
+
+4
+
+6
+
+8
+
+10
+
+12
+
+14
+
+16
+
+18
+
+20
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10
+
+12
+
+14
+
+16
+
+18
+
+20
+
+Figure 12: Performance of lpg-td in the Rovers and ZenoTravel domains extended with
+timed initial literals (110,000 time windows for each timed literal). The test
+problems were generated using method II. On the x-axis we have the problem
+names simplified by numbers; on the y-axis we have CPU-milliseconds (logarithmic scale).
+
+cost of temporal reasoning during planning for these problems. In our approach to temporal
+planning, each search step defines a set of temporal constraints formed by the ordering and
+scheduling constraints in the current TDA-graph. Table 2 gives statistical information about
+such DTPs using both the compact constraint representation of lpg-td and the classical
+DTP representation. For each action in the TDA-graph, we have two temporal variables
+(the start/end times of the action), except astart and aend (for which, as we have pointed out,
+we can use only one variable). The number of the scheduling constraints and the number
+of the ordering constraints depend on which actions are in the current TDA-graph, and on
+how these actions are (causally or exclusively) related to each other, respectively (we have
+one scheduling constraint for each action with a timed precondition in the TDA-graph).
+Notice that our representation of the scheduling constraints is much more compact than
+the classical DTP formulation.14
+The table also gives information about the average number of DTPs (i.e., search steps)
+generated during planning, indicating how many of them are satisfiable (indicated with
+Sat. DTPs).
+Table 3 gives the CPU-time required by our temporal reasoning techniques implemented
+in lpg-td (Solve-DTP+ ) and by tsat++ (Armando, Castellini, Giunchiglia, & Maratea,
+2004), a state-of-the-art general DTP solver. The DTPs considered here are the same as
+those of Table 2, i.e., the sets of the temporal constraints in the TDA-graph at each search
+14. The classical DTP-translation of a scheduling constraint contains an exponential number of disjuncts
+with respect to the number of time windows in the scheduling constraint. For example, let q be a
+timed precondition of a and Wq = {[25, 50), [75, 125)}. The scheduling constraint of a determined by q is
+
++
+
+translated into four classical DTP constraints (as abbreviates astart ): (a+
+s a  25  as a  75),
++
++
+
++
++
++
++
++
+
++
++
+
+50
+
+a
+
+a
+
+a
+
+75),
+(a
+
+a
+
+50
+
+a
+
+125),
+(a
+
+a
+
+a
+
+25
+
+a
+
+a
+(a+
+s  125).
+s
+s
+s
+s
+s
+
+216
+
+fiAn Approach to Temporal Planning and Scheduling
+
+Problems
+Rovers
+Problem 1
+Problem 5
+Problem 10
+Problem 15
+Problem 20
+ZenoTravel
+Problem 1
+Problem 5
+Problem 10
+Problem 15
+Problem 20
+
+Variables
+max mean
+28
+56
+94
+98
+206
+
+18.4
+30.0
+65.8
+58.8
+105.0
+
+8
+36
+114
+172
+282
+
+6
+20
+83.4
+122.4
+194.6
+
+SC with 10 windows (DC)
+max
+mean
+1
+2
+2
+3
+4
+
+(1024)
+(2048)
+(2048)
+(3072)
+(4096)
+
+1 (1024)
+3 (3072)
+16 (16,384)
+24 (24,576)
+42 (43,008)
+
+DTPs
+(Sat. DTPs)
+
+0.13 (136.5)
+0.33 (341.3)
+1.41 (1447)
+1.01 (1037)
+1.45 (1489)
+
+15 (15)
+27 (27)
+104 (47)
+77 (55)
+108 (108)
+
+0.33 (341.3)
+0.88 (910.2)
+10.5 (10,769)
+16.3 (16,673)
+24.9 (25,536)
+
+3 (3)
+18 (18)
+1162 (175)
+291 (128)
+750 (637)
+
+Table 2: Characteristics of the DTPs generated during planning by lpg-td when solving
+some problems in the Rovers and ZenoTravel domains: maximum/mean number of variables (2nd/3rd columns); maximum/mean number of scheduling constraints (SC) and of non-unary disjunctions (DC) in their DTP-form translation (4th/5th columns); number of DTPs and of satisfiable DTPs solved by lpg-td
+(6th column).
+
+step of the planning process. It should be noted that the comparison of Solve-DTP + and
+tsat++ is by no means intended to determine which one is better than the other. Indeed
+tsat++ was developed to manage a much larger class of DTPs. However, to the best of
+our knowledge there exists no other more specialized DTP-solver handling scheduling constraints that we could have used. The goal of this comparison is to experimentally show
+that existing general DTP solvers, although designed to work efficiently in the general case,
+are not adequate for managing the class of DTPs that arise in our planning framework.
+Hence, it is important to develop more specialized techniques which, as empirically demonstrated by the results of Table 3, can be much more efficient. For instance, consider problem
+15 in the Rovers domain. As indicated by the last column of Table 2, lpg-td solves this
+problem with 77 search steps, which defines 77 DTPs. The data in Table 3 show that
+the total CPU-time spent by lpg-td for solving all these temporal reasoning problems is
+negligible (< 106 seconds), while tsat++ requires 16.8 CPU-seconds in total (note that
+the whole temporal planning problem is solved by lpg-td in only 0.25 seconds). 15 Overall,
+our specialized temporal reasoning technique is several orders of magnitude faster than an
+efficient general DTP, in terms of both CPU-time for solving a single DTP, and CPU-time
+for solving all the DTPs that are generated during planning.
+15. The CPU-time of tsat++ includes neither the generation of the explicit (classical) DTPs from the TDAgraph, nor the parsing time. Moreover, while tsat++ only decides satisfiability of the input DTPs,
+Solve-DTP+ also finds a schedule that is optimal, if the DTP is satisfiable.
+
+217
+
+fiGerevini, Saetti & Serina
+
+Problems
+
+Rovers
+Problem 1
+Problem 5
+Problem 10
+Problem 15
+Problem 20
+ZenoTravel
+Problem 1
+Problem 5
+Problem 10
+Problem 15
+Problem 20
+
+CPU-seconds for Temporal Reasoning
+Solve-DTP+
+tsat++
+max
+mean
+total
+max
+mean
+total
+
+Total
+CPU-Time
+of lpg-td
+
+< 106
+< 106
+< 106
+< 106
+0.01
+
+< 106
+< 106
+< 106
+< 106
+0.0008
+
+< 106
+< 106
+< 106
+< 106
+0.03
+
+0.005
+0.045
+0.54
+0.54
+3.17
+
+0.002
+0.002
+0.039
+0.028
+0.10
+
+0.09
+0.14
+12.7
+16.8
+107.1
+
+0.02
+0.03
+0.30
+0.25
+3.03
+
+< 106
+< 106
+0.01
+0.01
+0.01
+
+< 106
+< 106
+0.00017
+0.00014
+0.00065
+
+< 106
+< 106
+0.2
+0.04
+0.5
+
+0.001
+0.04
+2.7
+44.6
+323.9
+
+0.0003
+0.004
+9.8
+3.9
+24.2
+
+0.01
+0.21
+6018
+18,877
+177,595
+
+0.02
+0.05
+22.0
+13.9
+376.2
+
+Table 3: Performance of Solve-DTP+ and tsat++ for the DTPs generated during planning
+by lpg-td when solving some problems in the Rovers and ZenoTravel domains:
+maximum, mean and total CPU-seconds. The last column gives the total CPUtime of lpg-td for solving the planning problem. tsat++ was run using its default
+settings.
+
+Finally, we experimentally tested the effectiveness of the improvements to Solve-DTP +
+for making the algorithm incremental that we have described at the end of Section 2 (such
+improvements are included in the implementation of Solve-DTP+ of Table 3). In particular
+we observed that, for the problems of Table 3, the average CPU-time of the basic (nonincremental) version of Solve-DTP+ is from one to three orders of magnitude higher than
+the incremental version. However, the basic version is still always significantly faster than
+tsat++ (from one to four orders of magnitude).
+
+5. Related Work
+Several researchers have addressed temporal reasoning in the context of the DTP framework. Some general techniques aimed at efficiently solving a DTP have been proposed
+(e.g., Armando et al., 2004; Tsamardinos & Pollack, 2003), but their worst-case complexity
+remains exponential. In Section 4, we presented some experimental results indicating that
+the simple use of a state-of-the-art DTP solver is not adequate for solving the subclass of
+DTPs that arise in our context.
+Various planning approaches supporting the temporal features considered in this paper
+have been proposed. One of the first planners that was capable of handling predictable
+exogenous events is deviser (Vere, 1983), which was developed from nonlin (Tate, 1977).
+deviser is a temporal partial order planner using a network of activities called a plan
+network. Before starting plan generation, the plan network contains the exogenous events
+218
+
+fiAn Approach to Temporal Planning and Scheduling
+
+as explicit nodes of the network. During plan generation, the activities added to the network
+are ordered with respect to these scheduled events, depending on the relevance of the events
+for the activities. A similar explicit treatment of the exogenous events could be also adopted
+in the context of the action-graph representation: the initial action graph contains special
+action nodes representing the predicted exogenous events. However, this simple method
+has some disadvantages with respect to our method, that treats exogenous events at the
+temporal level of the representation rather than at the logical (causal) level. In particular,
+when there is a high number of timed initial literals, the explicit representation of the
+exogenous events in the action graph could lead to very large graphs, causing memory
+consumption problems and a possibly heavy CPU-time cost for the heuristic evaluation of
+the (possibly very large) search neighborhood.
+In the late 80s and early 90s some other temporal planners handling exogenous events
+were developed. In general, these systems use input descriptions of the planning problem/domain that are significantly different from the PDDL descriptions accepted by modern
+fully-automated planners. One of the most successful among them is hsts (Frederking &
+Muscettola, 1992; Muscettola, 1994), a representation and problem solving framework that
+provides an integrated view of planning and scheduling. hsts represents predictable exogenous events through non-controllable state variables. Both lpg-td and hsts manage
+temporal constraints, but the two systems use considerably different approaches to temporal
+planning (lpg-td adopts the classical state-transition view of change, while hsts adopts
+the histories view of change, Ghallab, Nau, & Traverso, 2003), and they are based on
+different plan representations and search techniques.
+zeno (Penberthy, 1993; Penberthy & Weld, 1994) is one of the first domain-independent
+planners which supports a rich class of metric-temporal features, including exogenous events.
+zeno is a powerful extension of the causal-link partial-order planner ucpop (Penberthy &
+Weld, 1992). However, in terms of computational performance, this planner is not competitive with more recent temporal planners.
+IxTeT (Ghallab & Laruelle, 1994; Laborie & Ghallab, 1995) is another causal-link planner which uses some techniques and ideas from scheduling, temporal constraint reasoning,
+and graph algorithms. IxTeT supports a very expressive language for the temporal description of the actions, including timed preconditions and some features that cannot be
+expressed in PDDL2.2. The expressive power of the language is obtained at the cost of increased semantic complexity (Fox & Long, 2005). As observed by Ghallab, Nau and Traverso
+(2003), IxTeT embodies a compromise between the expressiveness of complex temporal domains, and the planning efficiency; however, this planner still remains noncompetitive with
+the more recent temporal planners.
+Smith and Weld (1999) studied an extension of the Graphplan-style of planning for
+managing temporal domains. They proposed an extension of their tgp planner that makes
+it possible to represent predictable exogenous events. tgp supports only a subclass of the
+durative actions expressible in PDDL2.1, which prevents some cases of concurrency that
+in PDDL2.1 are admitted. tgp is an optimal planner (under the assumed conservative
+model of action concurrency), while lpg-td is a near-optimal (satisficing) planner. A main
+drawback of tgp is that it does not scale up adequately.
+More recently, Edelkamp (2004) proposed a method for planning with timed initial
+literals that is based on compiling the action timed preconditions into a time window as219
+
+fiGerevini, Saetti & Serina
+
+sociated with the action, defining the interval during which the action can be scheduled.
+He gives an efficient, polynomial algorithm based on critical path analysis for computing
+an optimal action schedule from sequential plans generated using the compiled representation. The techniques presented by Edelkamp assume a unique time window for each
+timed precondition. The techniques that we propose are more general, in the sense that our
+action representation treats multiple time windows associated with a timed precondition,
+and our temporal reasoning method computes optimal schedules for partially ordered plans
+preserving polynomiality.
+Cresswell and Coddington (2004) proposed an extension of the lpgp planner (Long
+& Fox, 2003b) to handle timed initial literals, which are represented by special deadline
+actions. A literal that is asserted to hold at time t is represented by a deadline action
+starting at the time of the initial state, and having duration t. The deadline actions in the
+plan under construction are translated into particular linear inequalities that, together with
+other equalities and inequalities generated from the plan representation, are managed by
+a general linear programming solver. lpg-td uses a different representation that does not
+encode timed initial literals as special actions, and in which the temporal and scheduling
+constraints associated with the actions in the plan are managed by an efficient algorithm
+derived by specializing a general DTP solver.
+In order to handle problems with timed initial literals in the sapa planner (Do & Kambhampati, 2003), Do, Kambhampati and Zimmerman (2004) proposed a forward search
+heuristic based on relaxed plans, which are constructed by exploiting a technique similar to
+the time slack analysis used in scheduling (Smith & Cheng, 1993). Given a set of candidate
+actions for choosing an action to add to the relaxed plan under construction, this technique
+computes the minimum slack between each candidate action and the actions currently in
+the relaxed plan. The candidate action with the highest minimum slack is preferred. lpg-td
+uses a different time slack analysis, which is exploited in a different way. Our method for
+selecting the actions forming the relaxed plan uses the time slacks for counting the number
+of scheduling constraints that would be violated when adding a candidate action: we prefer
+the candidate actions which cause the lowest number of violations. Moreover, in sapa the
+slack analysis is limited to the actions of the relaxed plan, while our method also considers
+the actions in the real plan under construction.
+dt-pop is a recent planner (Schwartz & Pollack, 2004) extending the POP-style of
+planning with an action model involving disjunctive temporal constraints. The language of
+dt-pop is elegant and can express a rich class of temporal features, most of which can be
+only indirectly (and less elegantly) expressed in PDDL2.2 (Fox et al., 2004). The treatment
+of the temporal constraints required to manage predictable exogenous events in dt-pop
+appears to be less efficient than in our planner, since dt-pop uses a general DTP solver
+enhanced with some efficiency techniques, while lpg-td uses a polynomial solver specialized
+for the subclass of DTPs that arise in our representation. dt-pop handles mutex actions
+(threats) by posting explicit temporal disjunctive constraints imposing disjointness of
+the mutex actions, while lpg-td implicitly decides these disjunctions at search time by
+choosing the level of the graph where actions are inserted, and asserting the appropriate
+precedence constraints. Moreover, the search procedure and heuristics in dt-pop and lpgtd are significantly different.
+220
+
+fiAn Approach to Temporal Planning and Scheduling
+
+At IPC-4, the planners that reasoned with timed initial literals are tilsapa (Kavuluri &
+U, 2004), sgplan (Chen et al., 2004), p-mep (Sanchez et al., 2004) and lpg-td. For the first
+two planners, at the time of writing, to the best of our knowledge in the available literature
+there is no sufficiently detailed description to clearly understand their possible similarities
+and differences with lpg-td about the treatment of predictable exogenous events. Regarding
+p-mep, this planner uses forward state-space search guided by a relaxed plan heuristic which,
+differently from the relaxed plans of lpg-td, is constructed without taking account of the
+temporal aspects of the relaxed plan and real plan under construction (the makespan of the
+constructed relaxed plans is considered only for their comparative evaluation).
+
+6. Conclusions
+We have presented some techniques for temporal planning in domains where certain fluents
+are made true or false at known times by predictable exogenous events that cannot be
+influenced by the actions available to the planner. Such external events are present in many
+realistic domains, and a planner has to take them into account to guarantee the correctness
+of the synthesized plans, to generate plans of good or optimal quality (makespan), and to
+use effective search heuristics for fast planning.
+In our approach, the causal structure of the plan is represented by a graph-based representation called TDA-graph, action ordering and scheduling constraints are managed by
+efficient constraint-based reasoning, and the plan search is based on a stochastic local search
+procedure. We have proposed an algorithm for managing the temporal constraints in a
+TDA-graph which is a specialization of a general CSP-based method for solving DTPs.
+The algorithm has a polynomial worst-case complexity and, when combined with our plan
+representation, in practice it is very efficient. We have also presented some local search
+techniques for temporal planning using the new TDA-graph representation. These techniques improve the accuracy of the heuristic methods adopted in the previous version of
+lpg, and they extend them to consider action scheduling constraints in the evaluation of the
+search neighborhood, which is based on relaxed temporal plans exploiting some (dynamic)
+reachability information.
+All our techniques are implemented in the planner lpg-td. We have experimentally
+investigated the performance of our planner by a statistical analysis of the IPC-4 results
+using Wilcoxons test. The results of this analysis show that our planner performs very well
+compared to other recent temporal planners supporting predictable exogenous events, both
+in terms of CPU-time to find a valid plan and quality of the best plan generated. Moreover,
+a comparison of the plans computed by lpg-td and those generated by the optimal planners
+of IPC-4 shows that very often lpg-td generates plans with very good or optimal quality.
+Finally, additional experiments indicate that our temporal reasoning techniques manage the
+class of DTPs that arise in our context very efficiently.
+Some directions for future work on temporal planning within our framework are: an
+extension of the local search heuristics and temporal reasoning techniques to explicitly handle action effects with limited persistence or delays; the treatment of predictable exogenous
+events affecting numerical fluents in a discrete or continuous way; the development of tech221
+
+fiGerevini, Saetti & Serina
+
+niques supporting controllable exogenous events;16 and the management of actions with
+variable durations (Fox & Long, 2003), i.e., actions whose durations are specified only by
+inequalities constraining their lower or upper bounds, and whose actual duration is decided
+by the planner.
+Moreover, we intend to study the integration into our framework of the techniques for
+goal partitioning and subplan composition that have been successfully used by sgplan
+(Chen et al., 2004) in IPC-4, and the application of our approach to plan revision. The
+latter has already been partially explored, but only for simple strips domains and using
+less powerful search techniques (Gerevini & Serina, 2000).
+
+Acknowledgments
+This paper is a revised and extended version of a paper appearing in the Proceedings of
+the Nineteenth International Joint Conference on Artificial Intelligence (Gerevini, Saetti, &
+Serina, 2005a). The research was supported in part by MIUR Grant anemone. The work
+of Ivan Serina was in part carried out at the Department of Computer and Information
+Sciences of the University of Strathclyde (Glasgow, UK), and was supported by Marie Curie
+Fellowship N HPMF-CT-2002-02149. We would like to thank the anonymous reviewers for
+their helpful comments, and Paolo Toninelli who extended the parser of lpg-td to handle
+the new language features of PDDL2.2.
+
+Appendix A: Reachability Information
+The techniques described in the paper for computing the action evaluation function use
+heuristic reachability information about the minimum number of actions required to reach
+the preconditions of each domain action (N um acts) and a lower bound on the earliest
+finishing time (Ef t) of the reachable actions (the actions whose preconditions are reachable).
+In the following, S(l) denotes the state defined by the facts corresponding to the fact nodes
+supported at level l of the current TDA-graph. When l = 1, S(l) represents the initial state
+of the planning problem (I).
+For each action a, lpg-td pre-computes N um acts(a, I), i.e., the estimated minimum
+number of actions required to reach the preconditions of a from I, and Ef t(a, I), i.e., the
+estimated earliest finishing time of a (if a is reachable from I). Similarly, for each fact f that
+is reachable from I, lpg-td computes the estimated minimum number of actions required
+to reach f from I (N um acts(f, I)) and the estimated earliest time when f can be made
+true by a plan starting from I (Et(f, I)). For l > 1, N um acts(a, S(l)) and Ef t(a, S(l))
+can be computed only during search, because they depend on which action nodes are in the
+current TDA-graph at the levels preceding l. Since during search many action nodes can be
+added and removed, and after each of these operations N um acts(a, S(l)) and Ef t(a, S(l))
+could change (if the operation concerns a level preceding l), it is important that they are
+computed efficiently.
+16. Consider for instance a transportation domain in which a shuttle bus is at the train station for an extra
+run to the airport at midnight only if booked in advance. If the shuttle booking is a domain action
+available to the planner, then the event night stop of the shuttle can be controlled by the planner.
+
+222
+
+fiAn Approach to Temporal Planning and Scheduling
+
+ReachabilityInformation(I, O)
+Input: The initial state of the planning problem under consideration (I) and all ground instances
+(actions) of the operators (O);
+Output: For each action a, an estimate of the number of actions (N um acts(a, I)) required to reach
+the preconditions of a from I, an estimate of the earliest finishing time of a from I (Ef t(a, I)).
+1.
+2.
+3.
+4.
+5.
+6.
+7.
+8.
+9.
+10.
+11.
+12.
+13.
+14.
+15.
+16.
+17.
+18.
+19.
+20.
+21.
+22.
+23.
+24.
+
+forall facts f do /* the set of all facts is precomputed by the operator instantiation phase */
+if f  I then
+N um acts(f, I)  Et(f, I)  0; Action(f, I)  astart ;
+else N um acts(f, I)  Et(f, I)  ;
+forall actions a do N um acts(a, I)  Ef t(a, I)  Lf t(a)  ;
+F  I; Fnew  I; A  O; Arev  ;
+while ( Fnew 6=  or Arev 6=  )
+F  F  Fnew ; Fnew  ; A  A  Arev ; Arev  ;
+while A0 = {a  A | P re(a)  F } is not empty
+a  an action in A0 ;
+t  ComputeEFT(a, M AX Et(f, I));
+f P re(a)
+
+if t < Ef t(a, I) then Ef t(a, I)  t;
+Lf t(a)  ComputeLFT(a);
+if Ef t(a, I)  Lf t(a) then /* a can be scheduled */
+ra  RequiredActions(I, P re(a));
+if N um acts(a, I) > ra then N um acts(a, I)  ra;
+forall f  Add(a) do
+if Et(f, I) > t then
+Et(f, I)  t;
+Arev  Arev  {a0  O  A | f  P re(a0 )};
+if N um acts(f, I) > (ra + 1) then
+N um acts(f, I)  ra + 1; Action(f, I)  a;
+Fnew  Fnew  Add(a)  F ;
+A  A  {a};
+
+RequiredActions(I, G)
+Input: A set of facts I and a set of action preconditions G;
+Output: An estimate of the min number of actions required to achieve all facts in G from I (ACTS).
+1.
+2.
+3.
+4.
+5.
+6.
+7.
+8.
+
+ACT S  ;
+G  G  I;
+while G 6= 
+g  an element of G;
+a  Action(g, I);
+ACT S  ACT S  {a}; S
+G  G  P re(a)  I  bACT S Add(b);
+return(|ACT S|).
+
+Figure 13: Algorithms for computing heuristic information about the search cost and the
+time for reaching a set of facts G from I.
+
+223
+
+fiGerevini, Saetti & Serina
+
+Figure 13 gives ReachabilityInformation, the algorithm used by lpg-td for computing
+N um acts(a, I), Ef t(a, I), N um acts(f, I) and Et(f, I). ReachabilityInformation is similar
+to the reachability algorithm used by the version of lpg that took part in 2002 planning
+competition (lpg-ipc3), but with some significant differences. The main differences are:
+(i) in order to estimate the earliest finishing time of the domain actions, ReachabilityInformation takes into account the scheduling constraints, which were not considered in
+the previous version of the algorithm;
+(ii) the algorithm used by lpg-ipc3 applies each domain action at most once, while ReachabilityInformation can apply them more than once.
+Notice that (i) improves the accuracy of the estimated finishing time of the actions
+(Ef t), which is an important piece of information used during the search neighborhood
+evaluation for selecting the actions forming the temporal relaxed plans (see Section 3).
+Moreover, (i) allows us to identify some domain actions that cannot be scheduled during
+the time windows associated with their timed preconditions, and so these can be pruned
+away.
+Regarding (ii), during the forward process of computing the reachability information, an
+action is re-applied whenever the estimated earliest time of one of its preconditions has been
+decreased. This is important for two reasons. On one hand, reconsidering actions already
+applied is useful because it can lead to a better estimate of the action finishing times;
+on the other hand, this is also necessary to guarantee the correctness of the reachability
+algorithm. The latter is because, if we overestimate the earliest finishing time of an action
+with a scheduling constraint, then we could incorrectly conclude that the action cannot be
+scheduled (and so we would consider the action inapplicable). But if this action is necessary
+in any valid plan, then the incorrect estimate of its earliest finishing time could lead to the
+incorrect conclusion that the planning problem is unsolvable. In other words, the estimated
+finishing time of an action with a scheduling constraint should be a lower bound of its actual
+earliest finishing time.
+ReachabilityInformation could be used to update N um acts(a, S(l)) and Ef t(a, S(l)) after
+each action insertion/removal, for any l > 1 (when l > 1, instead of I, in input the algorithm
+has S(l)). However, in order to make the updating process more efficient, the revision is done
+in a more selective focused way. Instead of revising the reachability information after each
+graph modification (search step), we do so before evaluating the search neighborhood and
+choosing the estimated best modification. Specifically, if we are repairing the flawed level l,
+we update only the reachability information for the actions and facts at the levels preceding
+l that have not been updated yet. (For instance, suppose that at the ith search step we add
+an action to level 5, and that at the (i + 1)th step we add another action at level 10. At
+the (i + 1)th step we need to consider updating only the reachability information at levels
+610, since this information at levels 15 has already been updated by the ith step.) This is
+sufficient because the search neighborhood for repairing the flawed level under consideration
+(l) can contain only the graph modifications concerning the levels preceding l.
+Before describing the steps of ReachabilityInformation, we need to introduce some notation. Add (a) denotes the set of the positive effects of a; Pre(a) denotes the set of the
+(non-timed) preconditions of a; Arev denotes the set of the actions already applied whose
+224
+
+fiAn Approach to Temporal Planning and Scheduling
+
+reachability could be revised because the estimated earliest time of some of their preconditions has been revised after their application. Given an action node a and its current
+earliest start time t computed as the maximum over the earliest times at which its preconditions are reachable, ComputeEFT (a, t) is a function computing the earliest finishing
+time  of a that is consistent with the scheduling constraint of a (if any) and such that
+t + Dur(a)   .17 ComputeLFT (a) is a function computing the latest finishing time of the
+action a, i.e., it returns the upper bound of the last time window during which a can be
+scheduled (if one exists), while it returns  if a has no timed precondition.
+For example, let a be an action such that all its preconditions are true in the initial
+state I (i.e., t = 0), the duration of a is 50, and a has a scheduling constraint imposing that
+the action is executed during the interval [25, 100). ComputeEFT (a, t) returns 75, while
+ComputeLFT (a, t) returns 100. Thus, the scheduling constraint of a can be satisfied. On
+the contrary, if the earliest start time of a is 500, then ComputeEFT (a, t) returns 550 and
+a cannot be scheduled during [25, 100).
+For the sake of clarity, first we describe the steps of ReachabilityInformation used to derive
+N um acts, and then we comment on those for the computation of Ef t. In steps 14, for
+every fact f , the algorithm initializes N um acts(f, I) to 0, if f  I, and to  otherwise
+(indicating that f is not reachable); while, in step 5, N um acts(a, I) is initialized to 
+(indicating that a is not reachable from I). Then, in steps 724 the algorithm iteratively
+constructs the set F of the facts that are reachable from I, starting with F = I, and
+terminating when F cannot be further extended and the set Arev of the actions to reconsider
+is empty. The set A of the available actions is initialized to the set of all possible actions
+(step 6); A is reduced by a after its application (step 24), and it is augmented by the set of
+actions Arev (step 8) after each action application. When we modify the estimated time at
+which a precondition of an action a becomes reachable, a is added to A rev (step 20). The
+internal while-loop (steps 924) applies the actions in A to the current F , possibly deriving
+a new set of facts Fnew in step 23. If Fnew or Arev are not empty, then F is extended with
+Fnew , A is extended with Arev , and the internal loop is repeated. When an action a in A0
+(the subset of actions currently in A that are applicable to F ) is applied, the reachability
+information for its effects are revised as follows. First we estimate the minimum number
+ra of actions required to achieve P re(a) from I using the subroutine RequiredActions (step
+15). Then we use ra to possibly update N um acts(a, I) and N um acts(f, I) for any effect
+f of a (steps 1516, 2122). If the number of actions required to achieve the preconditions
+of a is lower than the current value of N um acts(a, I), then N um acts(a, I) is set to ra.
+Moreover, if the application of a leads to a lower estimate of f , i.e., if ra + 1 is less than the
+current value of N um acts(f, I), then N um acts(f, I) is set to ra + 1. In addition, a data
+structure indicating the current best action to achieve f from I (Action(f, I)) is set to a
+(step 22). This information is used by the subroutine RequiredActions.
+For any fact f in the initial state, the value of Action(f, I) is astart (step 3). The
+subroutine RequiredActions is the same as the one in the reachability algorithm of lpg-ipc3.
+The subroutine uses Action to derive ra through a backward process starting from the input
+set of action preconditions (G), and ending when G  I. The subroutine incrementally
+constructs a set of actions (ACTS) achieving the facts in G and the preconditions of the
+17. If there is no scheduling constraint associated with a, or the existing scheduling constraints cannot be
+satisfied by starting the action at t, then ComputeEFT (a, t) returns t + Dur(a).
+
+225
+
+fiGerevini, Saetti & Serina
+
+actions already selected (using Action). At each iteration the set G is revised by adding the
+preconditions of the last action selected, and removing the facts belonging to I or to the
+effects of actions already selected (step 7). Termination of RequiredActions is guaranteed
+because every element of G is reachable from I.
+We now briefly describe the computation of the temporal information. Eft(a, I), is computed in a way similar to N um acts(a, I). In steps 14, ReachabilityInformation initializes
+the estimated earliest time (Et(f, I)) when a fact f becomes reachable to 0, if f  I, and
+to  otherwise; moreover, the algorithm sets Ef t(a, I) and Lf t(a, I) to . Then, at every
+application of an action a in the forward process described above, we estimate the earliest
+finishing time Ef t by adding the duration of a to the (current) maximum estimated earliest
+time of the preconditions of a, and by taking into account the scheduling constraints of a
+using ComputeEFT (a) (step 11). In addition, we compute the latest finishing time Lf t
+of a using ComputeLFT (a) (step 13). When the earliest finishing time of an action a is
+greater than its latest finishing time, the timed preconditions of a cannot be satisfied from
+I, and so steps 1523 are not executed (see the if-statement of step 14). For any effect f of
+a with a current temporal value higher than the earliest finishing time t of a, steps 1819
+set Et(f, I) to t, and step 20 adds a in Arev (because we have decreased the estimated
+earliestx time of f , and this revision could decrease the estimated start time of an action
+with precondition f ).
+
+Appendix B: Wilcoxon Test for the Metric-Temporal Domains of IPC-4
+In this appendix, we present the results of the Wilcoxon sign-rank test on the performance
+of lpg-td and the other satisficing IPC-4 planners that attempted the metric-temporal
+domains. The performance is evaluated both in terms of CPU-times and plan quality.
+Each cell in the first two tables gives the result of a comparison between the performance
+of lpg-td and another IPC-4 planner. When the number of samples is sufficiently large, the
+T-distribution used by the Wilcoxon test is approximatively a normal distribution. Hence,
+in each cell of the Figure we give the z-value and the p-value characterizing the normal
+distribution. The higher the z-value, the more significant the difference of the performance
+is. The p-value represents the level of significance in the difference of the performance.
+We use a confidence level of 99.9%; therefore, if the p-value is lower than 0.001, then the
+performance of the two planners is statistically different. When this information appears
+on the left (right) side of the cell, the first (second) planner named in the title of the cell
+performs better than the other. For the analysis comparing the CPU-time, the value under
+each cell is the number of the problems solved by at least one planner; while for the analysis
+comparing the plan quality, it is the number of problems solved by both the planners.
+The pictures under the tables show the partial order of the performance of the compared
+planners in terms of CPU-time and plan quality. A solid edge from a planner A to another
+planner B (or a cluster of planners B) indicates that the performance of A is statistically
+different from the performance of B, and that A performs better than B (every planner in
+B). A dashed edge from A to B indicates that A is better than B a significant number of
+times, but there is not significant Wilcoxon relationship between them at a confidence level
+of 99.9%.
+226
+
+fiAn Approach to Temporal Planning and Scheduling
+
+lpg-td.s vs crikey
+11.275
+< 0.001
+169
+
+Analysis of CPU-Time
+lpg-td.s vs p-mep
+lpg-td.s vs sgplan
+11.132
+0.387
+< 0.001
+(0.699)
+215
+513
+
+lpg-td.s vs tilsapa
+12.324
+< 0.001
+136
+
+lpg-td.bq vs crikey
+10.500
+< 0.001
+173
+
+Analysis of Plan Quality
+lpg-td.bq vs p-mep lpg-td.bq vs sgplan
+4.016
+16.879
+< 0.001
+< 0.001
+21
+452
+
+lpg-td.bq vs tilsapa
+6.901
+< 0.001
+63
+
+lpg-td.s
+crikey
+
+p-mep
+
+tilsapa
+
+sgplan
+
+CPU-Time
+
+sgplan
+lpg-td.bq
+p-mep
+
+crikey
+
+A
+
+B:
+
+A is consistently better than B
+
+tilsapa
+
+A
+
+B:
+
+A is better than B a significant number of times
+(confidence level 94.78%)
+
+Plan Quality
+
+227
+
+fiGerevini, Saetti & Serina
+
+References
+Armando, A., Castellini, C., Giunchiglia, E., & Maratea, M. (2004). A SAT-based decision
+procedure for the boolean combination of difference constraints. In Proceedings of the
+Seventh International Conference on Theory and Applications of Satisfiability Testing
+(SAT-04), Berlin, Heidelberg, New York. Springer-Verlag. SAT 2004 LNCS Volume.
+Blum, A., & Furst, M. (1997). Fast planning through planning graph analysis. Artificial
+Intelligence, 90, pp. 281300.
+Chen, Y., Hsu, C., & Wah B., W. (2004). SGPlan: Subgoal partitioning and resolution
+in planning. In Edelkamp, S., Hoffmann, J., Littman, M., & Younes, H. (Eds.), In
+Abstract Booklet of the Competing Planners of ICAPS-04, pp. 3032.
+Cresswell, S., & Coddington, A. (2004). Adapting LPGP to plan with deadlines. In Proceedings of the Sixteenth European Conference on Artificial Intelligence (ECAI-04),
+pp. 983984, Amsterdam, The Netherlands. IOS Press.
+Dechter, R., Meiri, I., & Pearl, J. (1991). Temporal constraint networks. Artificial Intelligence, 49, pp. 6195.
+Do, M., B., Kambhampati, S., & Zimmerman, T. (2004). Planning - scheduling connections
+through exogenous events. In Proceedings of the ICAPS-04 Workshop on Integrating
+Planning into Scheduling, pp. 3237.
+Do, M., & Kambhampati, S. (2003). SAPA: A multi-objective metric temporal planner.
+Journal of Artificial Intelligence Research (JAIR), 20, pp. 155194.
+Edelkamp, S. (2004). Extended critical paths in temporal planning. In Proceedings of the
+ICAPS-04 Workshop on Integrating Planning into Scheduling, pp. 3845.
+Edelkamp, S., & Hoffmann, J. (2004). PDDL2.2: The language for the classic part of the
+4th international planning competition. Technical report 195, Institut fur Informatik,
+Freiburg, Germany.
+Edelkamp, S., Hoffmann, J., Littman, M., & Younes, H. (2004) In Abstract Booklet of the
+competing planners of ICAPS-04.
+Erschler, J., Roubellat, F., & Vernhes, J. P. (1976). Finding some essential characteristics
+of the feasible solutions for a scheduling problem. Operations Research (OR), 24, pp.
+772782.
+Fox, M., & Long, D. (2003). PDDL2.1: An extension to PDDL for expressing temporal
+planning domains. Journal of Artificial Intelligence Research (JAIR), 20, pp. 61124.
+Fox, M., & Long, D. (2005). Planning in time. In Fisher, M., Gabbay, D., & Vila, L. (Eds.),
+Handbook of Temporal Reasoning in Artificial Intelligence, pp. 497536. Elsevier Science Publishers, New York, NY, USA.
+Fox, M., Long, D., & Halsey, K. (2004). An investigation into the expressive power of
+PDDL2.1. In Proceedings of the Sixteenth European Conference on Artificial Intelligence (ECAI-04), pp. 338342, Amsterdam, The Netherlands. IOS Press.
+Frederking, R., E., & Muscettola, N. (1992). Temporal planning for transportation planning and scheduling. In IEEE International Conference on Robotics and Automation
+(ICRA-92), pp. 11251230. IEEE Computer Society Press.
+228
+
+fiAn Approach to Temporal Planning and Scheduling
+
+Gerevini, A., & Cristani, M. (1997). On finding a solution in temporal constraint satisfaction
+problems. In Proceedings of the Fifteenth International Joint Conference on Artificial
+Intelligence (IJCAI-97), Vol. 2, pp. 14601465, San Francisco, CA, USA. Morgan
+Kaufmann Publishers.
+Gerevini, A., Saetti, A., & Serina, I. (2003). Planning through stochastic local search and
+temporal action graphs. Journal of Artificial Intelligence Research (JAIR), 20, pp.
+239290.
+Gerevini, A., Saetti, A., & Serina, I. (2004). An empirical analysis of some heuristic features
+for local search in LPG. In Proceedings of the Fourteenth International Conference
+on Automated Planning and Scheduling (ICAPS-04), pp. 171180, Menlo Park, CA,
+USA. AAAI Press.
+Gerevini, A., Saetti, A., & Serina, I. (2005a). Integrating planning and temporal reasoning for domains with durations and time windows. In Proceedings of the Nineteenth
+International Joint Conference on Artificial Intelligence (IJCAI-05), pp. 12261235,
+Menlo Park, CA, USA. International Joint Conference on Artificial Intelligence Inc.
+Gerevini, A., Saetti, A., Serina, I., & Toninelli, P. (2005b). Fast planning in domains with
+derived predicates: An approach based on rule-action graphs and local search. In
+Proceedings of the Twentieth National Conference on Artificial Intelligence (AAAI05), pp. 11571162, Menlo Park, CA, USA. AAAI Press.
+Gerevini, A., & Serina, I. (1999). Fast planning through greedy action graphs. In Proceedings
+of the Sixteenth National Conference on Artificial Intelligence (AAAI-99), pp. 503
+510, Menlo Park, CA, USA. AAAI Press/MIT Press.
+Gerevini, A., & Serina, I. (2000). Fast plan adaptation through planning graphs: Local and
+systematic search techniques. In Proceedings of the Fifth International Conference on
+Artificial Intelligence Planning and Scheduling (AIPS-00), pp. 112121, Menlo Park,
+CA, USA. AAAI Press/MIT Press.
+Ghallab, M., & Laruelle, H. (1994). Representation and control in IxTeT, a temporal planner. In Proceedings of the Second International Conference on Artificial Intelligence
+Planning Systems (AIPS-94), pp. 6167, Menlo Park, CA, USA. AAAI press.
+Ghallab, M., Nau, D., & Traverso, P. (2003). Automated Planning: Theory and Practice.
+Morgan Kaufmann Publishers, San Francisco, CA, USA.
+Glover, F., & Laguna, M. (1997). Tabu Search. Kluwer Academic Publishers, Boston, USA.
+Helmert, M. (2004). A planning heuristic based on causal graph analysis. In Proceedings
+of the Fourteenth International Conference on Automated Planning and Scheduling
+(ICAPS-04), pp. 161170, Menlo Park, CA, USA. AAAI Press.
+Kavuluri, B. R., & U, S. (2004). Tilsapa - timed initial literals using SAPA. In Edelkamp, S.,
+Hoffmann, J., Littman, M., & Younes, H. (Eds.), In Abstract Booklet of the Competing
+Planners of ICAPS-04, pp. 4647.
+Laborie, P., & Ghallab, M. (1995). Planning with sharable resource constraints. In Proceedings of the Fourteenth International Joint Conference on Artificial Intelligence
+(IJCAI-95), Vol. 2, pp. 16431651, San Francisco, CA, USA. Morgan Kaufmann Publishers.
+229
+
+fiGerevini, Saetti & Serina
+
+Long, D., & Fox, M. (2003a). The 3rd international planning competition: Results and
+analysis. Journal of Artificial Intelligence Research (JAIR), 20, pp. 159.
+Long, D., & Fox, M. (2003b). Exploiting a graphplan framework in temporal planning. In
+Proceedings of the Thirteenth International Conference on Automated Planning and
+Scheduling (ICAPS-03), pp. 5261, Menlo Park, CA, USA. AAAI Press.
+McAllester, D., & Rosenblitt, D. (1991). Systematic nonlinear planning. In Proceedings
+of the Ninth National Conference on Artificial Intelligence (AAAI-91), pp. 634639,
+Menlo Park, CA, USA. AAAI Press.
+Muscettola, N. (1994). HSTS: Integrating planning and scheduling. In Zweben, & Fox
+(Eds.), Intelligent Scheduling, pp. 169212, San Francisco, CA, USA. Morgan Kaufmann Publishers.
+Nguyen, X., & Kambhampati, S. (2001). Reviving partial order planning. In Proceedings of
+the Seventeenth International Joint Conference on Artificial Intelligence (IJCAI-01),
+Vol. 1, pp. 459464, San Francisco, CA, USA. Morgan Kaufmann Publishers.
+Penberthy, J., & Weld, D. (1992). UCPOP: A sound, complete, partial order planner for
+ADL. In Proceedings of the Third International Conference on Principles of Knowledge
+Representation and Reasoning (KR92), pp. 103114, San Mateo, CA, USA. Morgan
+Kaufmann Publishers.
+Penberthy, J., & Weld, D. (1994). Temporal planning with continuous change. In Proceedings
+of the Twelfth National Conference on Artificial Intelligence (AAAI-94), pp. 1010
+1015, Menlo Park, CA, USA. AAAI Press/MIT Press.
+Penberthy, J., S. (1993). Planning with Continuous Change. Ph.D. thesis, University of
+Washington, Seattle, WA, USA. Available as technical report UW-CSE-93-12-01.
+Sanchez, J., Tang, M., & Mali, A., D. (2004). P-MEP: Parallel more expressive planner. In
+Edelkamp, S., Hoffmann, J., Littman, M., & Younes, H. (Eds.), In Abstract Booklet
+of the Competing Planners of ICAPS-04, pp. 5355.
+Schwartz, P., J., & Pollack, M., E. (2004). Planning with disjunctive temporal constraints.
+In Proceedings of the ICAPS-04 Workshop on Integrating Planning into Scheduling,
+pp. 6774.
+Smith, D., & Weld, D. (1999). Temporal planning with mutual exclusive reasoning. In
+Proceedings of the Sixteenth International Joint Conference on Artificial Intelligence
+(IJCAI-99), pp. 326337, San Francisco, CA, USA. Morgan Kaufmann Publishers.
+Smith, S., & Cheng, C. (1993). Slack-based heuristics for constraint satisfaction scheduling.
+In Proceedings of the Eleventh National Conference on Artificial Intelligence (AAAI93), pp. 139144, Menlo Park, CA, USA. AAAI Press/The MIT press.
+Stergiou, K., & Koubarakis, M. (2000). Backtracking algorithms for disjunctions of temporal
+constraints. Artificial Intelligence, 120 (1), pp. 81117.
+Tate, A. (1977). Generating project networks. In Proceedings of the Fifth International
+Joint Conference on Artificial Intelligence (IJCAI-77), pp. 888889, Cambridge, MA,
+USA. MIT, William Kaufmann.
+230
+
+fiAn Approach to Temporal Planning and Scheduling
+
+Tsamardinos, I., & Pollack, M. E. (2003). Efficient solution techniques for disjunctive
+temporal reasoning problems. Artificial Intelligence, 151 (1-2), pp. 4389.
+Vere, S. A. (1983). Planning in time: Windows and durations for activities and goals. IEEE
+Transactions on Pattern Analysis and Machine Intelligence, 5 (3), pp. 246267.
+Vidal, V. (2004). A lookahead strategy for heuristic search planning. In Proceedings of the
+Fourteenth International Conference on Automated Planning and Scheduling (ICAPS04), pp. 150159, Menlo Park, CA, USA. AAAI Press.
+Wilcoxon, F., & Wilcox, R. A. (1964). Some Rapid Approximate Statistical Procedures.
+American Cyanamid Co., Pearl River, NY, USA.
+
+231
+
+fi

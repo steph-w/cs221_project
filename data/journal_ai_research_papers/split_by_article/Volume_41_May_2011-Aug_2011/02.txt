@@ -1,0 +1,1540 @@
+Journal of Artificial Intelligence Research 41 (2011) 69-95
+
+Submitted 10/10; published 05/11
+
+Value of Information Lattice: Exploiting Probabilistic
+Independence for Effective Feature Subset Acquisition
+Mustafa Bilgic
+
+mbilgic@iit.edu
+
+Illinois Institute of Technology
+Chicago, IL 60616 USA
+
+Lise Getoor
+
+getoor@cs.umd.edu
+
+University of Maryland
+College Park, MD 20742 USA
+
+Abstract
+We address the cost-sensitive feature acquisition problem, where misclassifying an instance is costly but the expected misclassification cost can be reduced by acquiring the
+values of the missing features. Because acquiring the features is costly as well, the objective is to acquire the right set of features so that the sum of the feature acquisition
+cost and misclassification cost is minimized. We describe the Value of Information Lattice
+(VOILA), an optimal and efficient feature subset acquisition framework. Unlike the common
+practice, which is to acquire features greedily, VOILA can reason with subsets of features.
+VOILA efficiently searches the space of possible feature subsets by discovering and exploiting
+conditional independence properties between the features and it reuses probabilistic inference computations to further speed up the process. Through empirical evaluation on five
+medical datasets, we show that the greedy strategy is often reluctant to acquire features,
+as it cannot forecast the benefit of acquiring multiple features in combination.
+
+1. Introduction
+We often need to make decisions and take appropriate actions in a complex and uncertain
+world. An important subset of decisions can be formulated as a classification problem,
+where an instance is described by a set of features and one of finite categorical options is
+chosen based on these features. Examples include medical diagnosis where the patients are
+described by lab tests and a diagnosis is to be made about the disease state of the patient,
+and spam detection where an email is described by its content and the email client needs
+to decide whether or not the email is spam.
+Much research has been done on how to learn effective and efficient classifiers assuming
+that the features describing the entities are fully given. Even though this complete data
+assumption might hold on a few domains, in practice features that describe the entities
+often have missing values. In certain domains such as medical diagnosis where a decision is
+made based on a number of features that include laboratory test results, the missing feature
+values can be acquired at a cost by performing the related tests. In such cases, we need
+to decide which tests to perform in which order. The answer to this question, of course,
+depends on how important it is to get the correct classification decision. Put alternatively,
+the cost of an incorrect classification (e.g., a misdiagnosis) determines how much we are
+willing to spend on expensive tests. Thus, we need to devise a feature acquisition policy
+that can determine which tests to perform in which order and when to stop and make the
+c
+2011
+AI Access Foundation. All rights reserved.
+
+fiBilgic & Getoor
+
+final classification decision so that the total incurred cost, the feature acquisition cost and
+the expected misclassification cost, is minimized.
+Devising the optimal policy in general requires considering all possible permutations of
+the features and their expected values. To provide some intuition, some features might be
+useful only if acquired together, and the cost and benefit of acquiring some features can
+depend on which other features have been acquired and what their values turned out to
+be. Because devising the optimal policy is intractable in general, previous work has been
+greedy (Gaag & Wessels, 1993; Yang, Ling, Chai, & Pan, 2006), has approximated value
+of information calculations (Heckerman, Horvitz, & Middleton, 1993), and has developed
+heuristic feature scoring techniques (Nunez, 1991; Turney, 1995).
+The greedy approach, however, has at least two major limitations. First, because it
+considers each feature in isolation, it cannot accurately forecast the value of acquiring
+multiple features together, causing it to produce sub-optimal policies. Second, the greedy
+strategy assumes that features can be acquired sequentially and the value of a feature can
+be observed before acquiring the next one. This assumption, however, is often not very
+practical. For example, doctors typically order batches of measurements simultaneously
+such as blood count, cholesterol level, etc., and then possibly order another batch after the
+results arrive. These two limitations of the greedy approach make it necessary to reason
+with sets of features.
+Reasoning with sets of features, on the other hand, poses serious tractability challenges.
+First of all, the number of subsets is exponential in the size of the feature set. Second,
+judging the value of acquiring a set of features requires taking an expectation over the
+possible values of the features in the set, which is also exponential in the number of the
+features. The good news, however, is that we do not need to consider all possible subsets of
+features in practice; certain features can render other features useless, while some features
+are useful only if acquired together. For example, an X-Ray might render a skin test
+useless for diagnosing tuberculosis. Similarly, a chest pain alone might not be useful for
+differentiating between a cold and a heart disease; it becomes useful only if it is combined
+with other features, such as a blood test.
+In this article, we describe a data structure that discovers and exploits these types of
+constraints (features that render other features useless and features that are useful only
+if acquired together) from the underlying probability distribution. We propose Value of
+Information Lattice (VOILA) that reduces the space of all possible subsets by exploiting the
+constraints between the features. Additionally, VOILA makes it possible to share value of
+information calculations between different feature sets to reduce the computation time.
+This article builds upon our earlier work (Bilgic & Getoor, 2007). Our contributions in
+this article include:
+ We introduce two additional techniques for sharing computations between different
+subsets of features. These new techniques are based on information caching and
+utilizing paths in the underlying Bayesian network.
+ We experiment with asymmetric misclassification costs in addition to the symmetric
+costs. The asymmetric setup reflects a more realistic case and provides new insights.
+ In addition to the feature acquisition costs defined by Turney (1995), we generate
+and experiment with synthetic feature costs. The synthetic feature costs capture
+70
+
+fiValue of Information Lattice
+
+more complex feature acquisition costs and allows for leeway for various acquisition
+strategies to differ.
+The remainder of this article is organized as follows. We describe the notation and
+problem formulation in Section 2. We describe how we can reduce the search space and
+share computations using VOILA in Section 3. We show experimental results in Section 4,
+discuss related work in Section 5, and discuss future work in Section 6. We then conclude
+in Section 7.
+
+2. Notation and Problem Formulation
+Our main task is to classify a given instance that has missing feature values and incur
+the minimum acquisition and misclassification cost. Let the instance be described by a set of
+features X = {X1 , X2 , . . . , Xn } and let Y be the random variable representing its class. We
+assume that the joint probability distribution P (Y, X) is given and concern ourselves with
+feature acquisition during only inference (note that the conditional distribution P (Y |X) is
+not appropriate, as most features are assumed to be unobserved initially). For the purpose
+of this article, we assume that we are given a Bayesian network, but any joint probabilistic
+model that allows us to efficiently answer conditional independence queries can be used.
+In the notation, a bold face letter represents a set of random variables and non-bold face
+letter represents a single random variable. For example X represents the set of features,
+whereas Xi  X represents a feature in X and Y represents the class variable. Additionally,
+a capital letter represents a random variable, and a lowercase letter represents a particular
+value of that variable; this applies to both individual variables and sets of variables. For
+example, Y represents a variable, and y represents a particular value that Y can take.
+In addition to the probabilistic model, we are also given the cost models that specify
+feature acquisition costs and misclassification costs. Formally, we assume that we have a
+feature acquisition cost function that given a subset of features, S, and the set of features
+whose values are known (evidence) E, returns a non-negative real number C(S | e). We
+also assume that we have a misclassification cost model that returns the misclassification
+cost cij incurred when Y is assigned yi when the correct assignment is yj . With these cost
+functions, we can model non-static feature acquisition costs; that is, the cost of acquiring
+the feature Xi can depend on what has been acquired so far and what their values are
+(e) as well what is acquired in conjunction with this feature (S \ {Xi }). Moreover, the
+misclassification cost model does not assume symmetric costs; different kids of errors (false
+positives or negatives) can have different costs.
+Figure 1 shows a simple example configuration with two features, X1 and X2 , and the
+class variable Y . In this simple example, the joint distribution P (X, Y ) is represented as
+a table, the feature costs are simple independent costs for X1 and X2 , and the misclassification cost is symmetric where both types of misclassifications cost the same and correct
+classification does not cost anything.
+A diagnostic policy  is a decision tree where each node represents a feature and the
+branches from the nodes represent the possible values of the features. Each path of the
+policy, ps  , represents an ordered sequence feature values s. We will often use ps to
+represent an ordered version of s. Typically, the order of the features in the set will be
+important for computing the feature costs, as the cost of a feature can depend on the values
+71
+
+fiBilgic & Getoor
+
+Figure 1: Example configuration with two features X1 and X2 and class variable Y . The
+table from left to right represent: the joint probability distribution P (X1 , X2 , Y ),
+the feature costs, and the misclassification costs.
+
+of previously acquired features. The order of the features will be irrelevant for computing
+the probability P (s). An example conditional policy using the example configuration of
+Figure 1 is given in Figure 2.
+Each policy  has two types of costs: the feature acquisition cost and a misclassification
+cost. These costs are defined in terms of the costs associated with following the paths in
+the policy. We first describe how to compute the feature acquisition cost of a path and then
+describe how to compute the associated expected misclassification cost. Finally, we show
+how to compute the expected total cost of a policy using the total costs associated with
+each path.
+In the most naive version, the feature cost of a path ps is the sum of the costs of the
+features that appear on the path. However, in practice, the cost of a feature can depend on
+which features have been acquired so far and the observed values of the acquired features.
+For example, performing the treadmill test (asking the patient to run a treadmill and
+measure his heart beat, etc.) can be riskier if we had ordered a cholesterol test and its
+result turned out to be high, putting the patient in high risk for heart disease. To account
+for these types of costs, the order of the features in ps matters, and the total feature cost
+of a path is the summation of the individual feature costs conditioned on the values of the
+features that precede the features in consideration:
+F C(ps ) =
+
+n
+X
+
+C(ps [j] | ps [1 : j])
+
+j=1
+
+where ps [j] represents the j th feature in ps and ps [1 : j] represents feature values 1 through
+j in ps .
+When we reach the end of a path, we need to make a classification decision. In this
+case, we simply utilize the Bayesian decision theory and choose the decision with minimum
+risk (i.e., misclassification cost). We find such a decision by using the probabilistic model to
+72
+
+fiValue of Information Lattice
+
+Figure 2: An example conditional policy with features X1 , X2 and class variable Y . Each
+non-leaf node represents a feature acquisition, with probability distribution of the
+possible values, and the cost of the feature. Each path (e.g., X1 = T, X2 = T ) has
+an acquisition cost and expected misclassification cost. The policy overall has an
+expected total cost ETC, which is the sum of total costs of each path, weighted
+by the probability of following that path.
+
+compute the probability distribution P (Y | ps ) and choose the value of Y that leads to the
+minimum expected cost. Note that the order of the features values do not matter in this
+case; that is P (Y | ps ) = P (Y | s). The expected misclassification of a path, EM C(ps ), is
+73
+
+fiBilgic & Getoor
+
+computed as follows:
+EM C(ps ) = EM C(s) = min
+yi
+
+X
+
+P (Y = yj | s)  cij
+
+(1)
+
+yj
+
+The total cost that we incur by following a path of a policy is simply the sum of the feature
+and the expected misclassification costs of that path:
+T C(ps ) = F C(ps ) + EM C(ps )
+Finally, we compute the expected total cost of a policy  using the total costs of the
+individual paths ps  . Each path ps   has a probability of occurrence in real world.
+Such probability can be easily computed by the generative probability model that we assumed. It is simply P (s). The expected total cost of a policy is then the sum of the total
+cost of each path, T C(ps ), weighted by the probability of following that path, P (s):
+ET C() =
+
+X
+
+P (s)T C(ps )
+
+(2)
+
+ps 
+
+The objective of feature acquisition during inference is, given the joint probabilistic
+model and the cost models for acquisition and misclassification, find the policy that has the
+minimum expected total cost. However, building the optimal decision tree is known to be
+NP-complete (Hyafil & Rivest, 1976). Thus, most research have been greedy choosing the
+best feature that reduces the misclassification costs the most and has the lowest cost (e.g.,
+Gaag & Wessels, 1993; Dittmer & Jensen, 1997) or have developed heuristic feature scoring
+techniques (e.g., Nunez, 1991; Tan, 1990).
+In the greedy strategy, each path of the policy is extended with the feature that reduces
+the misclassification cost the most and that has the lowest cost. More specifically, the path
+ps is replaced with new paths psx1 , psx2 , . . . , psxni where x1i , x2i , . . . , xni are the values
+i
+i
+that Xi can take and Xi is the feature that has the highest benefit. We define the benefit of
+a feature Xi given a path ps as the reduction in the total cost of the path when the path
+is expanded with the possible values of Xi . More formally,
+Benef it(Xi | ps ) , T C(ps ) 
+
+n
+X
+
+P (xji | s)T C(psxj )
+i
+
+j=1
+
+= F C(ps ) + EM C(s) 
+
+n
+X
+
+
+
+P (xji | s) F C(psxj ) + EM C(s  xji )
+i
+
+j=1
+
+
+= F C(ps )  
+
+n
+X
+
+
+P (xji | s)F C(psxj ) + EM C(s) 
+i
+
+j=1
+
+n
+X
+
+P (xji | s)EM C(s  xji )
+
+j=1
+
+= C(Xi | s) + EM C(s) 
+
+P (xji | s)EM C(s  xji )
+
+j=1
+
+= F C(ps )  (F C(ps ) + C(Xi | s)) + EM C(s) 
+n
+X
+
+n
+X
+
+P (xji | s)EM C(s  xji )
+
+j=1
+
+74
+
+fiValue of Information Lattice
+
+Note that, the last two terms are equivalent to the definition of expected value of information, EVI, (Howard, 1966):
+EV I(Xi | s) = EM C(s) 
+
+n
+X
+
+P (xji | s)EM C(s  xji )
+
+(3)
+
+j=1
+
+Substituting EVI, the definition of benefit becomes very intuitive:
+Benef it(Xi | ps ) = Benef it(Xi | s) = EV I(Xi | s)  C(Xi | s)
+
+(4)
+
+With this definition, the greedy strategy iteratively finds the feature that has the highest
+positive benefit (value cost difference), acquires it, and stops acquisition when there are no
+more features with a positive benefit value.
+We also note that it is straightforward to define EVI and Benefit for a set S0 of features
+just like we did for a single feature. The only difference is that the expectation needs to be
+taken over the joint assignments, s0 , to the features in the set S0 .
+EV I(S0 | s) = EM C(s) 
+
+X
+
+P (s0 | s)EM C(s  s0 )
+
+(5)
+
+s0
+
+and,
+Benef it(S0 | s) = EV I(S0 | s)  C(S0 | s)
+
+(6)
+
+There are a few problems with the greedy strategy as we have mentioned
+P earlier. First,
+it is short-sighted. There exist sets S  X such that Benef it(S) >
+Benef it(Xi ).
+Xi S
+
+This is easier to see, for example, for the XOR function, Y = X1 XOR X2 , where X1 and X2
+alone are not useful but they are determinative together. Due to this relationship, a greedy
+policy is not guaranteed to be optimal. Moreover, the greedy policy can prematurely stop
+acquisition because no single feature seems to provide positive benefit.
+The second problem with the greedy strategy is that we often need to acquire a set of
+features simultaneously. For example, a doctor orders a set of lab tests when s/he sends the
+patient to a lab, such as blood count, cholesterol level, etc. rather than ordering a single test,
+waiting for its result and ordering the next one. However, the traditional greedy strategy
+cannot handle reasoning with sets of features naturally.
+We would like to be able to reason with sets of features for these two reasons. Our
+objective in this article is, given an existing potentially empty set of already observed
+features E and their observed values e, find the set that has the highest benefit:
+L(X | e) , argmax Benef it(S | e)
+
+(7)
+
+SX\E
+
+There are two problems with this formulation: first, the number of subsets of X \ E is
+exponential in the size of X \ E, and second, for each set S, we need to take an expectation
+over the joint assignments to all features in the set. We address these two problems using
+a data structure that we describe next.
+75
+
+fiBilgic & Getoor
+
+3. Value of Information Lattice (VOILA)
+VOILA makes reasoning with sets of features tractable by reducing the space of possible
+sets and allowing sharing of EVI computations between different sets. In this section, we
+will first explain how we can reduce the space and then explain techniques for computation
+sharing.
+3.1 Reducing the Space of Possible Sets
+In most domains, there are often complex interactions between the features and the
+class label. Contrary to the Naive Bayes assumption, features are often not conditionally
+independent given the class label. Some features are useless once some other features are
+already acquired. For example a chest X-Ray is typically more determinative than a skin
+test for tuberculosis. Similarly, some features are useless alone unless they are accompanied
+with other features. For example, a chest pain alone might be due to a variety of sicknesses;
+if it is accompanied with high cholesterol, it could indicate a heart disease, whereas if it is
+combined with fever, a cold might be more probable. These types of interactions between
+the features allow us to reduce the space of candidate feature sets.
+As we have mentioned in the problem formulation, we have assumed that we already have
+a joint probabilistic model over the features and the class variable, P (Y, X). We will find
+these two types of feature interactions by asking probabilistic independence queries using
+P (Y, X). Specifically, we assume that we are given a Bayesian network that represents
+P (Y, X). The Bayesian network will allow us to find these types of interactions through
+standard d-separation algorithms.
+Definition 1 A set S  X \ E is irreducible with respect to evidence e if Xi  S, Xi is
+not conditionally independent of Y given e and S \ {Xi }.
+Given a Bayesian network over X and Y , it is straightforward to check irreducibility through
+d-separation (Pearl, 1988).
+Proposition 1 Let S0 be a maximal irreducible subset of S with respect to e. Then, EV I(S |
+e) = EV I(S0 | e).
+Proof: Let S00 = S \ S0 . If S0 is a maximal irreducible set, S0  E d-separates Y and S00 .
+Otherwise, we could make S0 larger by including the non-d-separated element(s) from S00 in
+S0 . Thus, we have P (Y | e, s) = P (Y | e, S0 , S00 ) = P (Y | e, S0 ). Substitution in Equations
+1 and 5 yields the desired property.
+Note that under the assumption that C(S0 | e)  C(S | e) for any S0  S, it suffices to
+consider only the irreducible sets to find the optimal solution to the objective function in
+Equation (7). VOILA is a data structure that contains only the irreducible feature subsets
+of X, with respect to a particular set of evidence e. We next define VOILA formally.
+Definition 2 A VOILA V is a directed acyclic graph in which there is a node corresponding
+to each possible irreducible set of features, and there is a directed edge from a feature set S
+to each node that corresponds to a direct (maximal) subset of S. Other subset relationships
+in the lattice are then defined through the directed paths in V.
+76
+
+fiValue of Information Lattice
+
+(a)
+
+(b)
+
+Figure 3: (a) A simple Bayesian network illustrating dependencies between attributes and
+the class variable. (b) The VOILA corresponding to the network.
+
+Figure 3(a) shows a simple Bayesian network and its corresponding VOILA, with respect
+to the empty evidence set, is shown in Figure 3(b). Notice that the VOILA contains only the
+irreducible subsets given the Bayesian network; for instance, the VOILA does not contain
+sets that include both X1 and X2 because X1 d-separates X2 from Y . We also observe that
+the number of irreducible subsets is 9 in contrast to 24 = 16 possible subsets. Moreover,
+note that the largest subset size is now 3 in contrast to 4. Having smaller feature sets sizes
+has a dramatic effect on the value of information calculations. In fact, these savings can
+make solving the objective function optimally (Equation (7)) feasible in practice.
+3.2 Sharing EVI Calculations
+Finding the set S that has the highest Benefit (Equation 6) requires computing EV I(S)
+(Equation 5). However, computing EV I(S) requires taking an expectation over all possible
+values of the features in S. Moreover, searching for the best set among all the irreducible sets
+requires us to compute EVI for all irreducible sets. To make such computations tractable in
+practice, VOILA allows computation sharing between its nodes. In this article, we describe
+three possible ways of sharing computations between the nodes of VOILA.
+77
+
+fiBilgic & Getoor
+
+3.2.1 Subset Relationships
+VOILA exploits the subset relationships between different feature sets in order to avoid
+computing EVI for some nodes. First of all, if there is a directed path from node S1 to S2
+in VOILA, then S1  S2 and thus EV I(S1 | e)  EV I(S2 | e)1 . Now assume that there is
+a directed path from Si to Sj and EV I(Si | e) = EV I(Sj | e). Then, all of the nodes on
+this path will also have the same EVI, thus we do not need to do the computation for those
+subsets. An algorithm that makes use of this observation is given in Algorithm 1.
+Algorithm 1: Efficient EVI computation using VOILA.
+Input: VOILA V and current evidence E
+Output: VOILA updated with correct EVI values
+1 for all root node(s) S
+2
+value  EV I(S | e); ub(S)  value; lb(S)  value
+3
+ub(descendants(S))  value
+4
+5
+6
+7
+8
+9
+10
+
+for all leaf node(s) S
+value  EV I(S | e); ub(S)  value; lb(S)  value
+lb(ancestors(S))  value
+for all node S where lb(S) 6= ub(S)
+value  EV I(S | e); ub(S)  value; lb(S)  value
+lb(ancestors(S))  value
+ub(descendants(S))  value
+
+It is important to point out that all nodes of VOILA are irreducible sets. Unless there are
+totally useless features that do not change P (Y ) when observed, then we should not have
+any two distinct nodes where the EVI values are exactly equal. However, this statement is
+true only if we do not have any context-specific independencies (independencies that hold
+only under certain assignments to the variables) in the underlying Bayesian network. In our
+description and implementation, we used standard d-separation at the variable level; one
+can imagine going one step further and define the irreducible sets through both the variable
+level d-separation and context specific independencies.
+In order to share computations between different nodes of the lattice, we keep lower
+and upper bounds on the EVI of a node. The lower bound is determined by the values of
+the descendants of the node whereas the upper bound is determined by the values of its
+ancestors. First, we initialize these bounds by computing the value of the information at
+the boundary of the lattice, i.e., the root node(s) and the leaf node(s) (lines 16) 2 . Then,
+we loop over the nodes whose upper bounds and lower bounds are not equal (line 710),
+computing their values and updating the bounds at their ancestors and descendants. The
+algorithm terminates when the upper bounds and lower bounds for all the nodes become
+tight. The order in which to choose the nodes in line 7 so that the number of sets for which
+a value is calculated is minimum is still an open question. A possible heuristic is to perform
+1. A superset has always a higher or equivalent EVI (Equation (5)) than its subset.
+2. We do not need to compute EVI for all root nodes; it suffices to compute it for the node that corresponds
+to the Markov blanket of Y . This will be explained in more detail in the next section.
+
+78
+
+fiValue of Information Lattice
+
+a binary search and choose a middle node on a path between two nodes for which the values
+have already been calculated.
+3.2.2 Information Pathways at the Underlying Bayesian Network
+The second mechanism that VOILA uses to share EVI computations is through the edges
+in the underlying Bayesian network. We specifically make use of the following fact:
+Proposition 2 For all S1 and S2 , if S1 d-separates Y from S2 with respect to e, then
+EV I(S1 | e)  EV I(S2 | e).
+Proof: Consider S12 = S1 S2 . Because of the subset relationship, we know that EV I(S12 |
+e)  EV I(S1 | e) and EV I(S12 | e)  EV I(S2 | e).
+EV I(S12 | e) = EM C(Y | e) 
+
+X
+
+P (s12 | e)EM C(Y | e, s12 )
+
+s12
+
+= EM C(Y | e) 
+
+XX
+s1
+
+= EM C(Y | e) 
+
+XX
+s1
+
+= EM C(Y | e) 
+
+X
+
+P (s1 , s2 | e)EM C(Y | e, s1 , s2 )
+
+s2
+
+P (s1 , s2 | e)EM C(Y | e, s1 )
+
+s2
+
+P (s1 | e)EM C(Y | e, s1 )
+
+s1
+
+= EV I(S1 | e)
+ EV I(S2 | e)
+The third line follows from the second by the fact that S1 d-separates Y from S2 and thus
+P (Y | s1 , s2 ) = P (Y | s1 ).
+Corollary: The Markov blanket of Y , (i.e., Y s parents, Y s children, and Y s childrens
+other parents), is the set that has the highest EVI in our search space, as it d-separates all
+of the remaining variables from Y . Using this corollary, we do not need to compute the EVI
+for all root nodes in Algorithm 1; we can compute EVI for the root node that corresponds
+to the Markov blanket of Y and it serves as the upper bound for the EVI of the remaining
+root nodes.
+These relationships can very well be exploited like we exploited the subset relationships
+above. Instead of just using the subset relationships, we can use both subset and independence relationships. One simple way to make use of Algorithm 1 without modification
+is to add edges between any S1 and S2 where the independence property holds. An example S1 and S2 according to our toy network in Figure 3(a) would be S1 = {X1 } and
+S2 = {X2 }. Thus, we can add a directed edge from X1 to X2 in our VOILA in Figure 3(b)
+and Algorithm 1 will work just fine.
+3.2.3 Incremental Inference
+The third and the last mechanism that VOILA uses for computation sharing is through
+caching of probabilities at its nodes. For each candidate set S  V, we need to compute
+EV I(S | e) which requires computing P (S | e) and EM C(Y | S, e). If we cache the
+79
+
+fiBilgic & Getoor
+
+conditional probabilities at each node of V, then to compute
+P (S | e), we find one of its
+P
+supersets Si = S  {Xi } and then compute P (S | e) = xi P (S, Xi = xi | e).
+Computing EM C(Y | S, e) requires computing P (Y | S, e). To perform this computation efficiently, we cache the state of the junction tree at each node of the VOILA. Then, we
+find a subset, Sj , such that S = Sj  {Xj }. We compute P (Y | S, e) by integrating the
+extra evidence to the junction tree at node Sj that is used to compute P (Y | Sj , e).
+3.3 Constructing VOILA
+Efficient construction of VOILA is not a straightforward task. The brute force approach
+would be to enumerate all possible subsets of X \ E and for each subset check whether it is
+irreducible. However, this brute force approach is clearly impractical. Because the number
+of nodes in VOILA is expected to be much fewer than the number of possible subsets of X\E,
+if we can be smart about which sets we consider for inclusion in V, we can construct it
+more efficiently. That is, instead of generating all possible candidates and checking whether
+they are irreducible or not, we try to generate only irreducible sets. We first introduce the
+notion of a dependency constraint and then explain how we can use dependency constraints
+to efficiently construct VOILA.
+Definition 3 A dependency constraint for a feature Xi  S with respect to S and E is the
+constraint on S  E that ensures a dependency between Xi and Y exists.
+For instance, in our running example, a dependency constraint for X2 is X1 ; in other
+words, in order for X2 to be relevant, X1 should not be included in S  E. Similarly, the
+dependency constraint for X4 is X3 , meaning that X3 must be included in SE. Specifically,
+a dependency constraint for a feature Xi requires that all Xj on the path from Y to Xi
+not to be included in S  E if Xj is not part of a v-structure; if Xj is part of a v-structure,
+then either Xj or one of its descendants must be included in S  E (we refer to these latter
+constraints as positivity constraints). The algorithm that uses these ideas to compute the
+dependency constraints for each feature is given in Algorithm 2.
+Algorithm 2: Dependency constraint computation for Xi .
+Input: Xi , Y
+Output: Dependency constraint for Xi , denoted DC(Xi )
+1 DC(Xi )  false
+2 for each undirected path pj between Xi and Y
+3
+DCj (Xi )  true
+4
+for each Xk on the path pj
+5
+if Xk does not a cause a v-structure then
+6
+DCj (Xi )  DCj (Xi )  Xk
+7
+else
+8
+DCj (Xi )  DCj (Xi )  (Xk  Descendants(Xk ))
+9
+
+DC(Xi )  DC(Xi )  DCj (Xi )
+
+80
+
+fiValue of Information Lattice
+
+These dependency constraints can be used to check whether a set is irreducible or
+potentially irreducible. Intuitively, a set is potentially irreducible if it is not irreducible but
+it is possible to make the set irreducible by adding more features into it. More formally,
+Definition 4 A set S  X \ E is potentially irreducible with respect to evidence e if,
+S is not irreducible but there exists a non-empty set of features S0  X \ {E  S} such that
+S  S0 is irreducible.
+Potential irreducibility is possible due to the non-monotonic nature of d-separation. That is,
+a feature that is d-separated from Y can become dependent if we consider it in combination
+with other features. For example, in our running example, {X4 } is not irreducible, as X4
+is d-separated from Y , whereas {X3 , X4 } is irreducible.
+We use the dependency constraints to check whether a set is irreducible or potentially
+irreducible. Because a set S is irreducible only if a dependency between all of its elements
+and Y exists, the dependency constraint for the set S is the conjunction of the dependency
+constraints of its members. The irreducibility of S can be checked by setting the elements
+of S and E to true and setting the remaining elements of X to false and evaluating the
+sets dependency constraint. In our running example, the dependency constraint for the set
+{X2 , X4 } is X1  X3 . Assuming E = , when we set the members of {X2 , X4 } to true, and
+set the remaining features, X1 and X3 , to false, X1  X3 then evaluates to false and thus
+this set is not irreducible. This makes sense because given no evidence, X4 is independent
+of Y , so while {X2 } is a useful feature set to consider for acquisition, {X2 , X4 } is not.
+Checking for potential irreducibility is very similar. Set the elements of S and E to true
+like we did above. Then, set the positivity constraints of the members of S to true. Finally,
+set everything else to false. Using the same example above, to check whether {X2 , X4 } is
+potentially irreducible, set X2 = true, X4 = true. Also set X3 = true because it is the
+positivity constraint for X4 . Set the remaining features, that is X1 , to false. Evaluating the
+constraint X1  X3 yields to true, showing that {X2 , X4 } is potentially irreducible (while
+it was not irreducible).
+Given the definitions of irreducibility and potential irreducibility and the mechanisms to
+check for these properties through the notion of dependency constraints, we next describe
+the algorithm to construct VOILA.
+VOILA construction proceeds in a bottom up fashion, beginning with the lowest level,
+which initially contains only the empty set and constructs new irreducible feature sets by
+adding one feature at a time into the VOILA structure. Algorithm 3 gives the details of
+the algorithm. The algorithm keeps track of the irreducible feature sets IS, and the set
+of potentially irreducible feature sets PS. When we are done processing feature Xij , we
+remove from PS any potentially irreducible set that cannot become irreducible because Xij
+will not be re-considered (line 11).
+3.3.1 Analysis of VOILA Construction Algorithm
+The construction algorithm inserts a node into the VOILA only if the corresponding set
+is irreducible (lines 6 and 7). Moreover, by keeping track of potentially irreducible sets
+(lines 810), we generate every possible irreducible set that can be generated. Thus, VOILA
+contains only and all of the possible irreducible subsets of X.
+81
+
+fiBilgic & Getoor
+
+Algorithm 3: The VOILA construction algorithm.
+Input: Set of features X and class variable Y .
+Output: The VOILA data structure V, given E.
+1 Pick an ordering of elements of X = Xi1 , Xi2 , . . . , Xin
+2 IS  {}; PS  
+3 for j = 1 to n
+4
+for each S  IS  PS
+5
+S0  S  Xij ; DC(S0 )  DC(S)  DC(Xij )
+6
+if S0 is irreducible then
+7
+IS  IS  {S0 }; Add a node corresponding to S0 to V
+8
+else
+9
+if S0 is potentially irreducible then
+10
+PS  PS  {S0 }
+11
+12
+13
+14
+15
+16
+17
+
+Remove from PS all sets that are no longer potentially irreducible
+max = size of largest S in IS; Ll = {S | S  IS and |S| = l}
+for l = 0 to max  1
+for each S  Ll
+for each S0  Ll+1
+if S  S0 then
+Add an edge from S0 to S to V
+
+The worst-case running time of the algorithm is still exponential in the number of
+initially unobserved features, X \ E, because number of irreducible sets can potentially
+be exponential. The running time in practice, though, depends on the structure of the
+Bayesian network that the VOILA is based upon and the ordering of the variables in line 1.
+For example, if the Bayesian network is naive Bayes, then all subsets are irreducible (no
+feature d-separates any other feature from the class variable); thus, the search space cannot
+be reduced at all. However, naive Bayes makes extremely strong assumptions which are
+unlikely to hold in practice. In fact, as we empirically show in the experiments section on five
+real-world datasets, features often are not conditionally independent given the class variable;
+there are more complex interactions between them and thus the number of irreducible
+subsets is substantially smaller than the number of all possible subsets.
+The for loop at line 4 iterates over each irreducible and potentially irreducible sets
+that have been generated so far, and the number of potentially-irreducible sets generated
+depends on the ordering chosen. A good ordering processes features with literals with
+positivity constraints in other features dependency constraints earlier. That is, for each
+undirected path from Y to Xi that includes Xj in a v-structure, a good ordering puts Xj
+earlier in the ordering than everything between Xj and Xi . For instance, in our sample
+Bayesian network in Figure 3(a), we should consider X3 earlier than X4 . We refer to an
+ordering as perfect if it satisfies all the positivity constraints. If a perfect ordering is used,
+VOILA construction algorithm never generates a potentially irreducible set. Unfortunately, it
+82
+
+fiValue of Information Lattice
+
+is not always possible to find a perfect ordering. A perfect ordering is not possible when two
+features have each other as a positivity constraint literal in their dependency constraints.
+This case occurs only when there is a loop from Y to Y that has two or more v-structures
+(Note that even though a Bayesian network is a directed acyclic graph, it can still contain
+loops, i.e., undirected cycles). A perfect ordering was possible in four of the five real world
+datasets that we used.
+3.4 Using VOILA for Feature-value Acquisition
+VOILA makes searching the space of all possible subsets tractable in practice. Using
+this flexibility, it is possible to devise several different acquisition policies. We describe two
+policies as example policies in this section.
+The first acquisition policy aims to capture the practical setting where more than one
+feature is acquired at once. The policy can be constructed using VOILA as follows. Each
+path ps of the policy  (which is initially empty) is repeatedly extended by acquiring the
+set S0  V that has the best Benef it(S0 | s, e). The policy construction ends when no path
+can be extended, i.e., all candidate sets have non-positive Benefit values for each path of .
+The second acquisition policy adds a look-ahead capability to the greedy policy. That
+is, rather than repeatedly extending each path ps of policy  with the feature Xi that has
+the highest Benef it(Xi | s, e), we add a look-ahead capability, and first find the set S0  V
+that has the highest Benef it(S0 | s, e). Then, instead of acquiring all features in S0 all
+at once, like we did in the above policy, we find the feature Xi  S0 that has the highest
+Benef it(Xi | s, e) and acquire it to extend ps .
+
+4. Experiments
+We experimented with five real-world medical datasets that Turney (1995) described
+and used in his paper. These datasets are Bupa Liver Disorders, Heart Disease, Hepatitis,
+Pima Indians Diabetes, and Thyroid Disease, which are all available from the UCI Machine
+Learning Repository (Frank & Asuncion, 2010). The datasets had a varying number of
+features ranging from five to 20. Four out of five datasets had binary labels, whereas the
+Thyroid dataset had three labels.
+For each dataset, we first learned a Bayesian Network that both provides the joint
+probability distribution P (Y, X) and efficiently answers conditional independence queries
+thorough d-separation (Pearl, 1988). We built a VOILA for each dataset using the learned
+Bayesian Network. We first present statistics on each dataset, such as the number of features
+and number of nodes in the VOILA, and then compare various acquisition policies.
+4.1 Search Space Reduction
+Table 1 shows aggregate statistics about each dataset, describing the number of features,
+the number of all possible subsets, the number of subsets in VOILA, and the percent reduction
+in the search space. As this table shows, the number of irreducible subsets is substantially
+fewer than all possible subsets. For the Thyroid Disease dataset, for example, the number
+of possible subsets is over a million whereas the number of irreducible subsets is fewer than
+83
+
+fiBilgic & Getoor
+
+Table 1: Aggregate statistics about each dataset. The number of irreducible subsets, i.e.,
+the number of nodes in VOILA, is substantially fewer than the number of all possible
+subsets.
+Dataset
+Bupa Liver Disorders
+Pima Indians Diabetes
+Heart Disease
+Hepatitis
+Thyroid Disease
+
+Features
+
+All Subsets
+
+Nodes in VOILA
+
+Reduction
+
+5
+8
+13
+19
+20
+
+32
+256
+8,192
+524,288
+1,048,576
+
+26
+139
+990
+18,132
+28,806
+
+19%
+46%
+88%
+97%
+97%
+
+thirty thousand. This enormous reduction in the search space makes searching through the
+possible sets of features tractable in practice.
+4.2 Expected Total Cost Comparisons
+We compared the expected total costs (Equation 2) of four different acquisition policies
+for each dataset. These policies are as follows:
+ No Acquisition: This policy does not acquire any features; it aims to minimize the
+expected misclassification cost based on the prior probability distribution of the class
+variable, P (Y ).
+ Markov Blanket: This policy acquires every relevant feature, regardless of the misclassification costs. The Market Blanket of Y in a Bayesian network is defined as Y s
+parents, children, and its childrens other parents (Pearl, 1988). Intuitively, it is the
+minimal set S  X such that Y  (X \ S) | S.
+ Greedy: This policy repeatedly expands each path ps of an initially empty policy 
+by acquiring the feature Xi that has the highest positive Benef it(Xi | s) (Equation
+4). The policy construction ends when no path can be extended with a feature with
+a positive Benefit value.
+ Greedy-LA: This policy adds a look-ahead capability to the Greedy strategy. This
+policy repeatedly expands each path ps of an initially empty policy  by first finding
+the set S0 that has the highest positive Benef it(S0 | s) (Equation 6) and then acquiring
+the feature Xi  S0 that has the maximum Benef it(Xi | s) (Equation 4). The policy
+construction ends when no set with a positive Benefit value can be found for any path
+of the policy.
+The feature costs for each dataset are described in detail by Turney (1995). In summary,
+each feature can either have an independent cost, or can belong to a group of features, where
+the first feature in that group incurs an additional cost. For example, the first feature from
+a group of blood measurements incurs the overhead cost of drawing blood from the patient.
+The feature costs are based on the data from Ontario Ministry of Health (1992).
+84
+
+fiValue of Information Lattice
+
+Table 2: Example misclassification cost matrix (cij ) for the symmetric and asymmetric misclassification costs. cij are set in way to achieve a prior expected misclassification
+cost of 1. In the symmetric cost case, choosing the most probable class leads
+to EM C = 1, whereas, in the asymmetric cost case, the choosing either class is
+indifferent and both leads to the same EMC of 1.
+Actual Class
+
+Prior Probability
+
+Pred. Class
+
+Symm. Cost
+
+Asymm. Cost
+
+y1
+
+P (y1 ) = 0.6510
+
+y1
+y2
+
+0
+2.866
+
+0
+2.866
+
+y2
+
+P (y2 ) = 0.3490
+
+y1
+y2
+
+2.866
+0
+
+1.536
+0
+
+We observed that most of the features were assigned the same cost. For example, four
+out of five features in the Bupa Liver Disorders dataset, 13 out of 19 features in the Hepatitis
+dataset, six out of eight features in the Diabetes dataset, and 16 out of 20 features in the
+Thyroid Disease dataset were assigned the same cost. When the costs are so similar, the
+problem is practically equivalent to finding the minimum size decision tree. To provide more
+structure into the feature acquisition costs, we also experimented with randomly generated
+feature and group costs. For each feature, we randomly generated a cost between 1 and 100,
+and for each group we generated a cost between 100 and 200. We repeated the experiments
+with three different seeds for each dataset.
+The misclassification costs were not defined in the paper by Turney (1995). One reason
+could be that it is easier to define the feature costs, but defining the cost of a misclassification can be non-trivial. Instead, Turney tests different acquisition strategies using
+various misclassification costs. We follow a similar technique with a slight modification. We
+compare the above acquisition policies under both symmetric (cij = cji ) and asymmetric
+misclassification costs. To be able to judge how the misclassification cost structure affects
+feature acquisition, we unify the presentation, and compare different acquisition strategies
+under the same a priori expected misclassification costs, as defined in Equation (1). Specifically, we compare the acquisition policies under various a priori EMC that are achieved by
+varying the cij accordingly. We show an example misclassification table for an EMC value
+of 1 in Table 2. For the real feature cost case, we varied the EMC between 0 and 2000, and
+varied it from 0 to 4000 for the synthetic feature cost case.
+We compare the Greedy, Greedy-LA, and Markov Blanket policies by plotting how
+much cost each policy saves with respect to the No Acquisition policy. In the X axis
+of the plots, we vary a priori expected misclassification cost using the methodology we
+described above. We plot the savings on the Y axis. For each dataset, we plot four different
+scenarios: the cross product of {symmetric, asymmetric} misclassification costs, and {real,
+synthetic} feature costs.
+The results for the Liver Disorders, Diabetes, Heart Disease, Hepatitis, and Thyroid
+Disease are given in Figures 4, 5, 6, 7, and 8 respectively. For each figure, symmetric
+misclassification cost scenarios are given in sub-figures (a) and (c), whereas the asymmetric
+85
+
+fiBilgic & Getoor
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+Figure 4: Expected Total Cost (ETC ) comparisons for the Bupa Liver Disorders dataset.
+The a priori class distribution is as follows: P (Y ) = [0.4959, 0.5041].
+
+misclassification cost scenarios are presented in (b) and (d). Similarly, the real feature cost
+scenarios are given in (a) and (b) and the synthetic feature cost scenarios are presented in
+(c) and (d). We next summarize the results.
+ We found that the Greedy policy often prematurely stopped acquisition, performing
+even worse than the Markov Blanket strategy. This is true for most of the datasets,
+regardless of the feature and misclassification cost structures. The fact that the Greedy
+strategy can perform worse than Markov Blanket strategy is really troubling. At first,
+it might seem rather unintuitive that Greedy strategy can perform worse than Markov
+Blanket strategy. Part of the reason is that the features belong to groups and the first
+feature from its group incurs an overhead cost. In Greedy strategy where each feature
+is considered in isolation, the overhead costs can outweigh each single features benefit,
+and because Greedy does not look ahead, it is reluctant to commit to acquiring the
+first feature from any group.
+86
+
+fiValue of Information Lattice
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+Figure 5: Expected Total Cost (ETC ) comparisons for the Pima Indian Diabetes dataset.
+A priori class distribution is as follows: P (Y ) = [0.6510, 0.3490].
+
+ Greedy-LA strategy never performs worse than any other strategy under any setting.
+ The misclassification cost structure (symmetric or asymmetric) had a considerable
+effect on how the policies behaved. The differences between symmetric and asymmetric cases were particularly evident for datasets where the class distribution was more
+imbalanced, such as the Diabetes (Figure 5), Hepatitis (Figure 7), and the Thyroid
+Disease (Figure 8) datasets. The differences due to the misclassification cost structure
+can be summarized as follows:
+ When the class distribution is imbalanced and the misclassification cost is symmetric, acquiring more information cannot change the classification decisions
+easily due to the class imbalance, thus the features do not have high EVI values.
+On the other hand, if the misclassification costs are asymmetric, features tend
+to have higher EVI values. Thus, the Greedy and Greedy-LA strategies start
+acquiring features earlier in the X axis for the asymmetric cases compared to
+87
+
+fiBilgic & Getoor
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+Figure 6: Expected Total Cost (ETC ) comparisons for the Heart Disease dataset. A priori
+class distribution is as follows: P (Y ) = [0.5444, 0.4556].
+
+their symmetric counterparts. For example, for the Thyroid disease dataset with
+real feature costs, the Greedy strategy starts acquisition only when the EMC is
+greater than 600 for symmetric misclassification costs (Figure 8(a)) whereas it
+starts acquiring when the EMC reaches only 100 for the asymmetric case (Figure 8(b)). For the synthetic feature costs, the results are more dramatic; neither
+Greedy or Greedy-LA acquires any features for the symmetric cost case (Figure 8(c)), whereas they start acquisition when EM C = 200 for the asymmetric
+case (Figure 8(d)).
+ In the same realm with the above results, the slope of the savings for the asymmetric case is much higher compared to the symmetric case.
+ The misclassification cost structure causes differences between the Greedy and
+Greedy-LA policies in a few cases. For the Diabetes dataset Greedy policy performs worse when the misclassification costs are symmetric (Figures 5(a) and
+88
+
+fiValue of Information Lattice
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+Figure 7: Expected Total Cost (ETC ) comparisons for the Hepatitis dataset. A priori class
+distribution is as follows: P (Y ) = [0.7908, 0.2092].
+
+5(c)), whereas for the Hepatitis dataset, it performs worse for the asymmetric
+misclassification costs (Figures 7(b) and 7(d)).
+ The Greedy policy sometimes has an erratic, unpredictable, and unreliable performance as the expected misclassification changes. It possibly hits a local minima, gets
+out of it later, and hits local minima again (Figures 6 and 8(d)).
+We finally present an aggregate summary of the results in Table 3. Table 3 shows how
+much the Greedy policy and the Greedy-LA policy saves over the Markov Blanket policy.
+The results are presented as the average saving over various intervals, such as [0-500). As
+this table also shows, the Greedy-LA policy never loses compared to the Markov Blanket
+policy, as one would expect. Additionally, the Greedy-LA policy wins over the Greedy
+policy for most of the cases, and it never looses. Finally, Greedy policy prematurely stops
+acquisition, having negative savings with respect to the Markov Blanket strategy.
+89
+
+fiBilgic & Getoor
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+Figure 8: Expected Total Cost (ETC ) comparisons for the Thyroid Disease dataset. A
+priori class distribution is as follows: P (Y ) = [0.0244, 0.0507, 0.9249].
+
+5. Related Work
+Decision theoretic value of information calculations provide a principled methodology
+for information gathering in general (Howard, 1966; Lindley, 1956). Influence diagrams,
+for example, are popular tools for representing decisions and utility functions (Howard &
+Matheson, 1984). However, because devising the optimal acquisition policy (i.e., constructing the optimal decision tree) is intractable in general, most of the approaches to feature
+acquisition have been myopic (Dittmer & Jensen, 1997), greedily acquiring one feature at
+a time. The greedy approaches typically differ in i) the problem setup they assume, ii)
+the way the features are scored, and iii) the classification model being learned. We review
+existing work here, highlighting the differences between different techniques in these three
+dimensions.
+Gaag and Wessels (1993) consider the problem of evidence gathering for diagnosis
+using a Bayesian Network. In their setup, they gather evidence (i.e., observe the values of
+the variables) until the hypothesis is confirmed or disconfirmed to a desired extent. They
+90
+
+fiValue of Information Lattice
+
+Table 3: Savings of Greedy (GR) and Greedy-LA (LA) with respect to the Markov Blanket
+policy, averaged over different intervals. An entry is in bold if it is worse than
+Greedy-LA, and it is in red if it is worse than Markov Blanket.
+
+Liver
+GR
+
+LA
+
+Diabetes
+GR
+LA
+
+Heart
+GR
+
+LA
+
+Hepatitis
+GR
+LA
+
+Thyroid
+GR
+LA
+
+Real Feature Costs & Symmetric Misclassification Costs
+[0-500)
+[500-1000)
+[1000-1500)
+[1500-2000]
+
+6.77
+-18.84
+-42.12
+-67.59
+
+9.08
+2.70
+2.66
+2.85
+
+15.49
+-18.28
+-48.35
+-81.43
+
+24.27
+17.06
+17.35
+17.34
+
+240.59
+121.31
+79.07
+-24.98
+
+243.31
+144.87
+116.68
+111.34
+
+4.19
+-6.06
+-14.32
+-23.40
+
+5.86
+3.90
+3.90
+3.85
+
+28.07
+13.90
+13.41
+13.41
+
+28.07
+13.90
+13.41
+13.41
+
+5.84
+2.57
+2.57
+2.57
+
+17.7
+1.56
+1.56
+1.56
+
+17.7
+1.56
+1.56
+1.56
+
+231.93
+106.54
+96.39
+88.14
+79.88
+71.63
+68.67
+63.66
+
+298.01
+277.70
+257.40
+237.09
+216.79
+196.48
+176.18
+153.84
+
+298.01
+277.70
+257.40
+237.09
+216.79
+196.48
+176.18
+153.84
+
+276.32
+213.60
+162.52
+113.82
+65.12
+28.72
+0.78
+-18.10
+
+276.32
+213.60
+162.52
+113.82
+68.39
+34.73
+14.67
+9.50
+
+Real Feature Costs & Asymmetric Misclassification Costs
+[0-500)
+[500-1000)
+[1000-1500)
+[1500-2000]
+
+7.33
+-16.78
+-38.26
+-61.88
+
+9.3
+2.66
+3.04
+2.97
+
+22.74
+9.85
+3.99
+-2.54
+
+23.84
+13.31
+11.7
+13.7
+
+245.79
+131.36
+46.20
+-40.96
+
+245.79
+143.3
+114.23
+107.14
+
+-9.55
+-47.61
+-84.79
+-125.69
+
+Synthetic Feature Costs & Symmetric Misclassification Costs
+[0-500)
+[500-1000)
+[1000-1500)
+[1500-2000)
+[2000-2500)
+[2500-3000)
+[3000-3500)
+[3500-4000]
+
+307.39
+160.95
+60.30
+31.86
+10.43
+-14.60
+-39.64
+-67.18
+
+307.39
+160.95
+79.76
+53.97
+53.01
+62.66
+59.96
+63.68
+
+418.34
+245.75
+163.80
+138.78
+108.69
+78.90
+48.83
+15.75
+
+418.34
+288.65
+224.09
+163.45
+163.78
+164.75
+172.76
+172.13
+
+723.36
+579.25
+444.42
+378.43
+364.03
+268.00
+171.91
+109.91
+
+723.36
+585.72
+539.88
+490.23
+482.24
+458.89
+422.06
+412.11
+
+231.93
+63.59
+96.39
+88.14
+79.88
+71.63
+63.38
+54.30
+
+Synthetic Feature Costs & Asymmetric Misclassification Costs
+[0-500)
+[500-1000)
+[1000-1500)
+[1500-2000)
+[2000-2500)
+[2500-3000)
+[3000-3500)
+[3500-4000]
+
+306.19
+156.78
+66.57
+37.47
+14.84
+-9.19
+-33.22
+-59.66
+
+306.19
+156.78
+79.79
+60.62
+55.70
+58.85
+59.33
+63.13
+
+441.29
+341.28
+260.09
+201.19
+161.24
+144.24
+132.84
+126.43
+
+441.29
+341.28
+261.21
+204.31
+164.17
+151.22
+139.54
+136.51
+
+728.57
+599.02
+505.80
+420.56
+320.32
+211.26
+248.73
+206.06
+
+728.57
+603.12
+517.37
+519.29
+512.75
+500.75
+400.16
+389.32
+
+219.04
+88.34
+-16.86
+-54.31
+-64.75
+-101.93
+-139.11
+-180.01
+
+219.04
+91.53
+49.39
+61.90
+61.90
+61.90
+61.90
+61.90
+
+propose an acquisition algorithm that greedily computes the expected utility of acquiring a
+feature and chooses the one with the highest utility. They define the utility as the absolute
+value of the change in the probability distribution of the hypothesis being tested.
+In more recent work, Sent and Gaag (2007) consider the problem of acquiring more than
+a single feature at each step. They define subgoals and cluster the features for each subgoal.
+The subgoals and clustering of the features are provided by the domain experts. Then, they
+in the non-myopic case, they pick a cluster by calculating their expected values. However,
+91
+
+fiBilgic & Getoor
+
+because clusters can be big, calculating the expected value of a cluster can be problematic;
+thus, they also provide a semi-myopic algorithm where they pick the cluster that has the
+best (myopic) feature.
+Nunez (1991) introduces a decision tree algorithm called EG2 that is sensitive to the
+feature costs. Rather than splitting the decision tree at a feature that has high information
+gain, EG2 chooses a feature that has least information cost function, which is defined as
+the ratio of a features cost to its discriminative efficiency. EG2 is, however, is not directly
+optimized to balance the misclassification cost and feature acquisition cost; rather it is
+optimized for 0/1 loss while taking the feature costs into account. Similarly, Tan (1990)
+modifies the ID3 algorithm (Quinlan, 1986) to account for feature costs. Tan considers the
+domain where a robot needs to sense, recognize, and act, and the number of features is very
+large. For the robot to act efficiently, it needs to trade-off accuracy for efficiency.
+Turney (1995) builds a decision tree called ICET (standing for Inexpensive Classification
+with Expensive Tests) using a genetic search algorithm (Grefenstette, 1986) and using
+Nunezs (1991) criteria to build C4.5 decision trees (Quinlan, 1993). Unlike Nunez, Turney
+takes misclassification costs into account (in addition to the feature costs) to evaluate a
+given decision tree and looks for a good decision tree using genetic search algorithms.
+Yang et al. (2006) build cost-sensitive decision trees and Naive Bayes classifiers that
+take both feature costs and misclassification costs into account. Unlike Nunez (1991), who
+scores features based on information gain and cost ratio, Yang et al. score features based on
+expected reduction in the total cost (i.e., sum of the feature cost and the misclassification
+cost) on the training data. By doing so, they take feature costs and misclassification costs
+into account directly at learning time.
+Bayer-Zubek (2004) formulates the feature acquisition problem as a Markov Decision
+Process and provides both greedy and systematic search algorithms to develop diagnostic
+policies. Bayer-Zubek takes both feature cost and misclassification costs into account and
+automatically finds an acquisition plan that balances the two costs. She introduces an
+admissible heuristic for AO* search and describes regularization techniques to reduce overfitting to the training data.
+Saar-Tsechansky, Melville, and Provost (2009) consider active feature acquisition for
+classifier induction. Specifically, they are given a training data with missing feature values, and a cost matrix that defines the cost of acquiring each feature value, they describe
+an incremental algorithm that can select the best feature to acquire iteratively to build a
+model that is expected to have high future performance. The utility of acquiring a feature
+is estimated in terms of expected performance improvement per unit cost. The two characteristics that make this work different from most of the previous work is that i) the authors
+do not assume a fixed budget a priori; rather they build the model incrementally, ii) each
+feature can have a different cost for each instance.
+Finally, Greiner, Grove, and Roth (2002) analyze the sample complexity of dynamic
+programming algorithms that performs value iteration to search for the best diagnostic
+policies. They analyze the problem of learning the optimal policy, using a variant of the
+probably-approximately-correct (PAC) model. They show that the learning can be achieved
+efficiently when the active classifier is allowed to perform only (at most) a constant number
+of tests and show that learning the optimal policy is often intractable in more general
+environments.
+92
+
+fiValue of Information Lattice
+
+6. Future Work
+In this article, we have only scratched the surface of incorporating constraints between
+features in order to reduce the search space and make reasoning with sets tractable. We
+have discovered two types of constraints (features that render other features useless, and
+features that are useless without other features) purely from the underlying probability
+distribution. We have shown that these automatically discovered constraints helped reduce
+the search space dramatically. In practice, it is possible to discover additional types of
+constraints that can potentially be used reduce the search space further (for e.g., ordering
+constraints where certain procedures always precede other procedures). Constraints can
+also be defined based on observed feature values; for example, a treadmill test might not be
+performed for patients of old age. Patients can decline certain procedures and medications.
+Eliciting these constraints from the domain experts and utilizing them to further reduce
+the search space is a promising future direction.
+Most of the existing feature acquisition frameworks, including this one, are a major
+simplification of what happens in practice; we have assumed that acquiring the values of the
+features does not change the class value or values of other variables. However, in practice,
+feature value measurements can have side-effects, for example, in medical diagnosis while
+certain measurements are non-invasive and do not change the status of the patient, others
+might include medications that can affect the outcome. Similarly, in fault diagnosis and
+repair, the purpose is not only to diagnose but it is to repair the fault, so some actions can
+in fact repair the fault, in essence changing the class value. Taking these extra side-effects
+into account will make feature acquisition frameworks more realistic.
+
+7. Conclusion
+The typical approach to feature acquisition has been greedy in the past primarily due to
+the sheer size of the possible subsets of features. We described a general technique that can
+optimally prune the search space by exploiting the conditional independence relationships
+between the features and the class variable. We empirically showed that exploiting the conditional independence relationships can substantially reduce the number of possible subsets.
+We also introduced a novel data structure called Value of Information Lattice (VOILA) that
+can both efficiently reduce the search space using the conditional independence relationships and also can share probabilistic inference computations between different subsets of
+features. By using VOILA, we were able to add a full look-ahead capability to the greedy
+acquisition policy, which would not be practical otherwise. We experimentally showed on
+five real-world medical datasets that the greedy strategy often stopped feature acquisition
+prematurely, performing worse than even a policy that acquires all the features.
+
+Acknowledgments
+We thank the reviewers for their helpful and constructive feedback. This material is
+based on work supported by the National Science Foundation under Grant No. 0746930.
+93
+
+fiBilgic & Getoor
+
+References
+Bayer-Zubek, V. (2004). Learning diagnostic policies from examples by systematic search.
+In Annual Conference on Uncertainty in Artificial Intelligence.
+Bilgic, M., & Getoor, L. (2007). VOILA: Efficient feature-value acquisition for classification.
+In AAAI Conference on Artificial Intelligence, pp. 12251230.
+Dittmer, S., & Jensen, F. (1997). Myopic value of information in influence diagrams. In
+Annual Conference on Uncertainty in Artificial Intelligence, pp. 142149.
+Frank, A., & Asuncion, A. (2010). UCI machine learning repository..
+Gaag, L., & Wessels, M. (1993). Selective evidence gathering for diagnostic belief networks.
+AISB Quarterly, pp. 2334.
+Grefenstette, J. (1986). Optimization of control parameters for genetic algorithms. IEEE
+Transactions on Systems, Man and Cybernetics, 16 (1), 122128.
+Greiner, R., Grove, A. J., & Roth, D. (2002). Learning cost-sensitive active classifiers.
+Artificial Intelligence, 139 (2), 137174.
+Heckerman, D., Horvitz, E., & Middleton, B. (1993). An approximate nonmyopic computation for value of information. IEEE Transactions on Pattern Analysis and Machine
+Intelligence, 15 (3), 292298.
+Howard, R. A., & Matheson, J. E. (1984). Readings on the Principles and Applications of
+Decision Analysis, chap. Influence Diagrams. Strategic Decision Group.
+Howard, R. A. (1966). Information value theory. IEEE Transactions on Systems Science
+and Cybernetics, 2 (1), 2226.
+Hyafil, L., & Rivest, R. L. (1976). Constructing optimal binary decision trees is NPComplete. Information Processing Letters, 5 (1), 1517.
+Lindley, D. V. (1956). On a measure of the information provided by an experiment. Annals
+of Mathematical Statistics, 27, 9861005.
+Nunez, M. (1991). The use of background knowledge in decision tree induction. Machine
+Learning, 6 (3), 231250.
+of Health, O. M. (1992). Schedule of benefits: Physician services under the health insurance
+act..
+Pearl, J. (1988). Probabilistic Reasoning in Intelligent Systems. Morgan Kaufmann, San
+Francisco.
+Quinlan, J. R. (1986). Induction of decision trees. Machine Learning, 1 (1), 81106.
+Quinlan, J. R. (1993). C4.5: programs for machine learning. Morgan Kaufmann Publishers
+Inc., San Francisco, CA, USA.
+Saar-Tsechansky, M., Melville, P., & Provost, F. (2009). Active feature-value acquisition.
+Management Science, 55 (4), 664684.
+Sent, D., & Gaag, L. C. (2007). Enhancing automated test selection in probabilistic networks. In Proceedings of the 11th conference on Artificial Intelligence in Medicine,
+pp. 331335.
+94
+
+fiValue of Information Lattice
+
+Tan, M. (1990). CSL: A cost-sensitive learning system for sensing and grasping objects. In
+IEEE International Conference on Robotics and Automation.
+Turney, P. D. (1995). Cost-sensitive classification: Empirical evaluation of a hybrid genetic
+decision tree induction algorithm. Journal of Artificial Intelligence Research, 2, 369
+409.
+Yang, Q., Ling, C., Chai, X., & Pan, R. (2006). Test-cost sensitive classification on data
+with missing values. IEEE Transactions on Knowledge and Data Engineering, 18 (5),
+626638.
+
+95
+
+fi

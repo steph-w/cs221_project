@@ -1,0 +1,7362 @@
+Journal of Articial Intelligence Research 52 (2015) 235-286
+
+Submitted 10/14; published 02/15
+
+Lazy Model Expansion:
+Interleaving Grounding with Search
+
+broes.decat@gmail.com
+
+Broes De Cat
+
+OM Partners, Belgium
+
+Marc.Denecker@cs.kuleuven.be
+
+Marc Denecker
+
+Dept. Computer Science, KULeuven, Belgium
+
+pstuckey@unimelb.edu.au
+
+Peter Stuckey
+
+National ICT Australia and
+Dept. of Computing and Information Systems
+The University of Melbourne, Australia
+
+Maurice Bruynooghe
+
+Dept. Computer Science, KULeuven, Belgium
+
+Maurice.Bruynooghe@cs.kuleuven.be
+
+Abstract
+
+Finding satisfying assignments for the variables involved in a set of constraints can be
+cast as a (bounded) model generation problem: search for (bounded) models of a theory
+in some logic. The state-of-the-art approach for bounded model generation for rich knowledge representation languages like Answer Set Programming (ASP) and FO() and a CSP
+modeling language such as Zinc, is ground-and-solve : reduce the theory to a ground or
+propositional one and apply a search algorithm to the resulting theory.
+An important bottleneck is the blow-up of the size of the theory caused by the grounding
+phase. Lazily grounding the theory during search is a way to overcome this bottleneck.
+We present a theoretical framework and an implementation in the context of the FO()
+knowledge representation language. Instead of grounding all parts of a theory, justications
+are derived for some parts of it. Given a partial assignment for the grounded part of the
+theory and valid justications for the formulas of the non-grounded part, the justications
+provide a recipe to construct a complete assignment that satises the non-grounded part.
+When a justication for a particular formula becomes invalid during search, a new one is
+derived; if that fails, the formula is split in a part to be grounded and a part that can be
+justied. Experimental results illustrate the power and generality of this approach.
+
+1. Introduction
+The world is lled with combinatorial problems.
+
+These include important combinatorial
+
+optimization tasks such as planning, scheduling and rostering, combinatorics problems such
+as extremal graph theory, and countless puzzles and games. Solving combinatorial problems
+is hard, and all the methods we know to tackle them involve some kind of search.
+Various
+
+declarative paradigms
+
+have been developed to solve such problems.
+
+In such
+
+approaches, objects and attributes that are searched for are represented by symbols, and
+constraints to be satised by those objects are represented as expressions over these symbols
+
+c 2015 AI Access Foundation. All rights reserved.
+
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+in a declarative language. Solvers then search for values for these symbols that satisfy the
+constraints. This idea is found in the elds of Constraint Programming (CP) (Apt, 2003),
+ASP (Marek & Truszczyski, 1999), SAT, Mixed Integer Programming (MIP), etc. In the
+terminology of logic, the declarative method amounts to expressing the desired properties of
+
+logical theory. The data of a particular problem instance
+partial interpretation (or structure). The solving process is to
+apply model generation, or more specically model expansion (Mitchell & Ternovska, 2005),
+a problem class by sentences in a
+
+corresponds naturally to a
+
+the task of nding a structure that expands the input partial structure and satises the
+theory. The resulting structure is a solution to the problem. Model generation/expansion,
+studied for example in the eld of Knowledge Representation (KR) (Baral, 2003), is thus
+analogous to the task of solving constraint satisfaction problems, studied in CP, and that
+of generating answer sets of logic programs, studied in ASP.
+The similarities between these areas go deeper and extend to the level of the used techniques.
+
+State-of-the-art approaches often follow a two-phase solving methodology.
+
+In a
+
+rst phase, the input theory, in the rich language at hand, is reduced into a fragment of
+the language that is supported by some search algorithm. In the second phase, the search
+algorithm is applied to the reduced theory to eectively search for models. For example,
+model generation for the language MiniZinc (Nethercote et al., 2007) is performed by reducing to the ground language FlatZinc, for which search algorithms are available. Similarly,
+the language
+
+PC()
+
+FO()
+
+(Denecker & Ternovska, 2008) is reduced to its propositional fragment
+
+(see, e.g., Wittocx, Marin, & Denecker, 2010), and ASP is reduced to propositional
+
+ASP (see, e.g., Gebser, Schaub, & Thiele, 2007). As the reduced theory is often in a ground
+fragment of the language, we refer to the resulting reduced theory as the
+the rst phase as the
+
+grounding
+
+grounding
+
+and to
+
+phase (where quantiers are instantiated with elements in
+
+the domain). In other elds, grounding is also referred to as attening, unrolling, splitting
+or propositionalization. The solving methodology itself is generally referred to as
+
+and-solve.
+
+ground-
+
+Grounding becomes a bottleneck as users turn to applications with large domains and
+complex constraints. Indeed, it is easy to see that the grounding size of an FO formula is
+exponential in the nesting depth of quantiers and in the arity of predicates and polynomial
+in the size of the universe of discourse.
+
+There is an increasing number of applications
+
+where the size of the grounded theory is so large that it does not t in memory.
+
+For
+
+example, Son, Pontelli, and Le (2014) discuss several ASP applications where the groundand-solve approach turns out to be inadequate.
+In this paper, we present a novel approach to remedy this bottleneck, called
+
+lazy model
+
+expansion, where the grounding is generated lazily (on-the-y) during search, instead of upfront. The approach works by associating justications to the non-ground parts of the theory.
+A valid justication for a non-ground formula is a recipe to expand a partial structure into
+a more precise (partial) structure that satises the formula. Of course, it is crucial that the
+recipe is a lot more compact than the grounding of the formula. Given a partial structure
+and a valid justication for each of the non-ground formulas, a (total) structure is obtained
+by extending the partial structure with the literals in the justications of the non-ground
+formulas. Justications are selected in such a way that this total structure is a model for
+the whole initial theory.
+
+Consequently, model generation can be limited to the grounded
+
+part of the theory; if a model is found for that part, it can be extended to a model of the
+
+236
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+whole theory. However, a new assignment during model generation can conict with one of
+the justications. In that case, an alternative justication needs to be sought. If none is
+found, the associated formula can be split in two parts, one part that is grounded and one
+part for which a valid justication is still available.
+
+Example 1.1.
+
+Consider the
+
+Sokoban
+
+problem, a planning problem where a robot has to
+
+push blocks around on a 2-D grid to arrange them in a given goal conguration. A constraint
+on the move action is that the target position
+(at time
+
+t  T)
+
+pP
+
+of the moved block
+
+bB
+
+is currently
+
+empty, which can be expressed as
+
+(t, b, p)  T  B  P : move(b, p, t)  empty(p, t).
+
+(1)
+
+As it is not known in advance how many time steps are needed, one ideally wants to assume
+a very large or even innite number of steps. Using ground-and-solve, this blows up the size
+of the grounding. Incremental grounding, iteratively extending the time domain until it is
+large enough to allow for a plan, has been developed to avoid the blow-up in the context of
+planning (Gebser et al., 2008). Our approach is more general and does not depend on the
+presence of one domain that can be incrementally increased.
+Returning to the example, instead of grounding sentence (1), we associate with it a
+justication, a recipe to satisfy it.
+
+Make
+
+move(b, p, t)
+
+false for all
+
+b, p
+
+and
+
+t
+
+is such a
+
+recipe. When the search nds a model for the grounded part of the problem that is not in
+conict with the recipe, the model can be extended with the literals in the recipe to obtain a
+model of the whole theory. However, if the search would decide to move block
+
+p1
+
+b1
+
+to position
+
+at time t1 , a conict is created with the recipe. To resolve it, the instance of sentence (1)
+
+that is in conict with the partial model of the search is split o and sentence (1) is replaced
+by the equivalent sentences:
+
+move(b1 , p1 , t1 )  empty(p1 , t1 )
+
+(2)
+
+(t, b, p)  T  B  P \(t1 , b1 , p1 ) : move(b, p, t)  empty(p, t)
+
+(3)
+
+Sentence (2) is grounded and passed to the search component which will use it to check
+that
+
+empty(p1 , t1 )
+
+holds.
+
+Sentence (3) is non-ground and can be satised by the recipe
+
+ move(b, p, t) is false except for
+
+move(b1 , p1 , t1 ).
+
+When the search makes more moves, more
+
+instances will be grounded, until the search nds a partial plan for the problem at hand.
+Then the literals in the recipe of the remaining non-ground formula making
+
+move(b, p, t)
+
+false for all instances of sentence (1) that have not been grounded will complete the plan.
+The main contributions of this paper are:
+
+
+
+A theoretical framework for
+
+lazy model expansion.
+
+By aiming at minimally instantiat-
+
+ing quantied variables, it paves the way for a solution to the long-standing problem of
+handling quantiers in search problems, encountered, e.g., in the elds of ASP (Lefvre
+& Nicolas, 2009) and SAT Modulo Theories (Ge & de Moura, 2009). The framework
+also generalizes existing approaches that are related to the grounding bottleneck such
+as incremental domain extension (Claessen & Srensson, 2003) and lazy clause generation (Ohrimenko, Stuckey, & Codish, 2009).
+
+237
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+
+
+A complete algorithm for lazy model expansion for the logic
+
+FO(ID ),
+
+the extension of
+
+rst-order logic (FO) with inductive denitions (a language closely related to ASP as
+shown in Denecker et al., 2012). This includes ecient algorithms to derive consistent
+sets of justications and to maintain them throughout changes in a partial structure
+(e.g., during search).
+
+
+
+IDP
+
+An implementation extending the
+
+knowledge-base system (De Cat et al., 2014)
+
+and experiments that illustrate the power and generality of lazy grounding.
+Lazy grounding is a new step in our ability to solve complex combinatorial problems. By
+avoiding the up-front grounding step of previous approaches, lazy grounding can ground
+enough of the problem to solve it. While our method is developed for the logic
+
+FO(ID ),
+
+as
+
+will become clear, justications are associated with rules, and these rules are very similar
+to the rules used by ASP systems. Hence, as discussed towards the end of the paper, our
+framework and algorithms can be applied also in the context of ASP.
+The paper is organized as follows.
+
+In Section 2, the necessary background and nota-
+
+tions are introduced. Formal denitions of lazy grounding with
+
+FO(ID )
+
+are presented in
+
+Section 3, followed by a presentation of the relevant algorithms and heuristics in Sections 4
+and 5. Experimental evaluation is provided in Section 6, followed by a discussion on related
+and future work and a conclusion. A preliminary version of the paper appeared as the work
+of De Cat, Denecker, and Stuckey (2012) and of De Cat (2014, ch. 7).
+
+2. Preliminaries
+In this section, we provide the necessary background on the logic
+tasks model generation and model expansion for
+
+FO(ID )
+
+FO(ID ),
+
+on the inference
+
+and on the ground-and-solve
+
+approach to model expansion.
+
+2.1
+
+FO(ID )
+
+First, we dene syntax and semantics of the logic
+
+FO(ID )
+
+(Denecker & Ternovska, 2008),
+
+the extension of rst-order logic (FO) with inductive denitions. We assume familiarity with
+FO. Without loss of generality, we limit
+
+FO(ID )
+
+to the function-free fragment. Function
+
+symbols can always be eliminated using graph predicates (Enderton, 2001).
+A (function-free) vocabulary
+
+
+
+consists of a set of predicate symbols.
+
+Propositional
+
+> and , denoting true and
+false respectively. Predicate symbols are usually denoted by P , Q, R; atoms by a, literals
+(atoms or their negation) by l; variables by x, y ; and domain elements by d. With e we
+denote an ordered set of objects e1 , . . . , en ; with P/n a predicate P of arity n.
+
+symbols are 0-ary predicate symbols; these include the symbols
+
+The methods for model generating developed below require that a (possibly innite)
+domain
+
+D
+
+, a domain atom is an
+
+P d with P/n   and d  Dn , an n-tuple of domain elements. Likewise,
+
+is given and xed. Given a (function-free) vocabulary
+
+atom of the form
+we consider
+
+domain literals.
+
+ consists of the domain D and an n-ary relation P I  Dn
+for all predicate symbols P/n  . Alternatively, an n-ary relation can be viewed as a
+n
+function D  {t, f }. The propositional symbols > and  are respectively interpreted as t
+and f .
+A structure
+
+I
+
+interpreting
+
+238
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+Model generation algorithms maintain
+themselves in an
+
+inconsistent
+
+partial
+
+structures and may (temporarily) nd
+
+state, for example when a conict arises. To represent such
+
+I are introduced; they consist of the domain
+n-ary predicate P in , of a three- or four-valued relation P I . This is a
+n
+function D  {t, f , u, i}. A structure is two-valued if the range of its relations is {t, f },
+partial or three-valued if the range is {t, f , u}) and four-valued in general. Thus, two-valued
+states, three-valued and four-valued structures
+
+D
+
+and, for each
+
+structures are also three-valued and four-valued.
+
+When unqualied, the term
+
+structure
+
+stands for the most general, four-valued case.
+Given a xed
+
+D
+
+and
+
+, an alternative way to represent I
+
+domain
+
+aI
+
+=t
+
+D
+
+if only
+
+a
+
+=f
+
+if only
+
+S
+
+and
+
+a, aI = i (inconsistent) if
+a is in S and aI = u (unknown)
+
+such that for a domain atom
+
+I
+is in S , a
+
+S of domain literals.
+-structures I with
+both a and a are in S ,
+
+is as a set
+
+Indeed, there is a one-to-one correspondence between such sets
+
+otherwise. Hence,
+
+we may treat four-valued structures as sets of domain literals and vice versa. A structure is
+
+inconsistent if at least one domain atom is inconsistent.
+
+I of a vocabulary  can be naturally viewed as a structure of a larger
+ , namely by setting aI = u for any domain atom of a predicate in 0 \ .
+For a set  of predicate symbols, we use I| to denote the restriction of I to the symbols
+I|
+I
+of  . For a set S of domain atoms, we use I|S to denote the restriction of I to S : a S = a
+I|
+if a  S and a S = u otherwise. We call I a two-valued structure of S if I is two-valued
+on domain atoms of S and unknown otherwise.
+1 of a truth value v is dened as follows: t1 = f , f 1 = t, u1 = u and
+The inverse v
+1
+i = i. The truth order >t on truth values is dened by t >t u >t f and t >t i >t f . The
+precision order >p is dened by i >p t >p u and i >p f >p u. Both orders are pointwise
+0
+extended to arbitrary -structures. We say that I ' is an expansion of I if I p I , that
+0
+I
+I
+is if for each domain atom a, a
+p a . Viewing structures as sets of domain literals, this
+0
+corresponds to I  I .
+A structure
+
+0
+vocabulary 
+
+We assume familiarity with the syntax of (function-free) FO. To facilitate the reasoning
+with partially grounded formulas, we deviate from standard FO and quantify over explicitly
+
+x  D0 :  and x  D0 : , with
+ D. We sometimes abbreviate x1  D1 : . . . xn  Dn :  as x  D : , and similarly
+for . Given a formula , [x] indicates that x are the free variables of . Substitution of a
+variable x in formula  by a term t is denoted by [x/t]. A ground formula (in domain D )
+specied subsets of the domain
+
+D.
+
+This is denoted as
+
+D0
+
+is a formula without variables (hence without quantiers). Similar properties and notations
+are used for
+
+rules
+
+(introduced below).
+
+voc(T ) the set of all predicate symbols that occur in theory T . For
+a structure I , voc(I) is the set of symbols interpreted by I . Unless specied otherwise,
+theories and structures range over the vocabulary .
+The language FO(ID ) extends FO with (inductive) denitions. A theory in FO(ID )
+is a (nite) set of sentences and denitions. A denition  is a (nite) set of rules of the
+form x  D : P (x1 , . . . , xn )  , with P a predicate symbol and  an FO formula. The
+atom P (x) is referred to as the head of the rule and  as the body. Given a rule r , we let
+head (r) and body(r) denote respectively the head and the body of r. Given a denition ,
+a domain atom P d is dened by  if there exists a rule x  D : P (x)   in  such
+
+
+
+that d  D . Otherwise P d is open in . A domain literal P d is dened by  if P d
+We denote by
+
+239
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+. The sets of dened and open domain atoms of  are denoted as defined ()
+open(), respectively.
+
+is dened by
+and
+
+Without loss of generality, we assume that in any denition a domain atom is dened
+by at most one rule. Technically, this means that rules
+
+P (x)  2
+
+x  D1 : P (x)  1 , x  D2 :
+
+D1  D2 = . Rules can always be made disjunct
+x  D1  D2 : P (x)  1  2 , x  D1 \ D2 : P (x)  1 ,
+
+are pairwise disjunct, that is
+
+by transforming them in
+
+x  D2 \ D1 : P (x)  2 .
+2.1.1 Model Semantics
+The semantics of
+
+FO(ID )
+
+is a two-valued model semantics.
+
+Nevertheless, we introduce
+
+concepts of three- and four-valued semantics which are useful in dening the semantics
+of denitions and in formalizing lazy grounding.
+
+We use the standard four-valued truth
+
+assignment function, dened by structural induction for pairs of FO domain formulas
+
+ and
+
+I that interpret :
+I
+I
+ P d = P I (d ),
+
+structures
+
+ (  )I = min<t ( I , I ),
+ (  )I = max<t ( I , I ),
+ ()I = ( I )1 ,
+ (x  D : )I = max<t ({[x/d]I | d  D}),
+ (x  D : )I = min<t ({[x/d]I | d  D}).
+The assignment function is monotonic in the precision order: if
+
+I p I 0 ,
+
+then
+
+I p I
+
+0
+
+.
+
+Hence, if a formula is true in a partial structure, it is true in all two-valued expansions of
+it.
+
+Also, if
+
+I
+
+is two-valued (respectively three-valued, four-valued) then
+
+I
+
+is two-valued
+
+I
+
+is two-valued
+
+(respectively three-valued, four-valued).
+A structure
+and
+
+I = t.
+
+I
+
+is a
+
+model
+
+of /
+
+satises
+
+a sentence
+
+
+
+(notation
+
+I |= )
+
+if
+
+The satisfaction relation can be dened for denitions as well. The semantics
+
+of denitions is based on the parametrized well-founded semantics, an extension of the wellfounded semantics of logic programs informally described rst in the work of Van Gelder
+(1993), and formally dened for
+
+FO(ID )'s
+
+denitions by Denecker (2000). This semantics
+
+formalizes the informal semantics of rule sets as (inductive) denitions (Denecker, 1998;
+A structure I is
+ (notation I |= ) if I is two-valued and is the wellfounded model denoted as wf ( I|open() ) of  in the structure I|open() (Denecker
+& Ternovska, 2008). In case wf ( I|open() ) is not two-valued,  has no model expanding
+I|open() . A structure I satises a theory T if I is two-valued and I is a model of all
+sentences and denitions in T . In the next subsection, we present a formalization of the
+Denecker, Bruynooghe, & Marek, 2001; Denecker & Vennekens, 2014).
+a
+
+model
+
+of /
+
+satises
+
+a denition
+
+well-founded semantics using the notion of
+According to
+
+FO(ID )'s
+
+justication.
+
+methodology, (formal) denitions are used to express informal
+
+denitions. In the work of Denecker and Vennekens (2014), it was shown that
+
+FO(ID )
+
+de-
+
+nitions oer a uniform representation of the most important types of informal denitions and
+
+240
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+that expressing informal denitions leads to rule sets that are
+
+
+
+is called
+
+total
+
+if the well-founded model of
+
+
+
+is two-valued (Denecker & Ternovska, 2008).
+
+total.
+
+Formally, a denition
+
+in each two-valued structure
+
+I
+
+open()
+
+of
+
+In general, totality is undecidable; however
+
+broad, syntactically dened classes of denitions have been proven to be total (e.g., nonrecursive, positive, stratied and locally stratied denitions, see Denecker & Ternovska,
+2008). Inspection of current
+
+FO(ID )
+
+applications shows that in practice, non-total deni-
+
+tions occur rarely and almost always contain a modeling error. Also, in most cases totality
+can be established through a simple syntactic check.
+
+Totality can be usefully exploited
+
+during computation. The lazy grounding techniques introduced below exploit totality and
+should be applied only to total denitions. This restriction matches with
+
+FO(ID )'s
+
+and methodology and, in practice, this does not impose a strong limitation.
+
+design
+
+In case the
+
+input theory does contain denitions that are not known to be total, all is not lost: those
+denitions can be grounded completely up-front, in which case lazy grounding can be applied
+safely to the remaining sentences and total denitions in the input.
+
+Equivalence.
+equivalent
+
+Two theories
+
+T
+
+and
+
+T 0,
+
+which can be over dierent vocabularies, are
+
+-
+
+0
+can be expanded to a model of T and vice
+
+T restricted to 
+T 0 are strongly -equivalent if the above expansions are also
+unique. By extension, (strong) -equivalence in a structure I is dened similarly: if each
+0
+model of T expanding I can be expanded to a model of T expanding I and vice versa; to
+obtain strong equivalence, these expansions have to be unique. From a theory T , we often
+0
+derive a strongly voc(T )-equivalent theory T in a given structure I . Such transformations
+0
+preserve satisability and number of models and each model of T can be directly mapped
+to a model of T by projection on voc(T ).
+versa.
+
+if each model of
+
+Two theories
+
+T
+
+Canonical theories.
+
+and
+
+To simplify the presentation, the lazy grounding techniques are
+
+presented here for theories of the form
+
+{PT , },
+
+a single denition with function-free rules.
+
+with
+
+PT
+
+a propositional symbol, and
+
+This is without loss of generality.
+
+
+
+First, as
+
+mentioned above, standard techniques (Enderton, 2001) allow one to make a theory functionfree. Second, multiple denitions can always be combined into one as described by Denecker
+and Ternovska (2008) and Marin, Gilis, and Denecker (2004). This is achieved by renaming
+dened predicates in some of the denitions, merging all rules into one set and adding
+equivalence constraints between predicates and their renamings.
+
+{1 , . . . , n , }
+
+equivalent theory
+
+{PT ,   {PT  1      n }}
+
+with
+
+PT
+
+T =
+voc(T )-
+
+Third, the theory
+
+resulting from the previous step can be translated to the strongly
+
+a new propositional symbol.
+
+This transformation results in a ground set of sentences and a denition consisting of a
+set of (ground and non-ground) rules, so lazy grounding has only to cope with non-ground
+rules. Furthermore, we assume that rule bodies are in negation normal form (negation only
+occurs in front of atoms) and that, for each dened domain atom
+rule
+
+x  D : P (x)    
+
+such that
+
+dD
+
+
+P d ,
+
+there is a unique
+
+.
+
+The methods proposed below can be extended to full
+
+FO(ID )
+
+with functions, and such
+
+extended methods have been implemented in our system. However, this introduces a number
+of rather irrelevant technicalities which we want to avoid here.
+
+241
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+2.1.2 Justifications
+
+D and a canonical theory T = {, } as explained
+D correspond one-to-one to sets of domain literals.
+
+Denition 2.1 (Direct
+justication). A direct justication for a dened domain literal P d
+
+(respectively P d ) is a consistent non-empty set S of domain literals such that, for the
+S
+rule x  D : P (x)   of  such that d  D , it holds that [x/d] = t (respectively
+S
+[x/d] = f ).
+
+0
+Any consistent superset S of a direct justication S of P d is a direct justication
+0
+as well. Indeed, a body [x/d] true in S is true in the more precise S . Also, a direct
+justication S is not empty by denition; if  is true in every structure, then a minimal
+direct justication is {>}.
+
+We assume the presence of a domain
+
+above. Recall, structures with domain
+
+Example 2.2.
+
+Consider a domain
+
+
+
+A direct justication for
+
+D = {d1 , . . . , dn }
+
+and the denition
+
+x  D : P (x)  Q(x)  R(x)
+x  D : Q(x)  P (x)
+
+Q(di )
+
+is
+
+{P (di )}
+
+and for
+
+Q(di )
+
+is
+
+
+
+
+
+{P (di )}.
+
+Both domain literals
+
+have many other direct justications, but those are the unique minimal ones under the
+
+P (di ) are both {Q(di )} and {R(di )} while
+P (di ) is {Q(di ), R(di )}. Atoms R(di ) are open
+
+subset relation. Minimal direct justications for
+the only minimal direct justication for
+and have no direct justication.
+
+G is a pair hV, Ei of a set V of nodes and a set E of directed
+(vi , vj ) of nodes. For any node v  V , we denote by G(v) the
+G(v) = {w | (v, w)  E}.
+
+A (directed) graph
+i.e., ordered pairs
+children of
+
+v,
+
+i.e.,
+
+Denition 2.3 (Justication).
+of domain literals of
+
+
+
+A
+
+justication
+
+over a denition
+
+such that for each domain literal
+
+l, J(l)
+
+
+
+is a graph
+
+J
+
+edges,
+set of
+
+over the set
+
+is either empty or a direct
+
+justication of l.
+Thus, a justication is a graph that encodes for every dened domain literal none or one
+direct justication. In the sequel we say that
+denoted as a set of pairs
+
+l  S,
+
+with
+
+S
+
+J
+
+is
+
+dened in l
+
+if
+
+J(l) 6= .
+
+A justication is
+
+a direct justication of l.
+
+Denition 2.4 (Justication subgraph).
+
+Let
+
+J
+
+be a justication over
+
+.
+
+The justication
+
+for a literal l is the subgraph Jl of nodes and edges of J reachable from l. The justication
+for a set of literals L is the subgraph JL of nodes and edges of J reachable from any l  L.
+A justication J over  is total for l if J is dened in each literal that is reachable from
+l and dened in ; it is total for a set of literals L if it is total for each literal in L. A
+justication J is consistent with a structure I if I is consistent and none of the literals for
+which
+If
+
+J
+J
+
+is dened is false in
+
+I.
+
+is total for l, then the leaves of
+
+Jl
+
+are open domain literals.
+
+242
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+Denition 2.5.
+li  li+1 ,
+
+positive literals; it is
+
+cycle
+
+J
+
+A path in a justication
+
+is a sequence
+
+then there is an edge from li to li+1 in
+
+negative
+
+in a justication
+
+J
+
+J.
+
+l0  l1  . . .
+
+A path is
+
+positive
+
+if it consists of only negative literals; it is
+
+is a set of domain literals on a path in
+
+J
+
+such that, if
+
+if it consists of only
+
+mixed
+
+otherwise. A
+
+that starts and ends in
+
+the same domain literal. A cycle is positive (respectively, negative) if all domain literals are
+positive literals (respectively, negative literals); otherwise the cycle is mixed.
+An innite path may be cyclic or not. If
+Intuitively, a justication
+truth of
+
+l.
+
+J
+
+D
+
+is nite, every innite path is cyclic.
+
+containing a domain literal
+
+l
+
+provides an argument for the
+
+The strength of this argument depends on the truth of the leaves and on the
+
+innite paths and cycles in
+provides the argument that
+
+Jl .
+l is
+
+If all leaves are true and every innite path is negative,
+true. If a leaf is false or unknown, or
+
+or mixed loop, the argument for
+
+l
+
+Jl
+
+Jl
+
+contains a positive
+
+is weak. Notice that other justications for
+
+l
+
+may still
+
+argue l's truth.
+
+Denition 2.6 (Justies).
+
+l is well-founded in the justication
+J if every innite path in Jl is negative. Otherwise l is unfounded in J .
+A justication J over  justies a set of literals L dened in  (the set L of literals has
+a justication J ) if (i) JL is total for L; (ii) each literal of L is well-founded in J ; (iii) the
+set of literals in JL is consistent.
+
+P (d)
+
+Q(d)
+
+We say that a dened literal
+
+P (d)
+
+R(d)
+
+P (d)
+
+Q(d)
+
+P (d)
+
+Q(d)
+
+R(d)
+
+Q(d)
+(i)
+
+(ii)
+
+(iii)
+
+Figure 1: Justications for denition
+
+Example 2.7.
+
+
+
+P (d)
+
+d  D.
+
+in Example 2.2 that contain the dened domain atoms
+
+Justication (ii) justies
+
+(iii), however, is not total for
+for both
+
+in Example 2.2, with
+
+In Figure 1, we show a few possible justications (ordered (i)-(iv) from left
+
+to right) over denition
+
+Q(d) (d  D).
+
+
+
+(iv)
+
+and
+
+P (d)
+
+nor
+
+P (d)
+Q(d)
+
+and
+
+Q(d)
+
+and (iv) justies
+
+P (d)
+
+P (d) and
+Q(d);
+
+and
+
+and (i) has a positive cycle and is unfounded
+
+Q(d).
+
+The relationship between justications and the well-founded semantics has been investigated in dierent publications (Denecker & De Schreye, 1993, 1992; Marin, 2009). Below
+we recall the results on which this paper relies. The rst result states that if
+literals in
+in
+
+L
+
+L, then
+JL .
+
+any model
+
+I
+
+of
+
+
+
+in which the leaves of
+
+JL
+
+J
+
+justies all
+
+are true, satises all literals
+
+and in
+
+Proposition 2.8. If J is a justication over  that justies a set of domain literals L then
+all literals in JL are true in every model of  in which the (open) leaves of JL are true.
+243
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+For an interpretation Iopen that is two-valued for open(), the well-founded model
+wf (Iopen ) can be computed in time polynomial in the size of the domain, as shown by Chen
+and Warren (1996). In general, wf (Iopen ) is a three-valued structure. If wf (Iopen ) is twovalued, then it is the unique model of  that expands Iopen ; otherwise,  has no model that
+expands Iopen . The above proposition follows from the fact that if a justication J justies
+L and all leaves of J are true in Iopen , then all literals of L are true in wf (Iopen ).
+
+Example 2.9
+
+.
+
+if
+
+R(d)
+
+is true in
+
+in which
+
+R(d)
+
+Justication (ii) justies L = {Q(d)} and
+Iopen interpreting the open predicates of ,
+wf (Iopen ). In particular, in any model of 
+
+(Continued from Example 2.7)
+
+has a unique open leaf
+is
+
+R(d).
+
+For any structure
+
+Iopen , then Q(d) is
+true, Q(d) is true.
+
+true in
+
+Proposition 2.10. If I is a model of , then a justication J over  exists that consists
+of literals true in I , is dened for all dened domain literals true in I and justies each of
+them.
+
+Corollary 2.11. In case
+
+ is total, if a justication J over  justies a set of domain
+literals L, then every two-valued open()-structure consistent with JL can be extended in a
+unique way to a model of  that satises all literals of L.
+{PT , }
+justies PT .
+
+Hence, for a canonical theory
+justication
+
+J
+
+exists that
+
+(recall,
+
+
+
+is total), the theory is satisable i a
+
+2.2 Generating Models
+Model generation
+a model of
+
+T.
+
+is the inference task that takes as input a theory
+
+T
+
+and returns as output
+
+Model Expansion (MX) was dened by Mitchell et al. (2006) as the inference
+
+task that takes as input a theory
+subvocabulary of
+
+,
+
+T
+
+over vocabulary
+
+and returns an expansion
+
+M
+
+of
+
+
+I
+
+I
+
+and a two-valued structure
+that satises
+
+T.
+
+over a
+
+Here, it will be the
+
+more general inference problem as dened by Wittocx, Marin, and Denecker (2008) that
+takes as input a (potentially partial) structure
+that satises
+
+I
+
+over
+
+,
+
+and returns an expansion
+
+M
+
+of
+
+I
+
+T.
+
+As already mentioned, the state-of-the-art approach to model expansion in
+is (similar to ASP) grounding
+
+T
+
+in the context of
+
+I
+
+FO(ID )
+
+and afterwards applying search to
+
+the resulting ground theory. The latter can, e.g., be accomplished by the SAT(ID) search
+algorithm (Marin et al., 2008).
+Below, we present the grounding algorithm that is the basis of the lazy MX algorithm.
+We assume familiarity with the basic Conict-Driven Clause-Learning (CDCL) algorithm of
+SAT solvers (Marques Silva, Lynce, & Malik, 2009).
+
+2.2.1 Grounding
+For an overview of intelligent grounding techniques in
+
+FO(ID ),
+
+we refer the reader to the
+
+work of Wittocx, Denecker, and Bruynooghe (2013) and of Wittocx et al. (2010). Below we
+present the basic principle.
+
+T over vocabulary , a partial structure I with
+, and returns a ground theory T 0 that is strongly
+
+A grounder takes as input a theory
+domain
+
+D,
+
+interpreting at least
+
+>
+
+and
+
+244
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+-equivalent
+
+with
+
+we assume that
+
+T
+
+T
+
+in
+
+I.
+
+Theory
+
+T0
+
+is then called a
+
+is a canonical theory of the form
+
+grounding
+
+of
+
+T
+
+given
+
+I.
+
+Recall that
+
+{PT , }.
+
+One way to compute the grounding is using a top-down process on the theory, iteratively
+applying grounding steps to direct subformulas of the rule or formula at hand. The grounding
+Let [x] be a
+T and let D be the domains of x. A Tseitin transformation replaces  by the
+1
+atom T (x), with T a new |x|-ary predicate symbol called a Tseitin symbol, and extends
+ with the rule x  D : T (x)  . The new theory is strongly -equivalent to the
+
+algorithm may replace subformulas by new predicate symbols as follows.
+formula in
+
+original one (Vennekens et al., 2007).
+The procedure one_step_ground, outlined in Figure 1, performs one step in the grounding process. Called with a formula or rule
+
+
+
+in canonical form, the algorithm replaces all
+
+G
+(rules or formulas) and a possibly non-ground part R (rules). If  is a formula, then G
+consists of ground formulas. Replacing  by the returned ground formulas and extending 
+with the returned rules produces a theory that is strongly voc(T )-equivalent to the original.
+If  is a rule from , G consists of ground rules, and replacing  by both sets of returned
+rules results again in a theory that is strongly voc(T )-equivalent to the original.
+direct subformulas with Tseitin symbols and returns a pair consisting of a ground part
+
+Algorithm 1: The one_step_ground algorithm.
+1 Function one_step_ground (formula or rule )
+2
+switch  do 
+3
+case []P d return h{}, i;
+4
+case P d  
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+
+hG, i
+
+:= one_step_ground( );
+
+return h{P d  gG g}, i;
+case 1  . . . W
+ n
+return h{ i[1,n] Ti }, {Ti  i | i  [1, n]}i;
+case 1  . . .  n
+return h{Ti | i  [1, n]}, {Ti  i | i  [1, n]}i;
+case x  D : P (x)  
+return h, {P (x)[x/d]  [x/d] | d  D}i;
+case x  D :W[x]
+return h{ dD T[x/d] }, {T[x/d]  [x/d] | d  D}i;
+case x  D : [x]
+return h{T[x/d] | d  D}, {T[x/d]  [x/d] | d  D}i;
+
+
+V
+
+Grounding a theory then boils down to applying one_step_ground on the sentence
+(which copies
+
+PT
+
+PT
+
+to the ground part) and on each rule of the theory and repeatedly applying
+
+one_step_ground on the returned rules
+
+R (all returned sentences and rules in G are ground).
+
+We use ground to refer to the algorithm for this overall process.
+1. Tseitin (1968) introduced such symbols as part of his normal form transformation.
+
+245
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+Various improvements exist, such as returning
+
+
+
+returning
+
+>/
+
+for atoms interpreted in
+
+I
+
+and
+
+from conjunctions whenever a false conjunct is encountered (analogously for
+
+disjunctions and quantications).
+Also, algorithm one_step_ground introduces a large number of Tseitin symbols. Stateof-the-art grounding algorithms use a number of optimizations to reduce the number of such
+symbols. As these optimizations are not directly applicable to the techniques presented in
+this paper, we start from the naive one_step_ground algorithm. In Section 5, we present
+an optimized version of one_step_ground that introduces fewer Tseitin symbols and hence
+results in smaller groundings.
+
+3. Lazy Grounding and Lazy Model Expansion
+lazy grounding to refer to the process of partially grounding a theory and
+lazy model expansion (lazy MX) for the process that interleaves lazy grounding
+
+We use the term
+the term
+
+with model expansion over the grounded part. In Section 3.1, we formalize a framework for
+lazy model expansion of
+
+FO(ID )
+
+theories; in Section 3.2, we formalize the instance of this
+
+framework that is the basis of our current implementation; in Section 3.3, we illustrate its
+operation.
+
+3.1 Lazy Model Expansion for FO(ID) Theories
+Given a canonical theory
+
+T = {PT , }
+
+and an input structure
+
+Iin ,
+
+models expanding
+
+Iin
+
+are searched for by interleaving lazy grounding with search on the already grounded part.
+We rst focus on the lazy grounding.
+Apart from the initial step that moves
+
+PT
+
+to the grounded part, the input of each step
+
+consists of a set of rules still to be grounded, an already grounded theory and a three-valued
+structure that is an expansion of the initial input structure.
+Each subsequent grounding step can replace non-ground rules by ground rules and might
+introduce new rules. Hence, the state of the grounding includes a set
+and a set
+
+d
+
+(the
+
+delayed denition )
+
+g
+
+of ground rules
+
+of (possibly) non-ground rules. The denitions have
+
+g  d (in what follows abbreviated as gd ) is voc()-equivalent with
+the original denition  and hence, gd is total. The grounding procedure will guarantee
+that, at all times, g and d are total.
+Given a partial structure Iin and the rule sets g and d , the key idea behind lazy
+model expansion is (i) to use a search algorithm to search for a model I of g that is an
+expansion of Iin in which PT is true; (ii) to maintain a justication J such that the literals
+true in I and dened in d are justied over gd and that J is consistent with I ; (iii) to
+interleave steps (i) and (ii) and to move parts of d to g when some literal dened in d
+the property that
+
+that needs to be justied cannot be justied.
+
+hg , d , J, Ii
+d yet to be grounded, a justication J , and
+d is , g = , and J is the empty graph.
+
+Thus, to control lazy model expansion, it suces to maintain a state
+consisting of the grounded rules
+a three-valued structure
+
+I.
+
+g ,
+
+Initially,
+
+the rules
+
+I
+
+is
+
+Iin ,
+
+Lazy model expansion searches over the space of
+
+Denition 3.1 (Acceptable state).
+tence
+
+acceptable
+
+states.
+
+A tuple hg , d , J, Ii of a theory with an atomic senPT , a total denition , and an input structure Iin is an acceptable state if (i) gd , g
+
+246
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+and
+
+d
+
+gd is strongly voc()-equivalent with , (ii) no domain
+d , (iii) J is a justication over gd , (iv) I is an expansion
+L of literals true in I and dened in d is justied by J , and (vi) JL ,
+the literals in L, is consistent with I .
+
+are total denitions and
+
+atom is dened in both
+of
+
+v
+
+Iin ,
+
+( ) the set
+
+the justication of
+
+Example 3.2.
+
+g
+
+and
+
+Consider the theory
+
+{PT , },
+
+with
+
+
+
+the denition
+
+
+
+PT  T1  T2  T3 .
+
+
+
+ T  x  D : Q(x).
+1
+
+T2  x  D : R(x).
+
+
+
+
+T3  x  D : Q(x).
+Let
+
+I
+
+be the structure
+
+{PT , T1 }
+
+(hence,
+
+T2
+
+and
+
+T3
+
+
+
+
+
+
+
+
+
+
+
+
+
+are unknown), and
+
+g
+
+and
+
+d
+
+the
+
+denitions consisting of the rst rule and the remaining rules, respectively. Furthermore, let
+
+J be {T1  {Q(d) | d  D}}. The tuple hg , d , J, Ii is then an acceptable
+T1 is the only literal in I that is dened in d and it is justied by J .
+
+state. Indeed,
+
+As already said, the lazy model expansion algorithm starts from the initial state
+
+, d = , J = , I = Iin ,
+
+which is acceptable if dened literals are unknown in
+
+each state, it either renes
+
+I
+
+by propagation or choice, or it backjumps.
+
+g =
+
+Iin .
+
+In
+
+If the resulting
+
+state is unacceptable, a repair operation restores acceptability; these steps are described in
+Section 3.2.
+in
+
+gd .
+
+The algorithm tries to compute an acceptable state in which
+
+T
+
+By Corollary 2.11, this would entail that a model of
+
+PT
+
+is justied
+
+exists; it can be computed
+
+eciently through well-founded model computation. In intermediate states, the justication
+may be non-total for
+
+PT ,
+
+iii),
+
+Note that, in (
+is justied over
+
+d .
+
+contain unfounded literals, or be inconsistent.
+
+the justication must be over
+
+gd .
+
+Indeed, assume some literal
+
+Its justication graph can have a leaf that is dened in
+
+g
+
+l
+
+and that
+
+depends positively or negatively on l. Then every attempt to extend this justication graph
+
+l over gd might fail, e.g., because of a forbidden
+cycle. Consider, e.g., the denitions g = {P  Q} and d = {Q  P }. In that case, it
+would not be correct to take P as justication for Q being true, even though it is a valid
+justication within d . Indeed, no model exists that justies Q in the full denition gd .
+to a total justication graph that justies
+
+Proposition 3.3. Let hg , d , J, Ii be an acceptable state.
+
+gd has a well-founded model
+that expands the literals that are true in I and dened in the (delayed) denition d .
+
+Proof.
+
+L
+
+Let
+
+be the set of literals true in
+
+justies the literals of
+expands
+
+L.
+
+I
+
+and dened in
+
+to the open literals of
+
+because
+
+As the state is acceptable,
+
+J
+
+Hence, by Corollary 2.11, there exists a well-founded model that
+
+L.
+
+Example 3.4 (Continued from Example 3.2).
+>
+
+d .
+
+I
+
+is a model of
+
+J
+
+(i.e., to
+
+g , PT
+
+be interpreted randomly, as no
+
+The well-founded evaluation, after assigning
+
+{Q(d) | d  D}),
+
+derives that
+
+T1
+
+is true.
+
+Moreover,
+
+is also true in such a well-founded model. Note that
+
+R-atoms
+
+occur in
+
+I
+
+or
+
+J.
+
+The following theorem states when the obtained expansion is also a model of
+
+247
+
+T.
+
+R
+
+can
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+Theorem 3.5. Let hg , d , J, Ii be an acceptable state of a theory T = (PT , ) with input
+structure Iin such that PT is true in I and I|voc(g ) is a model of g . Then there exists a
+model M of T that expands I|voc(g ) .
+Proof. I|voc(g )
+justication
+
+Jg
+
+is a model of
+over
+
+g
+
+only domain literals true in
+combine them in one
+
+It follows from Proposition 2.10 that there exists a
+
+I|voc(g ) .
+
+g
+
+and that consists of
+
+We now have two justications:
+
+as follows: for each dened literal
+
+l
+
+of
+
+gd ,
+
+if
+
+J
+
+J
+
+and
+
+Jg .
+
+We
+
+l, we
+Jg for
+
+is dened in
+
+Jc (l) = Jg (l). As Jc takes edges from either J or
+each dened literal, it is a justication for gd .
+We verify that Jc justies PT . First, it is total in PT . Indeed, any path from PT either
+consists of literals dened in g , and then it is a branch of the total Jg over g , or it passes
+0
+to a literal l dened in d , which is justied by J according to condition (v) and hence
+(Jc )l0 = Jl0 is total. As such, from PT we cannot reach a dened literal of gd in which
+Jc is undened. Second, Jc does not contain unfounded literals starting from PT . This is
+because any path from PT is either a path in Jg (so well-founded as it justies g ) or it has
+a tail in J (well-founded by property (v)). Finally, the set of literals reachable from PT in
+Jc is consistent. Also this we can see if we look at paths in Jc from PT : at rst we follow
+Jg which consists of true literals in I , then we may get into a path of J which contains
+literals that are consistent with I . In any case, it is impossible to reach both a literal and
+set
+
+Jc (l) = J(l);
+
+Jc
+
+g .
+
+that justies every true dened literal of
+
+otherwise, we set
+
+its negation.
+It follows from Proposition 2.8 that there exists a model of
+and in which
+
+PT
+
+is true. Since
+
+gd
+
+that expands
+
+I|voc(g )
+
+gd is strongly equivalent with , the proposition follows.
+
+M can be achieved by well-founded evalstarting from any two-valued open(gd )-
+
+Recall that eectively computing such a model
+uation of
+
+gd ,
+
+with polynomial data complexity,
+
+structure expanding
+
+I|voc(g )
+
+(Chen & Warren, 1996).
+
+In the above theorem, it is required that
+to compute a two-valued model of
+justication that justies
+
+PT .
+
+g .
+
+I
+
+is a model of
+
+g .
+
+Actually, we do not need
+
+It suces to search for a partial structure and a
+
+So, we can relax this requirement at the expense of also
+
+maintaining justications for literals true in
+
+I
+
+and dened in
+
+g .
+
+Corollary 3.6. Let hg , d , J, Ii be an acceptable state of a theory T
+
+= {PT , } with input
+
+structure Iin such that PT is true in I and J justies PT over gd . Then there exists a
+model M of T that expands I|S with S the set of dened literals in JPT .
+g expanding Iin in which PT is true implies the lack of models
+g has no model expanding Iin , then it has an unsatisable
+core, i.e., a set of rules from g such that no model exists that expands Iin . Hence, it is also
+an unsatisable core for T = (PT , ). To nd an unsatisable core, one can, for example,
+Failure to nd a model of
+
+of
+
+T
+
+expanding
+
+Iin .
+
+Indeed, if
+
+use techniques described by Torlak, Chang, and Jackson (2008).
+
+3.2 Practical Justication Management for FO(ID) Theories
+Roughly speaking, our lazy model expansion framework consists of two components.
+the one hand, a standard model expansion algorithm that operates on
+
+{PT , g } and, on
+gd and lazily
+
+the other hand, a justication manager that maintains a justication over
+
+248
+
+On
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+grounds
+
+d .
+
+Lazy model expansion performs search over the space of acceptable states and
+
+aims at reaching a state where Theorem 3.5 (or Corollary 3.6) is applicable. To avoid slowing
+down the search during model expansion, the work done by the justication manager and
+the lazy grounding must be limited. To achieve this, we have designed a system in which the
+justication manager has no access to the grounded denition
+
+g
+
+and need not restore its
+
+state when the search algorithm backtracks over the current structure
+manager only has access to
+
+I
+
+g
+
+particular, a literal dened in
+
+I.
+
+The justication
+
+and maintains justications that are restricted to
+
+d .
+
+In
+
+is not allowed in a direct justication. Our justication
+
+manager maintains the following properties:
+
+
+
+Literals in direct justications are either open in
+
+
+
+All direct justications in
+structure
+
+
+
+J
+
+gd
+
+or dened in
+
+d .
+
+are kept consistent with each other and with the current
+
+I.
+
+The justication graph dened by
+
+J
+
+has no unfounded literals and is total.
+
+To distinguish acceptable states that meet these additional requirements from acceptable
+states as dened in Denition 3.1, we call them
+
+Denition 3.7
+
+(Default acceptable state)
+
+.
+
+default acceptable states ; we dene them as:
+
+A state
+
+i
+
+hg , d , J, Ii
+
+is a default acceptable
+
+state if it is an acceptable state and, in addition, ( ) literals in direct justications are either
+open in
+
+gd
+
+or dened in
+
+d ,
+
+ii
+
+and ( )
+
+J
+
+justies the set of all literals for which
+
+J
+
+is dened.
+
+It follows that default acceptable states satisfy two extra conditions: they do not justify
+literals dened in
+consistent.
+
+d
+
+in terms of literals dened in
+
+g ,
+
+and dened in
+
+d ,
+
+are consistent.
+
+J
+
+is
+
+that are true in
+
+I
+
+and the set of all literals in
+
+For an acceptable state, it suces that the literals in
+
+J
+
+Since default acceptable states are acceptable states,
+
+Theorem 3.5 and Corollary 3.6 also hold for default acceptable states.
+During standard model expansion, the main state-changing operations are to make
+
+I
+
+more precise (by making literals true, either through choice or propagation) and to make
+
+I
+
+less precise (by backjumping).
+
+and model expansion modies
+
+I
+
+When
+into
+
+I ',
+
+S = hg , d , J, Ii is a default acceptable state
+0
+the new state hg , d , J, I i is not necessarily a
+
+default acceptable state. The following propositions identify situations where acceptability
+is preserved.
+
+Proposition 3.8. Let hg , d , J, Ii be a default acceptable state, L a set of literals unknown
+in I and I 0 the consistent structure I  L. If (i) literals of L either are not dened in d
+or have a direct justication in J and (ii) no direct justication in J contains the negation
+of a literal in L, then hg , d , J, I 0 i is a default acceptable state.
+Proof.
+
+i
+
+As the literals true in
+
+( ) that all literals true in
+in
+
+J
+
+are consistent with
+
+all literals true in
+
+I'
+
+I'
+
+I,
+
+I
+
+d have a direct justication, it follows from
+d have a direct justication. As justications
+they are also consistent with I '. Hence, J justies
+
+and dened in
+
+and dened in
+
+ii
+
+then, by ( ),
+
+and dened in
+
+d .
+
+Proposition 3.9. Let hg , d , J, Ii be a default acceptable state. Then hg , d , J, I 0 i with
+I 0 <p I is a default acceptable state.
+
+249
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+Proof.
+of
+
+I, J
+
+J
+
+The justication
+
+justies all literals dened in
+
+justies all literals dened in
+
+
+
+and true in
+
+In a default acceptable state, literals dened in
+of literals dened in
+hidden loops over
+both
+
+g
+
+and
+
+d ,
+
+d .
+
+gd .
+
+
+
+and true in
+
+I.
+
+As
+
+I'
+
+is a subset
+
+I '.
+
+g
+
+are not allowed in direct justications
+
+This restriction is quite limiting (see next section) but is to avoid
+
+Such loops can only be detected by maintaining a justication over
+
+which our current implementation does not do. Several methods exist to
+
+l dened in g can be allowed in direct
+d , provided it can be established that l's justication cannot loop over gd .
+One case is when the body of the rule of l has no dened literals. A step further is to analyze
+the dependency graph: a literal dened in g can be allowed in the direct justication of
+a literal dened in d provided both literals do not belong to the same strongly connected
+
+extend the class of default acceptable states. Literals
+justications of
+
+component of the dependency graph. In that case, they cannot be part of the same cycle.
+
+3.3 An Example
+In the rest of the section, we illustrate the behavior of lazy model expansion on an articial
+example, constructed in such a way that all main features are illustrated. In the next section,
+the processes involved are described in more detail.
+We focus on the operation of the justication manager and its interaction with the
+solving process. The manager is activated in an unacceptable state, either when the solver
+falsies a literal that occurs in a direct justication of
+
+J
+
+l dened in
+for l to extend
+
+or when a true literal
+
+d is not justied by J . One option for repair is to search for a justication
+J . In general this problem is as hard as the model expansion problem itself,
+Corollary 2.11. Our manager only searches
+extend
+
+J,
+
+and if it does not nd one, it grounds l's denition and moves it to
+
+Our example uses a theory
+
+T
+
+as shown by
+
+locally for a direct justication that justies l to
+g .
+
+which states that a symmetric graph (edge/2) exists where
+
+R/1)
+D = {d1 , . . . , dn } and
+the equality predicate as the identity relation on D (below omitted in I ). Predicates edge, R
+and root are not interpreted; R and root are dened. In particular, root is dened as the
+singleton {d1 }, specifying the root as d1 .
+
+at least one node other than the root node (predicate
+from the root node. The input structure
+
+P
+T
+
+
+
+
+
+
+
+
+
+
+
+PT
+C1
+C2
+x  D : root(x)
+x  D : R(x)
+
+I
+
+root/1)
+
+is reachable (predicate
+
+interprets the domain as
+
+ C1  C2
+ x  D : root(x)  R(x)
+ (x y)  D2 : edge(x, y)  edge(y, x)
+ x = d1
+ root(x)  y  D : edge(x, y)  R(y)
+
+(1)
+(2)
+(3)
+(4)
+(5)
+
+
+
+
+
+
+
+
+
+
+
+
+
+The lazy MX algorithm proceeds as follows:
+1. The initial default acceptable state is
+and
+
+hg , d , J, Ii
+
+in which
+
+g , I
+
+and
+
+J
+
+are empty,
+
+d = .
+
+2. Propagation over
+
+{PT , g }
+
+sets
+
+I
+
+to
+
+{PT }.
+
+This expands the structure
+
+the conditions of Proposition 3.8 are no longer satised.
+
+250
+
+I,
+
+but now
+
+The resulting state is not
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+acceptable since
+
+J.
+
+PT
+
+is true and dened in
+
+d
+
+while it has no direct justication in
+
+J with a direct justication for PT .
+The atom PT has a unique direct justication {C1 , C2 } but extending J with it does
+not restore (default) acceptability since C1 , C2 have no direct justication in J and
+PT remains unjustied. Therefore, the alternative is taken and rule (1) is moved to
+g . Now, a default acceptable state is obtained.
+One option to repair acceptability is to extend
+
+I to {PT , C1 , C2 }. Now C1 and C2 have to be justied. Consider
+C2 and rule (3). As edge is open, our manager can build the direct justication
+{edge(d, d0 ) | (d, d0 )  D2 }, that sets all negative edge literals true, and extends J
+with it (setting all positive edge literals true would be equally good). This justies C2
+and avoids the grounding of the rule dening C2 .
+
+3. Unit propagation sets
+rst
+
+4. Literal
+
+C1
+
+cannot be justied (with the local approach) since each of its direct jus-
+
+tications contains unjustied dened literals.
+
+However, as rule (2) is existentially
+
+quantied, one can avoid grounding the whole rule by performing a Tseitin transformation to isolate one instance and then only ground that instance. For the purpose
+
+d1 :
+
+ (root(d1 )  R(d1 ))  T
+(2a)
+ x  D \ {d1 } : root(x)  R(x) (2b)
+
+of illustration, we make the (bad) choice of instantiating
+
+
+
+C1
+T
+
+Rule (2a) is moved to
+
+g
+
+x
+
+with
+
+and a default acceptable state is reached.
+
+5. We are in an acceptable state in which no further propagation is possible, so a choice
+has to be made. As
+
+C1
+
+is true, the body of rule (2a) has to become true. Preferably
+
+not selecting a Tseitin (this would trigger more grounding), the rst disjunct is selected
+by model expansion and propagation extends the structure with
+The literal
+
+root(d1 )
+
+denition of
+dening
+
+root
+
+root
+
+d by
+{(d1 = d1 )} is
+
+is dened in
+
+unique direct justication
+
+root(d1 ) and R(d1 ).
+
+rule (4) but cannot be justied since its
+false. The manager partially grounds the
+
+and splits it up in a ground rule (4a) and a non-ground rule (4b)
+
+for the other domain elements:
+
+
+
+root(d1 )  d1 = d1 (4a)
+x  D \ {d1 } : root(x)  x = d1 (4b)
+
+
+
+g . Note that root(d1 ) is justied by {d1 = d1 } in gd , hence
+root(d1 ) in direct justications in d . Whenever grounding has been
+
+Rule (4a) is moved to
+it is safe to use
+
+done, the justication manager is interrupted by propagation, which can infer the truth
+of additional literals, or detect an inconsistency (which will result in backjumping).
+In both cases, the manager has to resume the revision of the justication afterwards,
+until an acceptable state is reached.
+unacceptable (due to the unjustied
+
+Here, even though the resulting state is still
+
+R(d1 )),
+
+g
+root(d1 ) and a conict.
+
+the creation of the new rule (4a) in
+
+interrupts the manager. Propagation using the new rule derives
+
+I = {PT , C1 , C2 }, the subsequent propagation sets the structure
+{PT , C1 , C2 , root(d1 ), T }. Still not in a default acceptable state (T is not justied),
+
+After backtracking to
+
+I
+
+to
+
+rule (2b) is further transformed to split o another instance.
+
+
+
+T  (root(d2 )  R(d2 ))  T2
+(2ba)
+T2  x  D \ {d1 , d2 } : root(x)  R(x) (2bb)
+
+251
+
+
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+g ,
+
+Rule (2ba) is moved to
+
+while rule (2bb) remains in
+
+d .
+
+This state is default
+
+acceptable.
+
+T2 , choosing the rst disjunct in rule (2ba)
+R(d2 ). The literal root(d2 ) is dened in d , but is
+justied by the direct justication {(d2 = d1 )}. The literal R(d2 ) cannot be justied
+by a direct justication (as all edge literals are false in the current justication graph)
+and rule (5) is transformed to split o the instance for d2 . Actually, this instance in
+
+6. Again, the search avoids the new Tseitin
+which propagates
+
+root(d2 )
+
+and
+
+turn has a disjunctive body with a complex subformula, so to avoid grounding the
+subformula, we break it up in two parts and introduce another Tseitin.
+
+
+
+
+
+
+
+R(d2 )  root(d2 )  T3
+(5aa) 
+
+
+T3  y  D : edge(d2 , y)  R(y)
+(5ab)
+ x  D \ {d2 } : R(x)  root(x)
+
+
+
+
+
+ y  D : edge(x, y)  R(y)
+(5b)
+Rule (5aa) is moved to
+
+g ,
+
+the others remain in
+
+d .
+
+I is {PT , C1 , C2 , root(d1 ), T, root(d2 ), R(d2 )}, hence propagation on rule (5aa) in g extends it with T3 . There is no direct justication justifying
+T3 and, hence, rule (5ab) is partially grounded by splitting o the d1 case:
+
+
+T3  (edge(d2 , d1 )  R(d1 ))  T4
+(5aba)
+T4  y  D \ {d1 } : edge(d2 , y)  R(y) (5abb)
+
+7. The current structure
+
+Rule (5aba) is moved to
+
+g
+
+while rule (5abb) remains in
+
+8. The search selects the rst disjunct of
+
+R(d1 ).
+it.
+
+The literal
+
+Extending
+
+J
+
+R(d1 )
+
+is dened in
+
+d .
+
+T3 's rule body and propagates edge(d2 , d1 ) and
+d , but {root(d1 )} is a direct justication for
+
+with this direct justication yields an acceptable but not default
+
+root(d1 ) is dened in g . However, root(d1 ) is justied in gd ,
+J with this direct justication as discussed earlier. Now the
+justication manager faces a new problem: the true literal edge(d2 , d1 ) is in conict
+0
+0
+2
+with the direct justication {edge(d, d ) | (d, d )  D } of C2 (rule (3)). To handle
+this conict, it splits o the aected instance (x = d2 , y = d1 ) from this rule:
+
+
+C2  (edge(d2 , d1 )  edge(d1 , d2 ))  T5
+(3a)
+T5  (x y)  D2 \ {(d2 , d1 )} : edge(x, y)  edge(y, x) (3b)
+
+acceptable state, since
+
+making it safe to extend
+
+g while rule (3b) remains in d . The direct justication of
+{edge(d, d0 ) | (d, d0 )  D2 \ {(d2 , d1 )}}, the unaected part of the direct
+justication of C2 . This restores acceptability.
+
+Rule (3a) is moved to
+
+T5
+
+is set to
+
+9. Propagation on rule (3a) extends
+
+I
+
+with
+
+edge(d1 , d2 )
+
+and
+
+T5 . The literal edge(d1 , d2 ),
+T5 (rule (3b)). To resolve
+
+which is true, is in conict with the direct justication for
+
+it, the justication manager partially grounds rule (3b) and splits o the instance
+
+{x = d1 , y = d2 } as follows.
+
+
+(3ba) 
+ T5  (edge(d1 , d2 )  edge(d2 , d1 ))  T6
+T6  (x y)  D2 \ {(d2 , d1 ), (d1 , d2 )} :
+
+
+edge(x, y)  edge(y, x) (3bb)
+
+252
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+g while rule (3bb) remains in d ; T6 inherits the direct
+edge(d1 , d2 ) removed. Propagation on rule (3ba) extends I
+state is acceptable, with T6 dened in d but justied.
+
+Rule (3ba) is moved to
+justication of
+with
+
+T6 .
+
+By now,
+
+T5
+
+with
+
+The resulting
+
+g
+
+consists of the rules (1), (2a), (4a), (2ba), (5aa), (5aba), (3a), and (3ba), and
+
+d consists of the rules (4b), (2bb), (5b), (5abb), and (3bb). The cur{PT , C1 , C2 , root(d1 ), root(d2 ), edge(d2 , d1 ), edge(d1 , d2 ), R(d1 ), R(d2 ),
+T, T3 , T5 , T6 }, a model of PT  g .
+Of these literals, root(d2 ), R(d1 ) and T6 are dened in d . Literal root(d2 ), dened
+by rule (4b) has {(d2 = d1 )} as direct justication. Literal R(d1 ), dened by rule (5b), has
+{root(d1)} as direct justication. Literal T6 , dened by rule (3bb) has as direct justication
+the set of all negative edge literals over D except edge(d1 , d2 ) and edge(d2 , d1 ). To obtain
+a full model of the theory, I is extended with the literals of the above direct justications.
+
+the residual denition
+rent structure
+
+I
+
+is
+
+In this case, this assigns all open literals and the model can be completed by the wellfounded model computation over
+
+gd .
+
+Actually, this can be done without grounding the
+
+denition (Jansen, Jorissen, & Janssens, 2013).
+
+4. Justication Management
+In Section 3.2, we have instantiated our general framework, developed in Section 3.1, for a
+justication manager that only has access to
+
+d .
+
+In the example of Section 3.3, the justi-
+
+cation was constructed on demand, i.e., each time some literal needed a (dierent) direct
+justication, the body of its dening rule was analyzed and a justication was extracted. If
+that failed, part of the rule was grounded. This was called the
+imagine a
+
+global approach,
+
+where more rules of
+
+d
+
+local approach.
+
+One can also
+
+are considered at once in an attempt to
+
+select direct justications that minimize the grounding of the rules as a whole. Obviously,
+a global approach will be more time consuming, so should not be applied every time an
+adjustment of the justication is required. In this section, we describe both approaches.
+Before describing the algorithms, we introduce some notations and assume some normalizations have been done. The function nnf reduces a formula to its negation normal form.
+
+S a set and s a single element, S + s and S  s are used as shorthands for S  {s} and
+S\{s}. With J a justication, we denote by J[l  d] the graph identical to J except that l
+is now justied by d. We assume quantiers range over a single variable and variable names
+With
+
+are not reused in a formula. Furthermore, we assume basic reductions have been applied to
+formulas, e.g.,
+
+>
+
+reduces to
+
+, x   : 
+
+reduces to
+
+t,
+
+...
+
+4.1 The Local Approach
+Algorithm 2 shows the top level of the lazy_mx model expansion algorithm, taking as input
+theory
+
+{PT , }
+
+and
+
+Iin . Denitions d and g are initialized with  and
+I is initialized as Iin . The set of ground sentences Tg
+the initial justication J is empty. An auxiliary (FIFO)
+
+is initialized as empty.
+
+The latter keeps track of literals for which the direct
+
+and input structure
+
+the empty denition, respectively, and
+is initialized with the fact
+queue
+
+qch
+
+PT
+
+justication needs to be checked.
+The main loop performs model expansion over
+
+Tg  g ,
+
+interleaved with work by the
+
+justication manager towards establishing a default acceptable state. The model expansion
+
+253
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+part consists of propagation (the call to propagate), the test on whether the current state
+is inconsistent (with learning and backjumping), the test on whether a model of
+
+Tg  g
+
+has been found (returning the model and the justication) and of the choice step that
+
+Tg  g
+
+selects a literal unknown in
+
+and assigns it a value.
+
+Propagation returns literals
+
+that are entailed by a ground theory over a (partial) structure, for example by applying
+unit propagation and unfounded/wellfoundedness propagation (Marin et al., 2008). The
+test for a model is only performed in a default acceptable state (i.e., when the queue
+
+qch
+
+is empty). If the test succeeds, this ensures that the well-founded model computation can
+expand the current structure
+
+I
+
+extended with the direct justications of all literals into
+
+a model of the whole theory. Also the choice step only takes place in a default acceptable
+state; this ensures that the search space is limited to the state space of default acceptable
+states.
+
+The justication manager is activated when a propagation or choice step assigns
+
+a literal
+valid.
+
+If
+
+l.
+l
+
+By calling check_literal, it is checked whether the current justication remains
+is dened in
+
+to the queue
+
+qch
+
+d
+
+and has no justication, it needs a justication and is added
+
+for further processing by the justication manager.
+
+If
+
+l
+
+0
+justication of another literal l , the justication becomes inconsistent with
+another justication so it is also added to
+
+qch .
+
+occurs in the
+
+I
+
+and
+
+l0
+
+needs
+
+The further processing is done by selecting
+
+elements from the queue and calling the lazy_ground function.
+
+The latter function rst
+
+attempts to nd a (dierent) consistent direct justication for l; if that fails, it splits o the
+rule instance dening
+
+l
+
+from
+
+d
+
+and partially grounds it, hence
+
+g
+
+is extended. The new
+
+clauses may trigger propagation; therefore the processing of queued literals is interleaved
+with propagation and, possibly, with backtracking . Note that backtracking might restore
+the consistency with
+
+I
+
+of the direct justication
+
+J(l)
+
+of a literal
+
+l
+
+on
+
+qch .
+
+4.1.1 Lazy Grounding of One Rule
+The function lazy_ground, Algorithm 3, checks whether the literal
+tion; if not, it simply returns. Otherwise, it checks whether
+
+l
+
+l
+
+needs a direct justica-
+
+has a valid justication, i.e.,
+
+one that satises the invariants detailed below. If so, it also returns; otherwise, it passes the
+rule body that has to be used to construct a justication (the negation of the dening rule
+when the literal is negative) to build_djust, a function that attempts to nd a valid direct
+justication. Besides the literal and the rule body, also an initial justication, derived from
+the rule body, is passed to build_djust. If the latter function is successful, the justication
+is updated and lazy_ground is done; if not, the direct justication of the literal
+
+false
+
+l
+
+is set to
+
+and split_and_ground is called to ground part of the rule dening l.
+
+Before going into more details, we rst analyze which properties we want to maintain
+in the current justication
+considered part of
+
+J
+
+J.
+
+The direct justications of literals in the
+
+qch queue
+J are:
+
+are not
+
+since they might be invalid. The global invariants of
+
+
+
+no literals are unfounded in
+
+
+
+the set of literals in
+
+J
+
+(recall, negative cycles are allowed),
+
+J
+
+is consistent.
+
+For each direct justication
+
+S = J(l) of J
+
+for some
+
+l
+
+not on the queue, invariants of the lazy
+
+grounding process are:
+
+ S
+
+contains no literals dened in
+
+g
+
+(unless such a literal is safely justied in
+
+discussed before),
+
+254
+
+gd ,
+
+as
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+
+Algorithm 2: The lazy_mx lazy model expansion algorithm.
+1 Function lazy_mx (atomic sentence PT , denition , structure Iin )
+Output: either a model of g and J or false
+
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+
+20
+21
+22
+
+Tg
+
+:= {PT };
+
+g
+
+while true do
+
+:=
+
+; d
+
+:=
+
+; J
+
+:=
+
+; I
+
+:=
+
+Iin ; qch
+
+:=
+
+L := propagate(Tg  g , I );
+I := I  L;
+foreach l  L do qch :=check_literal(l,qch );
+if I is inconsistent then
+Tg += learn_nogood(I , Tg );
+if conict at root level then return false ;
+I := I at state of backjump point;
+else if qch is not empty then
+(l, qch ) := dequeue(qch );
+lazy_ground(l);
+else if I is a model of Tg  g then
+return I , J ;
+
+else
+
+select choice literal l;
+
+I
+
+:=
+
+I + l;
+
+qch :=check_literal(l,qch );
+
+Function check_literal (literal l, literal queue qch )
+Data: global d and J Output: updated queue
+if l dened in d and J(l) = undef then qch := enqueue(l,qch ) ;
+foreach l0 such that l  J(l0 ) do qch := enqueue(l0 ,qch ) ;
+return qch ;
+
+Algorithm 3: The lazy grounding of a literal.
+1 Function lazy_ground (literal l)
+Data: global d , J and I
+2
+if l  I and l dened in d then
+3
+if J(l) exists and obeys the invariants then return;
+4
+else
+
+5
+6
+7
+8
+9
+10
+11
+
+;
+
+
+
+:= body of the rule dening l;
+
+if l is a negative literal then
+
+ := nnf ()
+dj := build_djust(l, , init_just(l));
+if dj 6= false then J := J[l  dj]; return;
+
+else
+
+J
+
+=
+
+J[l  false];
+
+split_and_ground(l);
+
+255
+
+;
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+
+
+literals in
+the queue
+
+S that
+qch .
+
+are dened in
+
+d
+
+either have a direct justication in
+
+J
+
+or belong to
+
+qch
+
+These invariants imply that a default acceptable state is reached when the
+
+queue is
+
+empty. Indeed, it follows from the invariants that the current justication is total in that
+situation and hence all literals that have a direct justication are justied (Denition 2.6).
+Due to the policy followed to queue literals, the current justication is also consistent with
+
+I
+
+while all literals true in
+
+I
+
+and dened in
+
+d
+
+have a justication, hence
+
+hg , d , J, Ii
+
+is a
+
+default acceptable state.
+
+4.1.2 Building a Direct Justification
+The purpose of build_djust, Algorithm 4, is to extend
+for literal
+
+l
+
+d .
+
+dened in
+
+I.
+formula 
+
+Here
+
+l
+
+J
+
+with a suitable direct justication
+
+is a literal for which
+
+J(l)
+
+is currently undened or is
+
+i
+
+inconsistent with
+
+It is a recursive function which takes three parameters: ( ) the literal
+
+l,
+
+to be made true by the direct justication (initially the whole body of
+
+ii
+
+( ) the
+
+the rule dening the literal; note that the initialization takes the negation of the rule when
+
+iii) a description of the direct justication derived so far, initialized
+
+the literal is negative), (
+
+through init_just(l). For this algorithm, we assume
+
+ is such that dierent quantiers range
+
+over dierent variables.
+Before going into details, we discuss how to represent direct justications.
+
+Basically,
+
+we could represent a direct justication as a set of ground literals. However, this set can
+be quite large and using a ground representation might hence defy the purpose of lazy
+
+hL, Bi with L a set of
+B a set of bindings xi  Di with xi a variable and Di
+a domain. A set of bindings B = {x1  D1 , . . . , xn  Dn } represents the set of variable
+substitutions SB = {{x1 /d1 , . . . , xn /dn } | di  Di for each i  [1, n]}. The set of ground
+literals represented by hL, Bi is then {l | l  L and   SB }. The direct justication of a
+literal P (d1 , . . . , dn ), dened by a rule x  D : P (x)  , is initialized by init_just(l) as
+h, {x1  {d1 }, . . . , xn  {dn }}i. In eect, B allows to identify the relevant rule instantiation
+
+grounding.
+
+Instead, we represent a direct justication as a pair
+
+possibly non-ground literals and
+
+by providing the appropriate variable instantiation from the domains, while the set of literals
+is empty.
+The build_djust algorithm searches for a set of literals making
+recursively calling itself on subformulas of
+larger justication for
+
+.
+
+
+
+
+
+true.
+
+It works by
+
+and composing the results afterwards into a
+
+When no such set of literals is found, for example because none
+
+exists that is consistent with all other direct justications,
+
+false
+
+is returned.
+
+The base case is when the formula is a literal. To make that literal true, all instances of
+the literal under the set of bindings
+
+B
+
+must be true, hence, the set of literals
+
+L
+
+is extended
+
+with the literal itself. The resulting direct justication has to satisfy all invariants, which is
+checked by the call to valid: it returns
+
+true for a call valid(l, dj) if dj
+l and J[l  dj] satises
+
+to be (part of ) a direct justication for
+
+satises the invariants
+the invariants on the
+
+justication.
+A universally quantied formula
+quantied variable.
+
+x  D.
+
+x  D : 
+
+has to be true for each instance of the
+
+Hence, in the recursive call, the set of bindings
+
+B
+
+is extended with
+
+For an existentially quantied formula, it suces that one instance is true. Hence,
+
+a minimal approach is to try each instance separately until one succeeds; if all fail,
+
+256
+
+false
+
+is
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+
+Algorithm 4: The build_djust algorithm.
+1 Function build_djust (literal l, formula  and justication hL, Bi)
+Input: B binds all free variables of 
+Output: either a direct justication or false
+2
+switch  do
+3
+case  is a literal
+4
+if valid(l, hL  {}, Bi) then return hL  {}, Bi;
+5
+else return false ;
+6
+case x  D0 : 
+7
+return build_djust(l, , hL, B  {x  D0 }i);
+8
+case x  D0 : 
+9
+if large(D0 ) then
+10
+return build_djust(l, , hL, B  {x  D0 }i);
+11
+foreach di  D0 do
+
+12
+13
+
+hL0 , B 0 i := build_djust(l, , hL, B  {x  {di }}i);
+if hL0 , B 0 i =
+6 false then return hL0 , B 0 i;
+
+14
+15
+16
+17
+18
+19
+
+return false ;
+case 1  . . .  n
+foreach i  [1, n] do
+
+20
+21
+22
+23
+24
+
+return hL, Bi;
+case 1  . . .  n
+foreach i  [1, n] do
+
+25
+
+hL0 , B 0 i := build_djust(l, i , hL, Bi);
+if hL0 , B 0 i = false then return false ;
+else hL, Bi := hL0 , B 0 i;
+
+hL0 , B 0 i := build_djust(l, i , hL, Bi);
+if hL0 , B 0 i =
+6 false then return hL0 , B 0 i;
+
+return false ;
+
+257
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+returned. Note however that we do not want to iterate over each domain element if
+large, which would be similar to constructing the grounding itself. Instead, if
+extend the binding with
+
+x  D.
+
+D
+
+D
+
+is
+
+is large, we
+
+Conjunction is similar to universal quantication, except
+
+that explicit iteration over each conjunct is needed. As soon as one conjunct fails, the whole
+conjunction fails. Disjunction is similar to existential quantication with a small domain.
+Note that build_djust is non-deterministic due to choices for a domain element to justify
+an existentially quantied formula, or for a disjunct to justify a disjunction.
+
+Example 4.1.
+
+Consider the following rule over a large domain
+
+D.
+
+H  x  D : P (x)  (y  D : Q(x, y)  R(x, y))
+Assume that
+
+J is empty and we
+h{P (x)}, {x  D}i
+
+have no loops to keep track of.
+
+Applying build_djust
+
+P (x) in the body is chosen. This
+corresponds to the direct justication {P (x) | x  D}. Alternatively, if the second disjunct is chosen, it returns h{Q(x, y), R(x, y)}, {x  D, y  D}i, which represents the direct
+justication {Q(x, y) | x  D, y  D}  {R(x, y) | x  D, y  D}.
+to
+
+H
+
+returns
+
+if the rst disjunct
+
+4.1.3 Partially Grounding a Rule
+The last bit of the lazy model expansion algorithm handles the case where no justication
+can be found and the denition of a literal
+
+l
+
+is to be grounded.
+
+A straightforward way
+
+would be to call one_step_ground on the rule dening l, and store the result in
+
+g
+
+and
+
+d .
+
+However, in many cases such an operation results in too much grounding.
+
+Example 4.2.
+
+of the form x  D : P (x)   in a situation where no
+P (d). Applying one_step_ground to r1 would instantiate
+x with all elements in D, resulting in |D| rules, while in fact it suces to split r1 in two rules,
+one for the instance x = d and one for the remainder. Another example applies to a rule r2
+of the form H  x  D : Q(x)  R(x) and a direct justication J(H) = {Q(x) | x  D}.
+When Q(d) becomes false, the justication manager may need to ground this rule. Applying
+one_step_ground to it would instantiate the universally quantied x with all elements in D .
+Instead, it is better to split o the instance for x = d and to introduce a Tseitin T for the
+remainder, producing H  (Q(d)  R(d))  T for g and T  x  D  d : Q(x)  R(x)
+for d . The direct justication for T can be obtained incrementally by removing Q(d) from
+that of H , as discussed in Section 4.1.5.
+Consider a rule
+
+r1
+
+justication can be found for atom
+
+The split_and_ground algorithm (Algorithm 5) has to ground part of the rule dening
+a given literal
+dening
+
+d
+
+l
+
+l,
+
+say
+
+
+P d .
+
+The rst step is to split o the rule instance for which the rule
+
+has to be grounded (the call to split).
+
+that denes
+
+
+P d .
+
+Let
+
+We then replace that rule by
+
+additionally return the rule
+
+
+P d  [x/d].
+
+x  D : P (x)   be the rule in
+x  D  d : P (x)   in d and
+
+Afterwards, we apply one_step_ground to the
+
+latter rule and add the computed rules to either
+
+g
+
+or
+
+d . 2
+
+The result of split_and_ground is that denition
+one. The limit is a ground denition
+equivalent with
+
+gd
+
+in which
+
+gd is more ground than the previous
+d is empty and g is strongly voc()-
+
+.
+
+2. Recall, the head of a new grounded rule is always dierent from the head of already grounded rules.
+
+258
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+Algorithm 5: The split_and_ground algorithm.
+1 Function split_and_ground (literal l)
+Input: l is dened in d
+Result: update to g , d , J , and qch
+2
+3
+
+r := split(l); // split updates d
+(0g , 0d ) := one_step_ground(r);
+g  = g '; d  = d ';
+
+4
+
+Even if no justication was found, we can do better than just splitting o
+
+l
+
+and applying
+
+one_step_ground, as shown in Example 4.2. First, splitting can be made signicantly more
+intelligent, which is discussed in Section 4.1.5. Second, we can improve one_step_ground to
+only ground part of expressions if possible, which we describe below.
+
+Improving one_step_ground.
+all subformulas/instantiations of
+result consists of
+
+|D|
+
+l   iterates over
+x  D : P (x), the
+
+Applying one_step_ground to a rule
+
+.
+
+For example if
+
+
+
+is the sentence
+
+new rules and as many new Tseitin symbols. Instead, depending on
+
+the value of l, it is sucient to introduce only one (or some) of these subformulas, as shown
+in Algorithm 6, which extends the switch statement of one_step_ground with two higherpriority cases.
+
+If
+
+l
+
+is true, it is sucient to ground one disjunct/existential instantiation
+
+and to delay the rest by Tseitin introduction. If
+
+l
+
+is false, we take a similar approach for
+
+conjunction/universal quantication.
+
+Algorithm 6: Additional cases for the one_step_ground algorithm.
+1 switch r do
+2
+case l  1  . . .  n and I(l) = t
+
+3
+4
+
+5
+6
+7
+8
+
+choose
+
+i  [1, n];
+
+return h{l  i  T }, {T 
+case l  x  D :  and I(l) = t
+
+W
+
+choose
+
+j{1...n}i j }i;
+
+d  D;
+
+return h{l  [x/d]  T }, {T
+analogous cases for
+
+
+
+and
+
+
+
+in
+
+ x  D  d : }i;
+combination with I(l) = f .
+
+4.1.4 Algorithmic Properties
+Correctness and termination of the presented algorithms is discussed in the following theorem.
+
+Theorem 4.3 (Correctness and termination). If lazy_mx returns an interpretation I , then
+
+expanding I with the literals in the direct justications of J , applying the well-founded evaluation over gd and restricting it to voc(T ) results in a model of T . If the algorithm returns
+false , no interpretation exists that is more precise than Iin and satises T .
+
+259
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+Algorithm lazy_mx terminates if I is over a nite domain D. Otherwise, termination is
+possible but not guaranteed.3
+Proof.
+
+If lazy_mx returns an interpretation
+
+I, I
+
+is a model of
+
+g
+
+and
+
+qch
+
+is empty. Given
+
+the properties of split_and_ground, after applying lazy_ground for a literal l, either
+valid justication or is dened in
+state and, by Theorem 3.5,
+returns
+
+false ,
+
+I
+
+g .
+
+gd
+
+qch
+
+has a
+
+is empty, we are in a default acceptable
+
+can be expanded into a model of the whole theory. If lazy_mx
+
+it has been proven that
+
+be no models of
+
+Hence if
+
+l
+
+and hence
+
+T
+
+g
+
+has no models in
+
+Iin .
+
+In that case, there can also
+
+Iin .
+
+also has no models expanding
+
+Without calls to lazy_ground, the search algorithm terminates for any nite
+tion lazy_ground itself produces an ever-increasing ground theory
+as limit. Hence, lazy_mx always terminates if
+
+D
+
+D
+
+is nite. If
+
+g
+
+g ; the func-
+
+with the full grounding
+
+is innite, the limit of
+
+g
+
+is
+
+an innite grounding, so termination cannot be guaranteed.
+
+4.1.5 Symbolic Justifications, Incremental Querying and Splitting
+The algorithms presented above are sound and complete.
+
+However, they can be further
+
+improved by taking the formulas from which justications are derived into account.
+
+Symbolic justications and incremental querying.
+for (subformulas of ) a formula
+
+Example 4.4.
+
+,
+
+When multiple justications exist
+
+grounding can be further delayed.
+
+Consider the formula
+
+x  D : P (x)  Q(x),
+
+where both
+
+h{P (x)}, {x  D}i
+
+h{Q(x)}, {x  D}i are justications. From that, we could derive the justication: for
+d  D, make either P (d) or Q(d) true. Hence, more grounding is necessary only when
+both P (d) and Q(d) become false for the same d.
+
+and
+
+each
+
+We can do this automatically by changing build_djust as follows:
+
+
+
+The algorithm is allowed to select multiple disjunctions / existential quantications
+even if a valid justication was already found for one (Lines 13 and 24).
+
+
+
+build_djust no longer returns a justication, but a symbolic
+
+justication formula
+
+that
+
+entails the original formula. The formula is built during build_djust and reects the
+subformulas/instantiations that have been selected.
+
+From
+
+,
+
+the justication itself
+
+ . For
+{P (x) | x 
+x  D : P (x)  Q(x).
+
+can be derived directly as the set of non-false literals in the (full) grounding of
+example, for a formula
+
+D},
+
+
+x  D : P (x)  Q(x),
+
+instead of the justication
+
+build_djust might now return the justication formula
+
+The validity check (valid) is extended to return false if the justication formula is false.
+
+By allowing more complex formulas (instead of a conjunction of universally quantied literals), the validity check whether a formula has become false after incremental changes
+to
+
+I
+
+is now more expensive. This is in fact an
+
+incremental query
+
+problem. In the exper-
+
+iments, we limit the depth of the allowed formulas and use a straightforward (expensive)
+algorithm that evaluates the whole formula whenever an assignment can falsify it.
+3. It is possible to change the integration of
+
+lazy_ground in lazy_mx to guarantee termination if a nite
+
+model exists, see Section 5.1.
+
+260
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+Body splitting.
+
+As described in Algorithm 3 of Section 4.1.3, split simply splits o the
+
+rule instance that denes l, then one_step_ground grounds this rule instance step by step,
+in accordance with the structure of the formula. However, when the grounding is triggered
+by a conict with the current justication, one_step_ground is blind for the origin of the
+conict.
+
+By using the conicting literals, one could focus on grounding the part of the
+
+formula that contributes to the conict. One can do so by restructuring the rule in a part
+to be grounded, that contains the conict, and a part not to be grounded, for which the
+old justication can be adjusted to still apply.
+
+The latter part can then be split o by
+
+introducing new Tseitins and the transformation is called body splitting. This approach can
+be inserted in Algorithm 3 after the call to split. For this, the original justication (call it
+
+jold )
+
+is passed as an extra argument to split_and_ground.
+
+Example 4.5.
+
+h  x  D : P (x); let h{P (x)}, {x  D}i be the justication for h true in I . When P (d) becomes false, it is easy to see that we can split o the
+violating instantiation by rewriting the original rule into h  P (d)  T and adding the
+rule T  x  D  d : P (x). Crucially, a justication for the second part can be derived
+from the original justication, namely h{P (x)}, {x  D  d}i. The second part can hence
+be added to d and its justication to J while the rst part is added to g .
+Consider the rule
+
+r and its direct justication jold can be done in an ecient way.
+v is a true domain literal in the partial structure and that the direct justication
+of rule r contains its negation v . The implementation is such that the binding(s) for
+which the justication instantiates to v can be extracted from the representation of the
+direct justication of the rule. For simplicity, assume {x = d1 , . . . , dn } is the single such
+instance. A recursive algorithm visits the formula  in the body of r depth-rst. Whenever
+a quantication x  D :  is encountered with x equal to xj  x, it is replaced by
+(x  D  dj : )  [x = dj ]. Then a Tseitin transformation is applied to the left-hand
+This revision of a rule
+
+Assume that
+
+conjunct and the algorithm recurses on the right-hand conjunct with what remains of the
+binding. The new rule dening the new Tseitin has jold v as a direct justication. Similarly,
+an existential quantication is replaced by a disjunction.
+
+The result is a set of new rules
+
+for which no new justication has to be sought and a smaller rule
+
+r0
+
+which is passed to
+
+one_step_ground. Correctness follows from the fact the jold  v is a valid justication, none
+of the new rules contains
+
+Example 4.6.
+
+v,
+
+and from the correctness of the Tseitin transformation.
+
+In Example 4.1, justications were sought for
+
+H
+
+in the rule
+
+H  x  D : P (x)  (y  D : Q(x, y)  R(x, y)).
+J = {Q(x, y) | x  D, y  D}  {R(x, y) | x 
+I , and l = Q(d1 , d2 ) becomes false, J is no longer
+consistent with I and cannot be repaired. J  l, however, is still consistent with I , but is
+not a justication of the whole body. On the other hand, J  l is a justication for the
+subformula P (x)  y  D : Q(x, y)  R(x, y) for each instantiation of x dierent from
+d1 . Consequently, we can split the quantication x  D : into x  D  d1 and x = d1
+
+Assume we selected the justication
+
+D, y  D}.
+
+When
+
+P (d1 )
+
+is true in
+
+and apply a Tseitin transformation to the former. Afterwards, we recursively visit the latter
+formula and apply a similar reasoning to the existential quantication. The operations on
+
+261
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+ (split 1)
+x  D  d1
+
+.
+
+
+
+
+
+P (x)
+
+y  D
+
+
+Q(x, y)
+
+ (split 2)
+
+P (d1 )
+
+y 0  D  d2
+
+.
+
+
+
+
+
+R(x, y)
+Q(d1 , y 0 )
+
+R(d1 , y 0 ) Q(d1 , d2 ) R(d1 , d2 )
+
+x  D : P (x)  y  D : Q(x, y)  R(x, y) is split for a violating
+Q(d1 , d2 ). The original justication without Q(d1 , d2 ) is a justication of
+
+Figure 2: The rule body
+literal
+
+the left-hand side of all splits, with the justication formula shown in blue. The
+remaining non-justied formula is shown in red.
+
+the formula are illustrated in Figure 2. The result consists of the following rules, where the
+rule for
+
+H
+
+is now even ground.
+
+
+
+
+ H  T1  (P (d1 )  (T2  (Q(d1 , d2 )  R(d1 , d2 )))).
+
+
+
+
+
+
+T1  x  D  d1 : P (x)  y  D : Q(x, y)  R(x, y).
+
+
+
+
+ T  y  D  d : Q(d , y)  R(d , y).
+
+2
+2
+1
+1
+To further optimize the traversal of the formula
+the path taken through the parse tree of
+
+Example 4.7.
+
+
+
+,
+
+build_djust can be extended to store
+
+and the direct justications of the subformulas.
+
+C1  (x y)  D2 : edge(x, y)  edge(y, x) has to be
+justied, J is empty and I does not interpret edge. The build_djust algorithm recursively
+visits the body of the rule until edge(x, y) is returned as it is a valid literal to use. Going
+up one level, we store that for edge(x, y)  edge(y, x), we selected {edge(x, y)}. Assuming
+no more disjuncts are selected, edge(x, y) is returned again. Going back up through both
+quantications, we store that, for both quantications, we selected D as the set of relevant
+2
+domain elements, and build_djust returns the justication formula (x y)  D : edge(x, y).
+Assume the rule
+
+If build_djust is given access to
+direct justication.
+
+jold ,
+
+similar optimizations are possible for repairing a
+
+Consider again Example 4.6, but assume
+
+P (d1 )
+
+is unknown in
+
+I.
+
+In
+
+this case, the left branch of Figure 2 can also be transformed in a rule with a still valid,
+
+P (d1 ) as direct
+justication for the rule H  T1  (P (d1 )  (y  (D  d1 ) : Q(d1 , y)  R(d1 , y))), where
+T1 is as in Example 4.6.
+
+direct justication. For the right branch, a repair is to select the disjunct
+
+4.2 The Global Approach
+Finding justications using the greedy local approach can easily lead to more grounding than
+necessary. Consider for example the sentences
+
+262
+
+x  D : P (x)
+
+and
+
+x  D : P (x)  Q(x).
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+Applying the local approach to the second sentence rst (with an empty
+the construction which makes atoms over
+
+P
+
+J ),
+
+might result in
+
+false. Then applying the local approach to the
+
+rst sentence nds no valid justication for it; so it has to be fully grounded. The global
+approach takes a set of rules as input and tries to select direct justications for them such
+that the
+
+expected
+
+grounding size of the whole set is minimal.
+
+We cast the task, called the
+
+optimal justication problem, as a problem on a graph as
+rule nodes R and justication nodes J .
+
+follows. The graph consists of two types of nodes,
+
+A justication node is a symbolic set of literals representing a possible justication (for the
+
+I ). A rule node is a pair
+t (t, f , u); A pair hr, ti for a rule r with head l
+expresses that there exists a direct justication for l; the pair hr, f i that there exists a direct
+justication for l and the pair hr, ui that r has no justication.
+
+literals dened by a rule in
+
+hr, ti
+
+r
+
+of a rule
+
+in
+
+d
+
+d ,
+
+given the current partial structure
+
+and a truth value
+
+There are three types of edges:
+
+ Valid edges
+
+between a rule node
+
+(the negation of ) the head of
+
+ Conict edges
+
+hr, ti (hr, f i) and a justication node j
+
+where
+
+j
+
+justies
+
+r.
+
+i
+
+ii
+
+between ( ) rule nodes of the same rule with dierent truth value, ( )
+
+iii) a rule node hr, ti (hr, f i) where
+l (l), and (iv) a rule node hr, ui,
+
+justication nodes that contain opposite literals, (
+
+r
+
+denes
+
+where
+(or
+
+r
+
+l)
+
+l,
+
+and a justication node that contains
+
+denes
+
+l,
+
+and a justication node that contains
+
+or
+
+l
+
+(a conict because
+
+l
+
+hr, ti (hr, f i)
+
+j
+
+needs a justication).
+
+ Depends-on edges
+
+between a justication node
+
+contains negative (positive) literals dened by
+The aim is then to select subsets
+
+
+
+l
+
+Rsel  R
+
+and
+
+j and
+r.
+
+Jsel  J
+
+a rule node
+
+where
+
+such that
+
+Each selected rule node is connected with a valid edge to at least one selected justication node.
+
+
+
+No conict edges exist between pairs of selected nodes.
+
+
+
+Neither positive nor mixed cycles exist in the subgraph consisting of the valid and
+depends-on edges between the selected nodes.
+
+From a selection
+
+{Rsel , Jsel }
+
+extracted as follows.
+rule
+
+r
+
+such that
+
+satisfying these constraints, an initial justication
+
+A literal
+
+hr, ti (hr, f i)
+
+l (l)
+
+can be
+
+is a selected rule. Its direct justication is the union of the
+
+justications of the justication nodes in
+edge.
+
+J
+
+is given a direct justication if it is dened by a
+
+Jsel
+
+connected with
+
+hr, ti (hr, f i)
+
+through a valid
+
+Moreover, all literals dened by rules for which no rule node was selected can be
+
+added to the initial
+
+qch
+
+queue, to be handled by the local approach, as a complete solution
+
+must have a justication for them. When
+
+hr, ui
+
+is selected, it means that the grounding of
+
+instances of the rule is delayed until the literals it denes become assigned.
+This type of problem is somewhat related to the NP-hard
+
+hitting set
+
+(or
+
+set cover )
+
+problem (Karp, 1972): given a set of top and bottom nodes and edges between them,
+the task is to nd a minimal set of bottom nodes such that each top node has an edge to at
+least one selected bottom node.
+
+263
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+hg , d , J, Ii, the input for the optimal justication
+d , a node is constructed for each of the
+the truth value is known in I ) and also their conict
+
+Given a default acceptable state
+
+problem is generated as follows. For any rule in
+three truth values (only one when
+edges are added.
+
+Valid edges and justication nodes are obtained using a (straightforward)
+
+adaptation of build_djust that returns a set of possible justications that make the head of
+a rule true (false). E.g., for a rule
+
+P (x)
+
+x  D : P (x)  , build_djust is called with the literal
+{x  D}. Conict and depends-on edges are derived
+
+and the binding is initialized at
+
+by checking dependencies between justications and between rules and justications.
+
+To
+
+keep this ecient, it is done on the symbolic level.
+
+Example 4.8.
+
+PT , C1
+
+and
+
+C2
+
+ x  D : root(x)  R(x)
+ (x y)  D2 : edge(x, y)  edge(y, x)
+ x = d1
+ root(x)  y  D : edge(x, y)  R(y)
+
+(2)
+(3)
+(4)
+(5)
+
+
+
+
+
+
+Consider the theory of our running example, after
+
+propagated to be true. Denition
+
+
+
+
+
+
+C1
+C2
+x
+
+D
+:
+root(x)
+
+
+
+x  D : R(x)
+
+d
+
+have been
+
+is then
+
+
+
+
+
+The associated optimal construction set input is shown in Figure 3. Note that in rule
+
+C1 and C2 are true in I ,
+root(x) nor root(x) can be
+
+nodes, we use the dened head literals to identify the rule. Literal
+hence there is only one rule node for rules (2) and (3). Neither
+justied for all
+
+x  D,
+
+hence there is only a
+
+hroot, ui
+
+tuple.
+
+There are four solutions that are subset-maximal with respect to rule nodes, namely the
+following rule node selections:
+
+{hR, ui , hroot, ui , hC2 , ti}
+
+(a)
+
+{hR, f i , hC2 , ti}
+
+(b)
+
+{hR, ti , hC2 , ti}
+
+(c)
+
+{hC1 , ti , hC2 , ti}
+
+(d)
+
+For each of these, multiple justication selections are possible (also shown in Figure 3).
+For
+
+C1 ,
+
+we have to select justication
+
+(iv),
+
+but for
+
+C2
+
+we can choose from
+
+(v)
+
+or
+
+(vi)
+
+(but
+
+not both).
+The objective is then not to maximize the number of selected rule nodes, but to minimize
+the expected grounding size.
+
+To obtain an estimate of the expected grounding size, the
+
+following conditions were taken into account:
+
+
+
+It should depend on the size of the grounding of the rule.
+
+
+
+Assigning multiple justications to a rule should result in a lower estimate as the rule
+will only be grounded when all are false.
+
+
+
+Variables occurring in multiple justications result in less matching instantiations.
+
+
+
+In most practical applications, the number of false atoms far exceeds the number of
+true ones in any model. Hence, positive literals in a justication should have a higher
+cost than negative ones.
+
+264
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+hR, f i
+
+h{root(x), edge(x, y)}, {x  D, y  D}i
+
+hR, ui
+
+h{root(x), R(x)}, {x  D}i
+
+hR, ti
+
+h{root(x)}, {x  D}i
+
+hC1 , ti
+
+h{root(x), R(x)}, {x  D}i
+
+hC2 , ti
+
+h{edge(x, y)}, {x  D, y  D}i
+
+hroot, ui
+
+h{edge(x, y)}, {x  D, y  D}i
+
+(i)
+
+(ii))
+
+(iii)
+(iv)
+(v)
+(vi)
+
+Figure 3: The graph that is part of the input to the optimal justication problem of Example 4.8.
+
+Rule nodes are shown on the left, justication nodes on the right;
+
+valid edges are shown in green, conict edges in red and depends-on edges in blue.
+For readability, conicts between justications and unknown rule nodes are not
+shown.
+
+We approximate the expected grounding size with the function
+input a rule
+
+r
+
+(with head
+
+h),
+
+J.
+
+which takes as
+
+n
+
+the selected type of justication (rule not selected ( ), no
+
+justication (u), a justication for
+cations
+
+expsize
+
+h (t)
+
+or a justication for
+
+h (f ))
+
+and the set of justi-
+
+The function returns the expected grounding size of the rule (size(r), dened
+
+below) weighted depending on the type of justication. The weights are derived from two
+estimates:
+
+pval
+
+ptr
+
+is the probability an atom will become assigned and
+
+is the probability of
+
+n
+
+an assigned atom to be true. Hence, as dened formally below, for non-delayed rules ( ),
+
+u
+
+the full size is used; a rule without justication ( ) is weighted by
+
+t
+
+( ) is weighted by
+
+ptr ,
+
+product over the justications
+namely
+
+pt
+
+literals in
+
+f
+
+a false one ( ) by
+
+j
+
+in
+
+J.
+
+1  ptr ;
+
+a true justication
+
+the latter two weights are multiplied by a
+
+Each factor of this product is a sum of two terms,
+
+times the number of negative literals in
+
+j.
+
+pval ;
+
+j
+
+and
+
+1  ptr
+
+times the number of positive
+
+The eect is that the expected size decreases as the number of justications
+
+increases and that the expected size increases as a justication has more literals.
+
+expsize (r, n, ) = size(r)
+expsize (r, u, ) = size(r)  pval
+expsize (r, f , J) = size(r)  pval  (1  ptr ) 
+
+Y
+
+((1  ptr )  |pos.
+
+lits.
+
+ j|
+
+jJ
+
++ ptr  |neg. lits.  j|)
+Y
+expsize (r, t, J) = size(r)  pval  ptr 
+((1  ptr )  |pos. lits.  j|
+jJ
+
++ ptr  |neg.
+For the probabilities, we assumed
+
+pval
+
+lots of literals will not get a value, and
+
+lits.
+
+ j|)
+
+to be small (currently 0.1) to reect the hope that
+
+ptr
+
+is less than half, to reect that atoms are more
+
+265
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+often assigned false than true. The function
+
+size
+
+is dened below. The function returns the
+
+number of atoms in the grounding of a rule or formula, except for existential quantication
+and disjunction. For these, we take into account that they can be grounded only partially
+using Tseitin transformation, by taking the logarithm of the total grounding size.
+
+size(L) = 1
+size(L  ) = size() + 1
+size(x  D : ) = D  size()
+X
+size(i )
+size(1  . . .  n ) =
+i[1,n]
+
+size(x  D : ) = log(D)  size()
+P
+
+i[1,n] size(i )
+
+size(1  . . .  n ) = log(n) 
+
+n
+
+Solutions to the optimal justication problem should minimize the term
+
+X
+
+expsize (r, t(r), J(r))
+
+rd
+with
+
+t(r)
+
+the type (t,
+
+f,
+
+or
+
+u)
+
+and
+
+J(r)
+
+the justication of the literal dened by
+
+r.
+
+Example 4.9 (Continued from Example 4.8). The size of rule C1 is 1+log(D)2, that of C2
+
+1+D2 log(2), that of root is D(1+1), and that of R is D(1+log(2)(1+log(D)2)/2.
+Consider assigning justication (iv) to C1 : this results in an expected cost for that rule of
+(1 + log(D)  2)  0.3  1 (as the construction relies on making R true). Additionally, it
+would force the grounding of the rule dening R, increasing the cost with the size of the
+rule for R. The optimal solution for the problem in Figure 3 is then rule node selection (a)
+2
+with justication (vi) for C2 . Its cost is the sum of (1 + D  log(2)  0.3 (for justication
+(vi)) and 1 + log(D)  2 (the expected size of the rule for C1 ). Now, only the rule for C1
+is
+
+has to be passed to the local approach.
+To solve the optimal justication problem,
+
+IDP's
+
+optimization inference itself is applied
+
+to a (meta-level) declarative specication of the task.
+
+4
+
+For larger theories
+
+T,
+
+the problem
+
+turns out to be quite hard, so two approximations were considered to reduce the search
+space.
+
+First, the number of selected justications for any rule was limited to 2.
+
+as the values of
+
+size(r)
+
+can grow quite large, the approximation
+
+standard approach). Rounding to integer values was applied as
+
+dlog(size(r))e
+
+IDP's
+
+Second,
+
+is used (a
+
+support for oating
+
+point number is still preliminary. The resulting specication could be solved to optimality
+within seconds for all tested theories. During lazy model expansion, the global approach is
+applied in the initial phase when all Tseitin literals representing sentences in the original
+theory have been propagated true.
+
+5. Heuristics and Inference Tasks
+This section discusses how to tune the lazy grounding and the search heuristics of the
+underlying SAT solver to obtain an eective implementation of lazy model expansion. We
+4. The specication is part of
+
+IDP
+
+'s public distribution.
+
+266
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+also describe a few other inferences tasks beyond model expansion that are useful in the
+context of lazy grounding. A few less important issues are discussed in Appendix A.
+
+5.1 Heuristics
+Heuristics play an important role in the lazy grounding algorithms, as they serve to nd
+the right balance between how much to ground and how long to search. We rst discuss
+how our heuristics were chosen. Afterwards, we discuss an alternative approach to minimize
+grounding.
+
+5.1.1 The Balance between Grounding and Search
+The algorithms leave room for a number of heuristic choices that can have an important
+eect on the performance.
+
+We now briey discuss these choices.
+
+As a guideline for our
+
+decisions, the following principles are used:
+
+
+
+Avoid leaving the search process without enough information to make an informed
+decision; for example, avoid losing too much (unit) propagation or introducing too
+many Tseitin symbols.
+
+
+
+Prevent creating a grounding that is too large; this may for example happen as the
+result of a very long propagate-ground sequence.
+
+Recall, the goal is not to create a minimal grounding, but to solve model expansion problems
+while avoiding a too large grounding.
+Below, we introduce a number of parameters that aect these heuristics.
+
+The exact
+
+values used in the experimental evaluation for the parameters introduced below are specied
+in Appendix A.
+In split_and_ground, when handling a disjunction or existential quantication, there is
+a choice on how many disjuncts to expand. If we expand one instantiation at a time for a
+rule
+
+h  x  D : P (x),
+
+as done in Algorithm 6 (lines 3 and 6), iterative application results
+
+in a ground theory
+
+h  P (d1 )  T1
+T1  P (d2 )  T2
+T2  P (d3 )  T3
+.
+.
+.
+
+Tn  x  D \ {d1 , d2 , . . . , dn } : P (x).
+A SAT-solver such as MiniSAT, which is used in the
+the
+
+P (di )
+
+IDP
+
+system, initially assigns
+
+atoms; such a choice triggers an iteration of propagation and grounding.
+
+f
+
+to
+
+The
+
+resulting thrashing behavior can be reduced somewhat, and the grounding is more compact
+when the grounding introduces
+
+n
+
+disjuncts at a time:
+
+h  P (d1 )  . . .  P (dn )  T
+T  x  D \ {d1 , d2 , . . . , dn } : P (x).
+
+267
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+To further remedy this, two search-related heuristics are changed. First, the initial truth
+value is randomized, but favoring false (as in most models, many more atoms are false than
+true). Second, search algorithms typically
+
+restart
+
+after an (ever-increasing) threshold on the
+
+number of conicts, sometimes caching the truth value assigned to atoms (
+
+polarity caching ).
+
+This allows the solver to take learned information into account in the search heuristic while
+staying approximately in the same part of the search space.
+
+In case of lazy grounding,
+
+we might want to jump to another part of the search space when we come across long
+propagate-ground sequences. To this end, we introduce the concept of
+
+randomized restarts,
+
+which take place after an (ever-increasing) threshold on the number of times
+
+g
+
+is extended
+
+and randomly ipping some of the cached truth values.
+In addition, build_djust always returns
+
+false
+
+if it is estimated that the formula has a
+
+small grounding. Indeed, grounding such formulas can help the search. Whether a formula
+is considered small is determined in terms of its (estimated) grounding size.
+strategy is used in split_and_ground:
+
+The same
+
+whenever the formula to which one_step_ground
+
+would be applied is small, ground is applied instead, to completely ground the formula.
+
+5.1.2 Late Grounding
+Grounding is applied during the search process as soon as unit propagation has taken place.
+The result is a focus on the current location in the search space, but with the danger of
+grounding too much if there is no solution in that part of the space. Alternatively, we could
+apply the opposite strategy, namely to ground as late as possible: only apply additional
+grounding when the search algorithm terminates without ever having found a model in an
+acceptable default state. Such a strategy is well-known from the elds of incremental proving
+and planning, where the domain (number of time steps) is only increased after search over
+the previous, smaller bound has nished. This guarantees a minimal grounding. A prototype
+of this strategy has been implemented in
+
+IDP
+
+with good results on planning problems.
+
+5.2 Related Inference Tasks
+The bulk of the paper focuses on model expansion (MX) for
+solutions are structures that are two-valued on
+
+voc(T ).
+
+FO(ID )
+
+theories
+
+T,
+
+for which
+
+Often, one is only interested in a
+
+small subset of the symbols in voc(T ). This is for example the case for model generation for
+SO(ID), the language which extends FO(ID) with existential quantication over relations.
+An SO(ID ) problem P1 , . . . , Pn : T with an initial structure I , relation symbols P1 , . . . ,
+Pn , and T an FO(ID) theory, can be solved by model generation for the FO(ID) theory
+T with initial structure I and by dropping the interpretation of the symbols P1 , . . . , Pn in
+the models. Another example is query evaluation for FO(ID ): given a theory T , an initial
+structure I and a formula  with free variables x (all in FO(ID )), the purpose of evaluating
+the query hT , I, i is to nd assignments of domain elements d to x such that a model of
+T exists that expands I and in which [x/d] is true. To solve it by model expansion in
+FO(ID ), a new predicate symbol T is introduced and answers to the query are tuples of
+
+domain elements d such that T d is true in a model of the theory T extended with the
+sentence x  D : T (x) and the denition {x  D : T (x)  }.
+In both cases, approaches using (standard) model expansion compute a total interpretation and afterwards drop all unnecessary information, which is quite inecient. Lazy model
+
+268
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+expansion can save a lot of work by only partially grounding the theory. However, once a
+model is found for the grounded part, the justications and the remaining denitions are
+used to expand the structure to a model of the full theory.
+
+Although this expansion is
+
+obtained in polynomial time, it is still inecient when afterwards a large part of the model
+is dropped.
+To remedy this, we dene a variant of the model expansion task, denoted
+
+T,
+
+restricted
+
+MX.
+
+I and an additional list of symbols O,
+5
+called output symbols. Solutions are then structures M which are two-valued on all symbols
+in O and for which an expansion exists that extends I and is a model of T . Adapting lazy
+Restricted MX takes as input a theory
+
+a structure
+
+grounding to solve restricted MX can be done through an analysis of which justications
+need not be added (completely) to the structure, splitting
+
+gd
+
+into multiple denitions and
+
+only evaluating those dening output symbols or symbols on which those depend (using a
+stratication argument).
+The above-mentioned inference tasks can be cast trivially to restricted MX problems and
+lazy restricted MX then greatly improves the eciency with respect to ground-and-solve, as
+shown in the experimental section.
+The extension of
+
+FO(ID )
+
+with
+
+procedurally interpreted
+
+symbols (De Cat et al., 2014)
+
+provides another class of interesting problems. Such predicate symbols have a xed interpretation, but to know whether a tuple belongs to the predicate, a procedural function has
+to be executed. Such an approach provides a clean way to combine declarative and procedural specications. Consider for example a symbol
+
+isP rime(N)
+
+that is interpreted by a
+
+procedure which executes an ecient prime-verication algorithm and returns true i the
+given argument is prime. We are generally not interested in the complete interpretation of
+
+isP rime, so it can be cast as a restricted MX problem with isP rime not in O.
+
+Solving such
+
+a problem using lazy grounding then has the benet of only executing the associated function
+
+during
+
+search for relevant atoms
+
+isP rime(d).
+
+Also for this task, we show an experimental
+
+evaluation in the next section.
+
+6. Experiments
+The
+
+IDP
+
+system has a state-of-the-art model expansion engine, as can be observed from
+
+previous Answer-Set Programming competitions (Denecker et al., 2009; Calimeri et al., 2014;
+Alviano et al., 2013). The lazy model expansion algorithms presented in this paper were
+implemented in the
+
+IDP
+
+system, by extending the existing algorithms (De Cat, Bogaerts,
+
+Devriendt, & Denecker, 2013).
+The current implementation is incomplete in the sense that the cycle check for justications has not been implemented yet. This only aects inductive denitions as non-inductive
+ones can be replaced by the FO formulas of their completion.
+
+As a workaround for the
+
+lack of a cycle check, build_djust, the function that constructs a direct justication, returns
+false for rules dening inductive predicates. As a consequence, an instance of such a rule
+is immediately grounded, although lazily, when a domain atom dened by the rule is assigned a value. Another consequence is that inductively dened predicates cannot be used
+in justications of other rules. This aects three benchmarks of the ASP competition (de5. Within the ASP community, they are sometimes referred to as show predicates.
+
+269
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+scribed below in Section 6.2), namely
+
+Reachability, Sokoban
+
+and
+
+Labyrinth.
+
+For these,
+
+the grounding might be delayed even more in a complete implementation.
+The section is organized as follows. In Section 6.1, we evaluate the overhead of completely
+grounding a theory using the presented approach. In Section 6.2, we evaluate the eect of
+lazy grounding on a number of benchmarks of the ASP competition.
+
+In Section 6.3, a
+
+number of additional properties of the presented algorithms are demonstrated.
+We tested three dierent setups:
+(referred to as
+
+g&s), IDP
+
+IDP
+
+with the standard ground-and-solve approach
+
+with lazy model expansion (lazy) and the award-winning ASP
+
+system Gringo-Clasp (ASP). We used
+
+IDP
+
+version 3.2.1-lazy, Gringo 3.0.5 and Clasp 2.1.2-st.
+
+The parameters of the lazy grounding algorithms are discussed in Section 5.1, the values
+used in the experiments are documented in Appendix A. The experiments for Sections 6.1
+and 6.3 were run on a 64-bit Ubuntu 13.10 system with a quad-core 2.53 GHz processor
+and 8 GB of RAM. Experiments for Section 6.2 were run on a 64-bit Ubuntu 12.10 system
+with a 24-core 2.40-Ghz processor and 128 GB of RAM. A timeout of 1000 seconds and a
+memory limit of 3 GB was used; out-of-time is indicated by
+
+T,
+
+out-of-memory by
+
+M.6
+
+6.1 Eect on Grounding Time
+Lazy grounding may reduce grounding size and time but also causes overhead. For instance,
+we expect the (naive) incremental querying of justications to be costly as discussed previously. The aim of this section is to quantify the overhead caused by lazy grounding. In the
+experiments below we compare the grounding time of the standard IDP system with that
+of a
+
+naive
+
+instance of the lazy grounding algorithm that is forced to generate the complete
+
+grounding before starting the search. This instance was obtained from the standard algorithm using some small changes: the shortcut to ground small formulas at once is turned
+o, disjuncts and instances of existentially quantied formulas are grounded one by one, a
+dened literal is enqueued for lazy grounding as soon as it appears in
+
+g .
+
+For comparison,
+
+we also measure the cost of the standard lazy grounding algorithm that computes partial
+groundings.
+We devised six benchmarks to test various aspects of the novel algorithm. Each benchmark is a simple theory with at most two sentences that is simple to solve. The benchmarks
+are designed to measure the cost of dierent aspects of lazy grounding: delaying and resuming grounding, the querying needed to resume grounding, the splitting of formulas, etc.
+Specically, the tested aspects are the following:
+1. Overhead of delaying and resuming grounding in case of an existential quantier with
+a large domain.
+
+The sentence is
+
+n disjuncts; naive lazy
+n  2 Tseitin symbols.
+
+clause with
+introduces
+
+x : P (x).
+
+Standard grounding creates a single
+
+grounding grounds the formula piece by piece and
+
+2. Overhead in case of an inductive denition, here
+
+{x : P (x)  P (x)  Q(x)}.
+
+standard grounding and naive lazy grounding construct a ground rule for each
+
+Both
+
+P (d)
+
+atom.
+6. Benchmarks, experimental data and complete results are available at
+
+krr/experiments/lazygrounding/jair.
+
+270
+
+http://dtai.cs.kuleuven.be/
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+3. Overhead in case of a universal quantication.
+standard grounding creates
+
+n
+
+The sentence is
+
+x : P (x).
+
+While
+
+atomic formulas, naive lazy grounding splits o one
+
+instance at a time and introduces
+
+n2
+
+Tseitin symbols.
+
+4. Lifted Unit Propagation (LUP) (Wittocx et al., 2010, 2013) is an important preprocessing step to reduce the grounding size. Concretely, applying LUP to the rules
+
+x : R(x)
+x : R(x)  y : P (x, y)
+derives that the second formula follows from the rst and hence does not need to be
+grounded at all. This theory is used to check whether LUP remains equally important
+in a system with lazy grounding.
+
+x :
+R(x)  y : P (x, y). Standard grounding creates a formula for each instance d of
+x with a Tseitin for the grounding of y : P (d, y). Naive lazy grounding creates an
+extra Tseitin for each instance d of x and an extra set of Tseitins for the piece by piece
+grounding of the subformula y : P (d, y).
+
+5. Overhead in case of nested universal quantication. The sentence is of the form
+
+6. Overhead of the incremental querying in case a symbolic justication has to be validated. The sentence is
+
+x : R(x)  S(x),
+
+with an identical justication formula. The
+
+formula is validated by checking the falsity of the query
+query is re-evaluated each time an
+
+R-atom
+
+or
+
+S -atom
+
+x : R(x)  S(x).
+
+This
+
+is falsied.
+
+6.1.1 Results
+Experiments were done for predicates
+
+P
+
+and
+
+Q
+
+with arity 3 and
+
+R
+
+and
+
+S
+
+with arity 2, and
+
+domains of size 10, 20, 30, 40 and 50. None of the predicates symbols were interpreted in
+the structure.
+In all experiments, the overhead for the time required to solve the initial optimization
+problem (for the global approach) was always around 0.02 seconds, so in itself negligible.
+The results for the rst three experiments are not shown as the dierences between standard
+grounding and naive lazy grounding are negligible.
+
+While expected for experiment 2, for
+
+experiments 1 and 3, it shows that our actual implementation eliminates the overhead for
+Tseitins when quantiers are not nested. In each of these three experiments, standard lazy
+grounding is able to justify the formulas without grounding them and hence fast and almost
+insensitive to the domain size. As shown in Figure 4, there is no dierence between standard
+grounding and naive lazy grounding for experiment 4. In both cases, the use of LUP has a
+big impact on the size of the grounding and hence on the time. While experiment 1 and 3
+showed that a top level quantier does not create overhead for lazy grounding, experiment 5
+shows that this does not hold anymore for nested quantiers and that naive lazy grounding
+has substantial overhead when compared with standard grounding. Note that this overhead
+is worst case.
+
+When Tseitins can be justied, their denitions are not grounded, which
+
+explains why normal lazy grounding is faster than standard grounding and insensitive to
+the domain size.
+
+Experiment 6 shows that a more complex justication formula causes
+
+signicant overhead for naive lazy grounding. Also here, the overhead is worst case and not
+
+271
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+
+4. Grounding with bounds
+
+5. Nested universal quantification
+
+16
+
+6. Complex justification, shared variables
+4.5
+
+14
+
+ground without LUP
+ground with LUP
+naive lazy ground without LUP
+naive lazy ground with LUP
+lazy ground with LUP
+
+14
+12
+
+ground
+naive lazy-ground
+lazy-ground
+
+12
+
+ground
+naive lazy-ground
+lazy-ground
+
+4.0
+3.5
+
+10
+3.0
+
+8
+
+Seconds
+
+Seconds
+
+Seconds
+
+10
+8
+
+6
+
+2.5
+2.0
+
+6
+1.5
+4
+
+4
+
+1.0
+
+2
+
+2
+
+0
+
+0
+0
+
+10
+
+20
+
+30
+
+40
+
+50
+
+0.5
+0.0
+0
+
+10
+
+Domain size
+
+20
+
+30
+
+Domain size
+
+40
+
+50
+
+0
+
+10
+
+20
+
+30
+
+40
+
+50
+
+Domain size
+
+Figure 4: Time overhead of naive lazy grounding over ground-and-solve when completely
+grounding the input theory, for benchmarks 4, 5 and 6. The time includes grounding, solving and the time needed to nd justications. The time required by the
+standard lazy grounding algorithm is also shown for comparison.
+
+visible in normal lazy grounding. Still, it is an important part of future research to reduce
+the overhead of the incremental querying of complex justication formulas.
+
+6.2 ASP Competition Benchmarks
+Second, we selected benchmarks from previous ASP competitions to evaluate the lazy
+grounding algorithm in a more realistic setting. Many benchmarks solutions of that competition are carefully ne tuned for speed and minimal grounding. Lazy grounding is usually
+unable to substantially reduce the grounding of such theories and, due to its overhead, is
+then slower than standard ground and solve. For this reason, we have sometimes selected
+modelings of the benchmarks that are more natural but less optimized in time and grounding size. We justify this on the ground that the aim of our work is to improve inference for
+declarative
+
+modeling
+
+(De Cat et al., 2014), where the emphasis is not on developing intricate
+
+encodings, but on modeling a problem close to its natural language specication.
+We selected the following problems (see the competition websites for complete descriptions). They consist of problems that are known to be hard, in order to evaluate the eect
+of lazy model expansion on search, and problems that typically result in a large grounding.
+
+ Reachability:
+
+Given a directed graph, determine whether a path exists between two
+
+given nodes.
+
+ Labyrinth:
+
+A planning problem where an agent traverses a graph by moving between
+
+connected nodes to reach a given goal node. In addition, the graph can be manipulated
+to change its connectedness.
+
+ Packing:
+
+Given a rectangle and a number of squares, t all squares into the grid
+
+without overlaps.
+
+ Disjunctive Scheduling:
+
+Schedule a number of actions with a given earliest start
+
+and latest end time with additional constraints on precedence and disjointness.
+
+272
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+# inst.
+
+# solved
+
+g&s
+
+benchmark
+
+Sokoban
+Disj. Sched.
+Packing
+Labyrinth
+Reachability
+Stable Marr.
+Graph Col.
+
+50
+
+44
+
+21
+
+5
+
+lazy
+25
+
+50
+
+44
+
+21
+44
+
+261
+
+83
+
+72
+
+16
+
+2
+
+106
+
+21
+
+60
+
+16
+94
+
+34
+
+12
+
+avg. time (sec.)
+
+ASP
+
+50
+
+g&s
+
+lazy
+
+ASP
+
+102
+
+59
+
+5
+
+130
+
+207
+
+6
+
+173
+
+121
+
+20
+5
+
+196
+
+245
+
+181
+40
+
+141
+4
+
+110
+
+12
+
+5
+
+643
+
+402
+
+18
+
+211
+
+21
+
+437
+44
+85
+
+Table 1: The number of solved instances for the ASP benchmarks and the average time taken
+on the solved instances. Dierent solvers solve quite dierent sets of instances.
+
+ Sokoban:
+
+A planning problem where a robot has to push a number of blocks to goal
+
+positions, constrained by a 2-D maze.
+
+ Graph Colouring:
+
+Given a graph, assign colour to nodes (from a given set of colours),
+
+such that no connected nodes have the same colour.
+
+ Stable Marriage:
+
+Given a set of men and women and a set of preferences, nd a
+
+stable assignment: no swap results in a better match.
+For each of these, we used all instances from the 2011 and 2013 competitions, except for
+the 2013
+
+Reachability
+
+instances, because of the huge data les which none of the systems
+
+Stable Marriage, Graph Colouring and Reachability, we
+Packing and Disjunctive
+IDP
+Scheduling, we constructed a natural FO() encoding and made a faithful translation to
+ASP. For the more complex benchmarks of Labyrinth and Sokoban, we used the original
+FO()IDP and Gringo-Clasp's ASP specications submitted to the 2011 competition. For the
+
+is designed to handle.
+
+For
+
+based our encodings on the available ASP-Core-2 encodings. For
+
+lazy model expansion, we replaced cardinality expressions by their FO encoding as for the
+former no justications are derived yet; this also increases the size of the full grounding.
+
+6.2.1 Results
+The number of solved instances and average time are shown in Table 1; the average grounding
+size for the
+
+IDP
+
+7
+
+setup is shown in Table 2.
+
+For time and grounding size, unsolved instances
+
+Reachability (9 times for g&s,
+ASP), Disjunctive Scheduling (6 times for ASP) Labyrinth (160 times for g&s,
+once for ASP), Packing (4 times for g&s, 4 times for lazy, 30 times for ASP) and Stable
+Marriage (66 times for ASP); all other unsolved instances were caused by a time-out.8
+were not taken into account. Memory overows happened in
+9 times for
+
+7. Grounding consists of variable instantiation interleaved with formula simplication (e.g., dropping false
+disjuncts, true conjuncts, replacing disjunctions with true disjuncts by true and conjunctions with false
+conjunctions by false, etc). These simplication steps may seriously reduce the grounding size.
+8.
+
+IDP
+
+has automatic symmetry breaking, the cause of the dierence between
+
+Colouring.
+
+273
+
+g&s
+
+and
+
+ASP
+
+for
+
+Graph
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+ground size (# atoms)
+benchmark
+
+Sokoban
+Disj. Sched.
+Packing
+Labyrinth
+Reachability
+Stable Marr.
+Graph Col.
+
+g&s
+2.65  104
+5.17  106
+3.86  107
+1.68  106
+2.87  107
+2.11  107
+1.15  104
+
+lazy
+2.90  105
+2.72  106
+1.69  107
+1.38  106
+1.61  104
+1.20  107
+1.58  104
+
+ground time
+
+ASP
+4.63  104
+8.04  105
+4.53  106
+3.55  105
+1.35  106
+3.36  106
+2.80  104
+
+Table 2: The average grounding size for the number of
+marks, for all setups. For the
+taken. For
+
+g&s
+
+and
+
+ASP,
+
+lazy
+
+solved
+
+g&s(sec.)
+
+ASP
+
+2.0
+129.7
+165.6
+101.0
+109.7
+642.7
+
+0.1
+
+(sec.)
+
+0.3
+0.7
+4.7
+2.3
+14.5
+3.2
+0.1
+
+instances of the ASP bench-
+
+setup, the size of the nal ground theory was
+
+the average grounding time is also shown.
+
+The results show that lazy model expansion solved more instances than the other setups
+in four out of seven cases. In those cases, the problems also got solved signicantly below
+the time threshold.
+
+In ve out of seven cases, the (nal) grounding size was smaller for
+
+lazy model expansion, orders of magnitude in one case. For
+
+Colouring,
+
+Sokoban, Labyrinth and Graph
+
+lazy model expansion was outperformed by ground-and-solve, indicating that
+
+Sokoban,
+lazy grounding size was even higher than for g&s (possible due to the FO encoding
+of cardinalities), indicating that a large part of the search space was explored. For Stable
+Marriage, the relatively small dierence in grounding size between g&s and lazy leads us
+the loss of information outweighed the gain of grounding less up-front. E.g., for
+the nal
+
+to believe that the dierent search heuristic was the main factor, not lazy grounding itself.
+We also experimented with the
+
+Airport Pickup ASP-2011 benchmark, a fairly standard
+
+scheduling problem (transporting passengers by taxis taking into account fuel consumption)
+except that no upper bound on time is provided.
+
+9
+
+Hence any ground-and-solve approach
+
+would need to construct an innite grounding. Applying straightforward lazy model expansion also resulted in a grounding that was too large. However, with the prototype that uses
+the late grounding heuristic described in Section 5.1,
+
+IDP
+
+solved one out of ten instances.
+
+For the others, grounding was not the problem, but the search took too long at each of the
+time intervals
+
+1..n
+
+considered to get up to a sucient
+
+n
+
+to solve the problem (even with the
+
+standard search heuristic).
+The presented results show that, although often benecial, lazy model expansion can be
+a considerable overhead for some hard search problems. On the other hand, while inspecting
+the outcome of the experiments, we observed that the class of specications and instances
+solved by lazy grounding and traditional grounding only partially overlap. This suggests that
+it might be a good idea to integrate both approaches into a
+
+portfolio
+
+system. Such a system
+
+can either select heuristically whether to use ground-and-solve or lazy model expansion
+(based on the input) or running both in parallel, aborting either one if it uses too much
+memory. However, on all the problems considered, lazy model expansion could start search
+9. It is possible to derive nite worst-case thresholds for the Airport Pickup problem. This is, however, not
+part of the original specication.
+
+274
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+much earlier than ground-and-solve, even though it got lost more often during search. This
+leads us to believe that to realize the full potential of lazy grounding, more work is necessary
+on developing suitable heuristics (possibly user-specied ones).
+
+6.3 Specic Experiments
+In addition to the ASP competition benchmarks, some experiments were conducted using
+crafted benchmarks to illustrate specic properties of the lazy grounding algorithm.
+The rst part of Table 3 shows the results of scalability experiments. For each of the
+benchmarks
+
+Packing, Sokoban
+
+and
+
+Disjunctive Scheduling,
+
+we selected a simple prob-
+
+lem instance and gradually extended its domain size by orders of magnitude: the size of the
+grid (Packing) or the number of time points (Sokoban,
+
+Disjunctive Scheduling).
+
+The
+
+results show that for each of the instances, lazy model expansion scales much better than
+the ground-and-solve strategies of
+satisable instances. However, for
+signicantly.
+
+IDP
+
+and Gringo-Clasp and for satisable as well as un-
+
+Disjunctive Scheduling the solving time still increases
+
+The reason is that the lazy heuristics are still naive and make uninformed
+
+choices too often.
+As we mentioned in the previous section, ASP competition problems typically have small
+groundings since running benchmarks which are too large for any system to handle does not
+provide a useful comparison of the systems. Hence, we also evaluated lazy model expansion
+on a number of crafted benchmarks where grounding is non-trivial.
+work to look for more practical applications of this type.
+
+It is part of future
+
+We constructed the following
+
+benchmarks:
+
+ Dynamic reachability,
+
+
+Lazy evaluation of
+
+the example described in Section 3.3.
+
+procedurally interpreted
+
+the prime numbers.
+
+symbols, using a simple theory over
+
+As described in Section 5.2, a predicate symbol
+
+isP rime/1
+
+is
+
+interpreted by a procedure that returns true if the argument is prime.
+
+function
+
+
+
+A predicate encoding of a
+
+
+
+An experiment that simulates model generation for a theory with an unknown domain.
+
+with a huge domain.
+
+used/1; quantied formulas
+x : (used(x)  ); model
+6
+domain of size 10 .
+
+The unknown domain is expressed by a new predicate
+
+x : 
+
+are translated to
+
+x : (used(x)  )
+
+and
+
+x : 
+
+generation is simulated by model expansion with a
+
+to
+
+For each one, a faithful ASP encoding was constructed. The second part of Table 3 shows
+the results for these benchmarks. They show a signicant improvement of lazy model expansion over ground-and-solve on all examples: in each case, both
+memory overow during grounding, while
+for
+
+Disjunctive Scheduling,
+
+lazy
+
+g&s
+
+and
+
+ASP
+
+went into
+
+found solutions within seconds. However,
+
+it is also evident that the lazy approach would benet from
+
+improved heuristics: increasing the domain size signicantly increases the solving time, while
+the instances are not intrinsically harder.
+
+6.3.1 Closer to Inherent Complexity?
+During the modeling phase of an application, dierent encodings are typically tested out,
+in an attempt to improve performance or to locate bugs. While modeling our experimental
+
+275
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+benchmark
+
+packing-10
+packing-25
+packing-50
+sokoban-103
+sokoban-104
+sokoban-105
+disj-sched-sat-103
+disj-sched-sat-104
+disj-sched-sat-105
+disj-sched-unsat-103
+disj-sched-unsat-104
+disj-sched-unsat-105
+dynamic reachability
+procedural
+function
+modelgeneration
+
+lazy
+
+g&s
+
+ASP
+
+0.2
+
+2.0
+
+0.1
+
+0.3
+
+2.0
+
+0.1
+
+1.1
+
+10.03
+
+5.8
+
+0.31
+
+0.3
+
+0.1
+
+0.5
+
+20.0
+
+1.1
+
+2.6
+
+T
+
+68.0
+
+0.39
+
+0.49
+
+0.07
+17.44
+
+13.04
+
+16.05
+
+164.18
+
+M
+
+M
+
+0.24
+
+0 49
+
+0.09
+
+4.11
+
+16.04
+
+19.85
+
+M
+M
+M
+M
+M
+
+M
+M
+M
+M
+M
+
+164.2
+0.18
+1.24
+0.79
+0.19
+
+Table 3: The solving time for additional crafted benchmarks, one instance each.
+
+benchmarks, we noticed that simplifying a theory by dropping constraints often resulted
+in a dramatic reduction in the time lazy model expansion took to nd a model. Standard
+model expansion, on the other hand, was much less aected by such simplications.
+
+In
+
+our opinion, this observation, while hardly denitive evidence, is another indication that
+the presented algorithms are able to derive justications for parts of a theory that can be
+satised cheaply. In that way, the approach is able to distinguish better between problems
+which are inherently dicult and problems which would just have a large grounding.
+
+7. Related Work
+Lazy model expansion oers a solution for the blow-up of the grounding that often occurs
+in the ground-and-solve model expansion methodology for
+
+FO(ID )
+
+theories.
+
+Answer Set
+
+Programming (ASP) and SAT Modulo Theories (SMT) techniques also process theories that
+can have a large grounding; the constraint store of Constraint Programming (CP) and Mixed
+Integer Programming and the clauses of SAT can be considered the equivalent of a grounded
+theory (they are often derived from quantied descriptions such as  ci
+
+j
+
+< cj
+
+for all i and
+
+for which . . . ) and can also become very large. Lefvre and Nicolas (2009) and Ge and
+
+de Moura (2009) have reported a blow-up problem in these paradigms and a multitude of
+techniques has been developed to address it. We distinguish four approaches.
+First, concerning grounding up-front, research has been done towards
+
+of the grounding
+
+i static analysis
+ii
+
+itself through ( )
+
+reducing the size
+
+of the input to derive bounds on variable
+
+instantiations (Wittocx et al., 2010, 2013), ( ) techniques to
+
+compile
+
+specic types of sen-
+
+tences into more compact ground sentences (Tamura et al., 2009; Metodi & Codish, 2012),
+
+iii) detect parts that can be evaluated polynomially (Leone et al., 2006; Gebser et al., 2011;
+iv) detect parts that are not relevant to the task at hand (e.g., in
+
+(
+
+Jansen et al., 2013) and (
+
+276
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+the context of query problems) as shown in the work of Leone et al. (2006). Naturally, each
+of these approaches can be used in conjunction with lazy grounding to further reduce the
+size of the grounding. In
+
+IDP,
+
+i
+
+e.g., lazy grounding is already combined with ( ) and (
+
+Second, the size of the grounding can be reduced by
+
+enriching
+
+the language.
+
+iii).
+
+For ex-
+
+ample, ASP solvers typically support ground aggregates (interpreted second-order functions
+such as cardinality or sum that take sets as arguments), and CP and SMT solvers support
+(uninterpreted) functions. More recently, the Constraint-ASP paradigm was developed (Ostrowski & Schaub, 2012), that integrates ASP and CP by extending the ASP language with
+
+constraint
+
+atoms. These are interpreted as constraints in a CSP problem and can thus be
+
+handled using CP techniques. Various CASP solvers are already available, such as Clingcon (Ostrowski and Schaub), Ezcsp (Balduccini, 2011), Mingo (Liu, Janhunen, & Niemel,
+2012) and Inca (Drescher & Walsh, 2012). This technique is also integrated into
+Cat et al., 2013).
+
+Inca and
+
+IDP
+
+IDP
+
+(De
+
+in fact implement Lazy Clause Generation (Ohrimenko
+
+et al., 2009), an optimized form of lazy grounding for specic types of constraints.
+language HEX-ASP (Eiter et al., 2005) also extends ASP, this time with
+
+external
+
+The
+
+atoms
+
+that represent (higher-order) external function calls.
+Third,
+
+incremental approaches
+
+are well-known from model generation, theorem proving
+
+and planning. For these tasks, the domain is typically not xed in advance, but part of the
+structure being sought, such as the number of time steps in a planning problem (recall the
+Sokoban example from the introduction). Such an approach typically works by grounding
+the problem for an initial guess of (the number of elements in) the domain.
+
+Afterwards,
+
+search is applied; if no model was found, the domain is extended and more grounding is
+done. This is iterated until a model is found or a bound on the maximum domain size is
+hit (if one is known).
+
+This technique is applied, e.g., in the prover Paradox (Claessen &
+
+Srensson, 2003) and the ASP solver IClingo (Gebser et al., 2008).
+Fourth, and closest to lazy grounding itself, is a large body of research devoted to
+delaying the grounding of specic types of expressions until necessary (for example until they
+result in propagation). Propagation techniques on the rst-order level that delay grounding
+until propagation ensues have been researched within ASP (Lefvre & Nicolas, 2009; Dal
+Pal et al., 2009; Dao-Tran et al., 2012) and within CP (Ohrimenko et al., 2009).
+
+Such
+
+techniques can be used in conjunction with lazy grounding as they derive more intelligent
+justications for specic types of constraints than presented here. For example, Dao-Tran et
+al. also presented an ecient algorithm for bottom-up propagation in a denition. Within
+SMT, various theory propagators work by lazily transforming their theory into SAT, such
+as for the theory of Bit Vectors by Bruttomesso et al. (2007).
+
+Ge and de Moura (2009)
+
+investigated quantier handling by combining heuristic instantiation methods with research
+into decidable fragments of FO theories, as these can be eciently checked for models.
+Within ASP, work has been done on goal-directed reasoning. Both Bonatti, Pontelli, and
+Son (2008) and Marple, Bansal, Min, and Gupta (2012) demonstrate approaches, in the
+style of SLD resolution, that apply top-down instantiation to answer queries over innite
+domains. Saptawijaya and Pereira (2013) extend an abduction framework to lazily generate
+part of the relevant sentences. In search algorithms, justications (or
+
+watches )
+
+are used to
+
+derive when a constraint will not result in propagation or is already satised, and hence need
+not be checked in the propagation phase. Nightingale et al. (2013) show how maintaining
+(short) justications can signicantly reduce the cost of the propagation phase.
+
+277
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+In fact, a well-known technique already exists that combines search with lazy instantiation of quantiers, namely
+
+skolemization,
+
+where existentially quantied variables are re-
+
+placed by newly introduced function symbols.
+
+Universal quantications are handled by
+
+instantiating them for those introduced function symbols.
+
+Reasoning on consistency can,
+
+e.g., be achieved by congruence closure algorithms, capable of deriving consistency without eectively assigning an interpretation to the function symbols.
+
+These techniques are
+
+used in Tableau theorem proving (Hhnle, 2001) and SMT solvers (Detlefs, Nelson, & Saxe,
+2005).
+
+Formula (Jackson, Bjorner, & Schulte, 2013) interleaves creating a ground pro-
+
+gram and giving it to an SMT solver, iterating when symbolic guesses proved to be wrong.
+Skolemization-based techniques typically work well in case only a small number of constants
+needs to be introduced, but have diculty in case the relevant domain is large. One can also
+see that lazy grounding (with support for function symbols) could incorporate skolemization by adapting the rules for grounding existential and universal quantication. We expect
+skolemization to be complementary to lazy grounding, but an in-depth investigation is part
+of future work.
+In the eld of probabilistic inference, several related techniques have been developed that
+also rely on lazy instantiation. First, the Problog system uses a form of static dependency
+analysis to ground a (probabilistic) program in the context of a given query, by constructing
+all possible ways to derive the query in a top-down fashion (Kimmig et al., 2011). Second,
+so-called
+
+lazy inference,
+
+applied e.g. in
+
+LazySAT
+
+fact that, for the considered inference, a (xed)
+
+(Singla & Domingos, 2006), exploits the
+
+default
+
+assumption exists under which
+
+an expression certainly does not contribute to the probabilities.
+
+Hence, expressions for
+
+which the assumption certainly holds do not have to be considered during search. Third,
+
+cutting plane inference
+
+(Riedel, 2009) applies lazy inference in an interleaved setting, only
+
+constructing the part of the program for which the assumptions are not satised.
+
+8. Future Work
+Several aspects of the presented work need further investigation. One aspect is extending
+support to lazily ground more complex expressions, including aggregate expressions and
+
+P
+( xD and P (x) f (x)) > 3, which
+atom P (d) is true, with d  D , P a
+
+(nested) function terms. Consider for example the sentence
+expresses that the sum of terms
+predicate and
+
+f
+
+f (d)
+
+for which the
+
+a function, should be larger than 3. One can observe that it is not necessary
+
+to ground the whole sentence up-front.
+(hence positive), the set
+
+For example, if
+
+{P (d1 ), f (d1 ) > 3}
+
+f
+
+maps to the natural numbers
+
+is a minimal justication.
+
+Even if no easy
+
+justication can be found, we can suce by grounding only part of the sentence and delay
+
+P
+
+P (d1 ) f (d1 )) > 3  T ,
+P
+P
+with T a Tseitin symbol dened as (
+P (d1 ) f (d1 )) + ( xD\d1 and P (x) f (x)) > 3. Indeed,
+in any model of the sentence in which T is false, the original inequality is satised.
+
+the remainder.
+
+For example, we can create the ground sentence
+
+(
+
+A second aspect is whether there are advantages to grounding earlier, for example to
+guarantee no propagation is lost, or grounding later, possibly reducing the size of the grounding even more. For example, consider the sentences
+
+P 
+
+and
+
+P   ,
+
+with
+
+
+
+and
+
+
+
+both large formulas for which no justication was found. Instead of grounding at least one
+of the sentences, we might add
+
+P
+
+to the list of atoms the search algorithm has to assign and
+
+278
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+only ground either of the sentences when
+
+P
+
+has been assigned a value (it might even be that
+
+unsatisability is detected before grounding either one).
+Given that lazy grounding is useful, what about lazy
+
+forgetting
+
+the grounded theory? As
+
+the ground theory is extended when making the structure more precise, the ground theory
+could be reduced again during backtracking.
+
+By storing the justication violations that
+
+caused grounding, we can derive which grounding can be forgotten again if the violation is
+no longer problematic (e.g., after backtracking). For this, an algorithm needs to be developed
+which tracks grounding/splitting dependencies between rules given their justications. This
+closely resembles techniques used in tableau theorem proving and SMT, where the theory
+at hand can be compacted when moving to a dierent part of the search space.
+The approach described for lazy grounding can also be applied to answer set generation
+in the eld of ASP. In ASP, a logic program under stable semantics can be seen as one rule
+set, a single denition. However, such ASP programs do not satisfy a major condition to
+apply lazy grounding. Indeed such programs are typically non-total, due to the presence of
+constraints and rules of the form
+
+p  not np, np  not p
+
+or other
+
+choice rules
+
+which result
+
+in multiple stable models. However, as described by Denecker et al. (2012), most practical
+ASP programs can be partitioned in a set of choice rules, a set of
+
+total
+
+denitions and a set
+
+of constraints (the so-called Generate-Dene-Test partition). Any ASP program that can
+be GDT-partitioned, can be translated straightforwardly into an equivalent
+
+FO(ID )
+
+theory
+
+that only contains total denitions. This suggests a way to apply lazy grounding to such
+ASP programs.
+
+9. Conclusion
+Solvers used in the domains of SAT, SMT and ASP are often confronted with problems
+that are too large to ground. Lazy model expansion, the technique described in this paper,
+interleaves grounding and search in order to avoid the grounding bottleneck. The technique
+builds upon the concept of a justication, a deterministic recipe to extend an interpretation
+such that it satises certain constraints. A theoretical framework has been developed for lazy
+model expansion for the language
+
+FO(ID ) and algorithms have been presented to derive and
+
+maintain such justications and to interleave grounding with state-of-the-art CDCL search
+algorithms.
+
+The framework aims at bounded model expansion, in which all domains are
+
+nite, but is also an initial step towards handling innite domains eciently. Experimental
+evaluation has been provided, using an implementation in the
+
+IDP
+
+system, in which lazy
+
+model expansion was compared with a state-of-the-art ground-and-solve approach.
+
+The
+
+experiments showed considerable improvement over ground-and-solve in existing benchmarks
+as well as in new applications. The main disadvantage is the less-informed search algorithm,
+caused by the delay in propagation and the introduction of additional symbols. A possible
+solution is to develop new heuristics or portfolio approaches that combine the strengths of
+both methods. Finally, we have indicated a way how the proposed methods can be applied
+beyond
+
+FO(ID ),
+
+to ASP solvers in general.
+
+279
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+Acknowledgements
+During this research, Broes De Cat was funded by the Agency for Innovation by Science
+and Technology in Flanders (IWT). This research was also supported by FWO-Vlaanderen
+and by the project GOA 13/010, Research Fund KULeuven.
+
+NICTA is funded by the
+
+Australian Government through the Department of Communications and the Australian
+Research Council through the ICT Centre of Excellence Program.
+
+Appendix A. More Details about the Algorithms
+In this appendix, we mention parameter values as well as some optimizations that further
+reduce the grounding overhead and/or improve the search. For each optimization, we indicate what is currently implemented (and part of the experimental results) and what is part
+of future work.
+
+A.1 Parameter Values
+In 5.1, a number of parameters were introduced to control the behavior of lazy model
+expansion.
+
+Here, we provide details on the values used in the experimental evaluation.
+
+These values were set manually, based on experience and a limited number of observations
+(e.g., the extension threshold works similar to the conict threshold of the SAT solver). It
+is part of future work to study the impact of dierent values.
+
+
+
+For an existential quantication, 10 instantiations are grounded at a time; for a disjunction, 3 disjuncts are grounded at a time. This turned out to give the best balance
+between introducing too many Tseitin atoms and grounding too much.
+
+
+
+The initial truth value is
+
+
+
+The initial threshold for randomized restarts is 100 extensions of the ground theory.
+
+t
+
+with probability
+
+0.2
+
+and
+
+f
+
+otherwise.
+
+It is doubled after each restart.
+
+
+
+A formula is considered small if its estimated grounding size is below
+
+104
+
+atoms.
+
+A.2 Extension to FO()IDP
+So far, we have described a lazy model expansion algorithm for function-free
+However,
+
+FO()IDP ,
+
+the knowledge-base language of the
+
+IDP
+
+FO(ID ).
+
+system, supports a much richer
+
+input language. Besides types which we use to initialize the domains it also supports
+(partial) functions, aggregates and arithmetic.
+
+Our current implementation ignores the
+
+latter extensions through a straightforward adaptation of build_djust (Algorithm 4): the
+case for literals is extended to return
+
+FO(ID )
+
+false
+
+when the literal is not part of the function-free
+
+language. For example, given a rule
+
+a justication but
+
+Q(f (x))
+
+h  x : P (x)  Q(f (x)), P (x) can be used in
+
+cannot. For functions, there is also the option to replace them
+
+by graph predicates during the preprocessing step. As for the experiments of Section 6.2,
+functions, if any, are given in the input structure and hence play no role.
+It is part of future work to extend lazy grounding for these extensions, especially for
+functions. Techniques developed in SMT and in Constraint Programming to handle (ground)
+
+280
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+atoms containing function symbols are useful to reduce the size of the grounding and improve
+search. In previous work, these techniques have been integrated in the
+
+IDP
+
+system (De Cat
+
+et al., 2013) and it is certainly worthwhile to fully integrate them with lazy grounding.
+
+A.3 Cheap Propagation Checks.
+In lazy_mx, it is checked for each assigned literal whether it is dened in
+
+d
+
+and whether
+
+it violates any justications. To implement this cheaply, our implementation maintains a
+mapping for literals in
+
+g .
+
+It states whether the literal is dened in
+
+d
+
+and also lists the
+
+justications in which its negation occurs. This mapping is extended whenever a new literal
+is added to
+
+g
+
+and maintained whenever justications change.
+
+The performance of the
+
+search loop is unaected as long as literals are assigned for which the mapping is empty.
+
+A.4 Stopping Early
+In Algorithm 2, we took the standard stopping criterion used in most search algorithms
+(Line 14): to stop in a conict-free state where
+
+I
+
+is two-valued on all symbols of
+
+principle, we may stop earlier, with a partial structure
+
+PT .
+
+Indeed, Corollary 3.6 tells us that such an
+
+I
+
+I
+
+Tg  g .
+
+In
+
+that admits a total justication for
+
+can be expanded to a model. This has a
+
+A dened
+d that is irrelevant (in eect, does not appear in the justication) will trigger grounding
+of A's denition, which in turn might introduce new literals dened in d , causing a cascade
+
+considerable impact on grounding size. Indeed, assigning a truth value to an atom
+in
+
+of unnecessary groundings and assignments.
+justication of
+
+g ,
+
+Our solver algorithm does not maintain a
+
+so it cannot know exactly when a justication exists.
+
+Instead, the
+
+implemented algorithm only chooses literals that are watched by some formula/rule.
+
+It
+
+stops with a partial structure in which unwatched literals may not be assigned. It can be
+shown that this suces to guarantee that
+
+I
+
+admits a justication. Hence it is safe to stop
+
+search.
+
+A.5 Approximate Justications
+In some cases, build_djust cannot nd a valid justication for a large formula because a few
+
+I.
+false if at least one atom of P
+literals are already false in
+
+For example for a formula
+
+x  D : P (x),
+
+build_djust returns
+
+is false. Instead, we have adapted build_djust with a heuristic
+
+check on the number of expected violations. If it is small enough, the justication is still
+returned. Naturally, we are then required to check whether there are any real violations, by
+querying the justication formula over
+
+I,
+
+and apply lazy_ground to them.
+
+References
+Alviano, M., Calimeri, F., Charwat, G., Dao-Tran, M., Dodaro, C., Ianni, G., Krennwallner,
+T., Kronegger, M., Oetsch, J., Pfandler, A., Phrer, J., Redl, C., Ricca, F., Schneider,
+P., Schwengerer, M., Spendier, L. K., Wallner, J. P., & Xiao, G. (2013). The fourth
+Answer Set Programming competition: Preliminary report.
+T. C. (Eds.),
+Apt, K. R. (2003).
+
+In Cabalar, P., & Son,
+
+LPNMR, Vol. 8148 of LNCS, pp. 4253. Springer.
+Principles of Constraint Programming. Cambridge University Press.
+281
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+Balduccini, M. (2011).
+
+Industrial-size scheduling with ASP+CP.
+
+In Delgrande, J. P., &
+
+LPNMR, Vol. 6645 of LNCS, pp. 284296. Springer.
+Knowledge Representation, Reasoning, and Declarative Problem Solving.
+
+Faber, W. (Eds.),
+Baral, C. (2003).
+
+Cambridge University Press, New York, NY, USA.
+Bonatti, P. A., Pontelli, E., & Son, T. C. (2008).
+
+Credulous resolution for answer set
+
+programming. In Fox, D., & Gomes, C. P. (Eds.),
+
+AAAI, pp. 418423. AAAI Press.
+
+Bruttomesso, R., Cimatti, A., Franzn, A., Griggio, A., Hanna, Z., Nadel, A., Palti, A.,
+& Sebastiani, R. (2007).
+verication problems.
+
+A lazy and layered SMT(BV) solver for hard industrial
+
+In Damm, W., & Hermanns, H. (Eds.),
+
+LNCS, pp. 547560. Springer.
+
+CAV,
+
+Vol. 4590 of
+
+Calimeri, F., Ianni, G., & Ricca, F. (2014). The third open answer set programming competition.
+
+TPLP, 14 (1), 117135.
+
+Chen, W., & Warren, D. S. (1996). Tabled evaluation with delaying for general logic programs.
+
+J. ACM, 43 (1), 2074.
+
+Claessen, K., & Srensson, N. (2003).
+
+New techniques that improve MACE-style model
+
+Proceedings of the CADE-19 Workshop: Model Computation - Principles,
+Algorithms, Applications.
+nding. In
+
+Dal Pal, A., Dovier, A., Pontelli, E., & Rossi, G. (2009). Answer set programming with
+constraints using lazy grounding. In Hill, P. M., & Warren, D. S. (Eds.),
+5649 of
+
+LNCS, pp. 115129. Springer.
+
+Dao-Tran, M., Eiter, T., Fink, M., Weidinger, G., & Weinzierl, A. (2012).
+
+ICLP,
+
+Vol.
+
+Omiga : An
+
+open minded grounding on-the-y answer set solver. In del Cerro, L. F., Herzig, A.,
+
+JELIA, Vol. 7519 of LNCS, pp. 480483. Springer.
+Cat, B. (2014). Separating Knowledge from Computation: An FO(.) Knowledge Base
+System and its Model Expansion Inference. Ph.D. thesis, KU Leuven, Leuven, Belgium.
+& Mengin, J. (Eds.),
+
+De
+
+De Cat, B., Bogaerts, B., Bruynooghe, M., & Denecker, M. (2014).
+modelling language: The IDP system.
+
+CoRR, abs/1401.6312.
+
+Predicate logic as a
+
+De Cat, B., Bogaerts, B., Devriendt, J., & Denecker, M. (2013). Model expansion in the
+presence of function symbols using constraint programming. In
+
+ICTAI, pp. 10681075.
+
+IEEE.
+De Cat, B., Denecker, M., & Stuckey, P. J. (2012). Lazy model expansion by incremental
+grounding. In Dovier, A., & Costa, V. S. (Eds.),
+
+ICLP (Technical Communications),
+
+LIPIcs, pp. 201211. Schloss Dagstuhl - Leibniz-Zentrum fuer Informatik.
+Delgrande, J. P., & Faber, W. (Eds.). (2011). Logic Programming and Nonmonotonic Reasoning - 11th International Conference, LPNMR 2011, Vancouver, Canada, May 16-19,
+2011. Proceedings, Vol. 6645 of LNCS. Springer.
+Vol. 17 of
+
+Denecker, M. (1998). The well-founded semantics is the principle of inductive denition. In
+Dix, J., del Cerro, L. F., & Furbach, U. (Eds.),
+Springer.
+
+282
+
+JELIA, Vol. 1489 of LNCS, pp. 116.
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+Denecker, M. (2000). Extending classical logic with inductive denitions. In Lloyd, J. W.,
+Dahl, V., Furbach, U., Kerber, M., Lau, K.-K., Palamidessi, C., Pereira, L. M., Sagiv,
+Y., & Stuckey, P. J. (Eds.),
+
+CL, Vol. 1861 of LNCS, pp. 703717. Springer.
+
+Denecker, M., Bruynooghe, M., & Marek, V. W. (2001). Logic programming revisited: Logic
+programs as inductive denitions.
+
+ACM Trans. Comput. Log., 2 (4), 623654.
+
+Denecker, M., & De Schreye, D. (1992). Justication semantics: A unifying framework for
+the semantics of logic programs.
+
+Tech. rep. 157, Department of Computer Science,
+
+K.U.Leuven.
+Denecker, M., & De Schreye, D. (1993). Justication semantics: A unifying framework for
+the semantics of logic programs. In Pereira, L. M., & Nerode, A. (Eds.),
+
+LPNMR, pp.
+
+365379. MIT Press.
+Denecker, M., Lierler, Y., Truszczynski, M., & Vennekens, J. (2012).
+mal semantics for answer set programming.
+
+ICLP (Technical Communications),
+
+Vol. 17 of
+
+A Tarskian infor-
+
+In Dovier, A., & Costa, V. S. (Eds.),
+
+LIPIcs,
+
+pp. 277289. Schloss Dagstuhl
+
+- Leibniz-Zentrum fuer Informatik.
+Denecker, M., & Ternovska, E. (2008). A logic of nonmonotone inductive denitions.
+
+Trans. Comput. Log., 9 (2), 14:114:52.
+
+ACM
+
+Denecker, M., & Vennekens, J. (2014). The well-founded semantics is the principle of inductive denition, revisited. In Baral, C., De Giacomo, G., & Eiter, T. (Eds.),
+
+KR,
+
+pp.
+
+2231. AAAI Press.
+Denecker, M., Vennekens, J., Bond, S., Gebser, M., & Truszczyski, M. (2009). The second
+answer set programming competition.
+
+In Erdem, E., Lin, F., & Schaub, T. (Eds.),
+
+LPNMR, Vol. 5753 of LNCS, pp. 637654. Springer.
+Detlefs, D., Nelson, G., & Saxe, J. B. (2005).
+checking.
+
+J. ACM, 52 (3), 365473.
+
+Simplify: A theorem prover for program
+
+Technical Communications of the 28th International Conference on Logic Programming, ICLP 2012, September 4-8, 2012, Budapest,
+Hungary. Proceedings, Vol. 17 of LIPIcs. Schloss Dagstuhl - Leibniz-Zentrum fuer In-
+
+Dovier, A., & Costa, V. S. (Eds.). (2012).
+
+formatik.
+Drescher, C., & Walsh, T. (2012). Answer set solving with lazy nogood generation. In Dovier,
+A., & Costa, V. S. (Eds.),
+
+ICLP (Technical Communications),
+
+Vol. 17 of
+
+LIPIcs,
+
+pp.
+
+188200. Schloss Dagstuhl - Leibniz-Zentrum fuer Informatik.
+Eiter, T., Ianni, G., Schindlauer, R., & Tompits, H. (2005). A uniform integration of higherorder reasoning and external evaluations in answer-set programming.
+
+In Kaelbling,
+
+IJCAI, pp. 9096. Professional Book Center.
+A Mathematical Introduction To Logic (Second edition).
+
+L. P., & Saotti, A. (Eds.),
+Enderton, H. B. (2001).
+
+Academic
+
+Press.
+
+Logic Programming and Nonmonotonic Reasoning, 10th International Conference, LPNMR 2009, Potsdam, Germany, September
+14-18, 2009. Proceedings, Vol. 5753 of LNCS. Springer.
+
+Erdem, E., Lin, F., & Schaub, T. (Eds.). (2009).
+
+283
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+Ge, Y., & de Moura, L. M. (2009). Complete instantiation for quantied formulas in satisabiliby modulo theories. In Bouajjani, A., & Maler, O. (Eds.),
+
+LNCS, pp. 306320. Springer.
+
+CAV,
+
+Vol. 5643 of
+
+Gebser, M., Kaminski, R., Kaufmann, B., Ostrowski, M., Schaub, T., & Thiele, S. (2008).
+Engineering an incremental ASP solver.
+(Eds.),
+
+In Garca de la Banda, M., & Pontelli, E.
+
+ICLP, Vol. 5366 of LNCS, pp. 190205. Springer.
+
+Gebser, M., Kaminski, R., Knig, A., & Schaub, T. (2011). Advances in Gringo series 3.
+In Delgrande, J. P., & Faber, W. (Eds.),
+
+LPNMR,
+
+Vol. 6645 of
+
+LNCS,
+
+pp. 345351.
+
+Springer.
+Gebser, M., Schaub, T., & Thiele, S. (2007).
+
+GrinGo : A new grounder for Answer Set
+
+Programming. In Baral, C., Brewka, G., & Schlipf, J. S. (Eds.),
+
+LNCS, pp. 266271. Springer.
+
+Hhnle, R. (2001).
+(Eds.),
+
+Tableaux and related methods.
+
+LPNMR, Vol. 4483 of
+
+In Robinson, J. A., & Voronkov, A.
+
+Handbook of Automated Reasoning, pp. 100178. Elsevier and MIT Press.
+
+Jackson, E. K., Bjorner, N., & Schulte, W. (2013).
+
+Open-world logic programs: A new
+
+foundation for formal specications. Tech. rep. MSR-TR-2013-55, Microsoft Research.
+Jansen, J., Jorissen, A., & Janssens, G. (2013). Compiling input
+
+3
+into tabled Prolog rules for IDP .
+
+FO() inductive denitions
+
+TPLP, 13 (4-5), 691704.
+
+Karp, R. (1972). Reducibility among combinatorial problems. In Miller, R., & Thatcher, J.
+(Eds.),
+
+Complexity of Computer Computations, pp. 85103. Plenum Press.
+
+Kimmig, A., Demoen, B., De Raedt, L., Santos Costa, V., & Rocha, R. (2011).
+implementation of the probabilistic logic programming language ProbLog.
+
+11 (2-3), 235262.
+
+Lefvre, C., & Nicolas, P. (2009).
+
+On the
+
+TPLP,
+
+The rst version of a new ASP solver: ASPeRiX.
+
+Erdem, E., Lin, F., & Schaub, T. (Eds.),
+
+LPNMR,
+
+Vol. 5753 of
+
+LNCS,
+
+In
+
+pp. 522527.
+
+Springer.
+Leone, N., Pfeifer, G., Faber, W., Eiter, T., Gottlob, G., Perri, S., & Scarcello, F. (2006).
+The DLV system for knowledge representation and reasoning.
+
+Log., 7 (3), 499562.
+
+ACM Trans. Comput.
+
+Liu, G., Janhunen, T., & Niemel, I. (2012). Answer Set Programming via Mixed Integer
+Programming.
+
+In Brewka, G., Eiter, T., & McIlraith, S. A. (Eds.),
+
+KR,
+
+pp. 3242.
+
+AAAI Press.
+Marek, V. W., & Truszczyski, M. (1999).
+gramming paradigm.
+D. S. (Eds.),
+
+Stable models and an alternative logic pro-
+
+In Apt, K. R., Marek, V. W., Truszczyski, M., & Warren,
+
+The Logic Programming Paradigm: A 25-Year Perspective,
+
+pp. 375398.
+
+Springer-Verlag.
+Marin, M. (2009).
+
+Model Generation for ID-Logic.
+
+Ph.D. thesis, Department of Computer
+
+Science, KU Leuven, Belgium.
+Marin, M., Gilis, D., & Denecker, M. (2004). On the relation between ID-Logic and answer
+set programming. In Alferes, J. J., & Leite, J. A. (Eds.),
+pp. 108120. Springer.
+
+284
+
+JELIA,
+
+Vol. 3229 of
+
+LNCS,
+
+fiLazy Model Expansion: Interleaving Grounding with Search
+Marin, M., Wittocx, J., Denecker, M., & Bruynooghe, M. (2008). SAT(ID): Satisability of
+propositional logic extended with inductive denitions. In Kleine Bning, H., & Zhao,
+X. (Eds.),
+
+SAT, Vol. 4996 of LNCS, pp. 211224. Springer.
+
+Marple, K., Bansal, A., Min, R., & Gupta, G. (2012). Goal-directed execution of answer
+set programs. In Schreye, D. D., Janssens, G., & King, A. (Eds.),
+
+PPDP,
+
+pp. 3544.
+
+ACM.
+Marques Silva, J. P., Lynce, I., & Malik, S. (2009).
+
+Conict-driven clause learning SAT
+
+Handbook of
+Satisability, Vol. 185 of Frontiers in Articial Intelligence and Applications, pp. 131
+solvers.
+
+In Biere, A., Heule, M., van Maaren, H., & Walsh, T. (Eds.),
+
+153. IOS Press.
+Metodi, A., & Codish, M. (2012). Compiling nite domain constraints to SAT with BEE.
+
+TPLP, 12 (4-5), 465483.
+
+Mitchell, D. G., & Ternovska, E. (2005).
+
+A framework for representing and solving NP
+
+search problems. In Veloso, M. M., & Kambhampati, S. (Eds.),
+
+AAAI,
+
+pp. 430435.
+
+AAAI Press / The MIT Press.
+Mitchell, D. G., Ternovska, E., Hach, F., & Mohebali, R. (2006).
+
+Model expansion as a
+
+framework for modelling and solving search problems. Tech. rep. TR 2006-24, Simon
+Fraser University, Canada.
+Nethercote, N., Stuckey, P., Becket, R., Brand, S., Duck, G., & Tack, G. (2007). Minizinc:
+Towards a standard CP modelling language. In Bessiere, C. (Ed.),
+of
+
+LNCS, pp. 529543. Springer.
+
+CP'07,
+
+Vol. 4741
+
+Nightingale, P., Gent, I. P., Jeerson, C., & Miguel, I. (2013). Short and long supports for
+constraint propagation.
+
+J. Artif. Intell. Res. (JAIR), 46, 145.
+
+Ohrimenko, O., Stuckey, P. J., & Codish, M. (2009). Propagation via lazy clause generation.
+
+Constraints, 14 (3), 357391.
+
+Ostrowski, M., & Schaub, T. (2012).
+
+12 (4-5), 485503.
+
+ASP modulo CSP: The clingcon system.
+
+Riedel, S. (2009). Cutting plane MAP inference for Markov logic. In
+
+on Statistical Relational Learning (SRL-2009).
+
+Saptawijaya, A., & Pereira, L. M. (2013).
+
+TPLP,
+
+International Workshop
+
+Towards practical tabled abduction in logic
+
+programs. In Correia, L., Reis, L. P., & Cascalho, J. (Eds.),
+
+EPIA, Vol. 8154 of LNCS,
+
+pp. 223234. Springer.
+Singla, P., & Domingos, P. (2006). Memory-ecient inference in relational domains. In Gil,
+Y., & Mooney, R. J. (Eds.),
+
+AAAI, pp. 488493. AAAI Press.
+
+Son, T. C., Pontelli, E., & Le, T. (2014).
+
+Two applications of the ASP-Prolog system:
+
+Decomposable programs and multi-context systems. In Flatt, M., & Guo, H.-F. (Eds.),
+
+PADL, Vol. 8324 of Lecture Notes in Computer Science, pp. 87103. Springer.
+
+Tamura, N., Taga, A., Kitagawa, S., & Banbara, M. (2009). Compiling nite linear CSP
+into SAT.
+
+Constraints, 14 (2), 254272.
+
+285
+
+fiDe Cat, Denecker, Stuckey & Bruynooghe
+Torlak, E., Chang, F. S.-H., & Jackson, D. (2008). Finding minimal unsatisable cores of
+declarative specications. In Cullar, J., Maibaum, T. S. E., & Sere, K. (Eds.),
+Vol. 5014 of
+
+LNCS, pp. 326341. Springer.
+
+FM,
+
+Tseitin, G. S. (1968). On the complexity of derivation in propositional calculus. In Slisenko,
+A. O. (Ed.),
+
+Studies in Constructive Mathematics and Mathematical Logic II, pp. 115
+
+125. Consultants Bureau, N.Y.
+Van Gelder, A. (1993). The alternating xpoint of logic programs with negation.
+
+Syst. Sci., 47 (1), 185221.
+
+J. Comput.
+
+Vennekens, J., Marin, M., Wittocx, J., & Denecker, M. (2007). Predicate introduction for
+logics with a xpoint semantics. Part I: Logic programming.
+
+79 (1-2), 187208.
+
+Fundamenta Informaticae,
+
+Wittocx, J., Denecker, M., & Bruynooghe, M. (2013). Constraint propagation for rst-order
+logic and inductive denitions.
+
+ACM Trans. Comput. Logic, 14 (3), 17:117:45.
+
+Wittocx, J., Marin, M., & Denecker, M. (2008). The
+
+idp system: A model expansion system
+
+for an extension of classical logic. In Denecker, M. (Ed.),
+
+LaSh, pp. 153165. ACCO.
+
+Wittocx, J., Marin, M., & Denecker, M. (2010). Grounding FO and FO(ID) with bounds.
+
+J. Artif. Intell. Res. (JAIR), 38, 223269.
+
+286
+
+fi

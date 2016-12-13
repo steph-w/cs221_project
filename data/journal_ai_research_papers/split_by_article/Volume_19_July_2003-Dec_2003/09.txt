@@ -1,0 +1,1525 @@
+Journal of Artificial Intelligence Research 19 (2003) 279-314
+
+Submitted 09/02; published 10/03
+
+Compiling Causal Theories to Successor State Axioms and
+STRIPS-Like Systems
+Fangzhen Lin
+
+flin@cs.ust.hk
+
+Department of Computer Science
+The Hong Kong University of Science and Technology
+Clear Water Bay, Kowloon, Hong Kong
+
+Abstract
+We describe a system for specifying the effects of actions. Unlike those commonly
+used in AI planning, our system uses an action description language that allows one to
+specify the effects of actions using domain rules, which are state constraints that can
+entail new action effects from old ones. Declaratively, an action domain in our language
+corresponds to a nonmonotonic causal theory in the situation calculus. Procedurally, such
+an action domain is compiled into a set of logical theories, one for each action in the domain,
+from which fully instantiated successor state-like axioms and STRIPS-like systems are then
+generated. We expect the system to be a useful tool for knowledge engineers writing action
+specifications for classical AI planning systems, GOLOG systems, and other systems where
+formal specifications of actions are needed.
+
+1. Introduction
+We describe a system for generating action effect specifications from a set of domain rules
+and direct action effect axioms, among other things. We expect the system to be a useful
+tool for knowledge engineers writing action specifications for classical AI planning systems,
+GOLOG systems (Levesque et al., 1997), and other systems where formal specifications of
+actions are needed.
+To motivate, consider the language used by STRIPS (Fikes & Nilsson, 1971) for describing the effects of actions. Briefly speaking, an action is described in this language by
+a first-order formula, called its precondition that describes the condition under which the
+action is executable, an add list that enumerates the propositions that the action will make
+true when successfully executed in a situation, and a delete list that enumerates the propositions that the action will make false when successfully executed in a situation. While the
+original STRIPS allowed the precondition and the elements of the two lists to be complex
+formulas, STRIPS actions now refer only to those whose precondition is given by a conjunction of atomic formulas and whose add and delete lists are lists of atomic formulas.
+It is widely acknowledged that this language is inadequate for describing actions in the
+real world. One of the limitations, the one that we address in this paper, is that with the
+language, one has to enumerate all possible effects of an action, a difficult if not impossible
+task for complex domains. For example, given a large C program, it is hard to figure out the
+effects of changing the value of a pointer on the values of all other pointers in the program.
+However, the underlying principle is very simple: when the value of a pointer changes, the
+values of all other pointers that point to the same memory location change as well. Put
+another way, the direct effect of the action of changing the value of a pointer to x is that the
+c
+2003
+AI Access Foundation and Morgan Kaufmann Publishers. All rights reserved.
+
+fiLin
+
+value of the pointer will be x. The indirect or side effects of this action are those derived
+from the constraint which says that if two pointers point to a common location, then their
+values must be the same.
+This idea of specifying the effects of actions using domain constraints is like engineering
+from first principle, and has many advantages. First of all, constraints are action independent, and work on all actions. Secondly, if the effects of actions derived from domain
+constraints agree with ones expectation, then this will be a good indication that one has
+axiomatized the domain correctly. Finally, domain constraints can be used for other purposes as well. For instance, they can be used to check the consistency of the initial situation
+database. In general, when a set of sentences violates a domain constraint, we know that no
+legal situation can satisfy this set of sentences. This idea can and has been used in planning
+to prune impossible states. Recently, there have even been efforts at reverse engineering
+domain constraints from STRIPS-like systems to speed up planners (e.g. Zhang & Foo,
+1997; Gerevini & Schubert, 1998; Fox & Long, 1998, and others).
+While it is appealing to use domain constraints to derive the indirect effects of actions,
+making the idea work formally turned out to be a challenge. The problem is commonly
+known as the ramification problem, and various proposals have been made to solve it. Until
+recently, however, these proposals were at best of theoretical interest only because of their
+high computational complexity. The situation has since changed substantially due to the
+use of causality in representing domain constraints (Lin, 1995, 1996; McCain & Turner,
+1995, 1997; Thielscher, 1995, 1997; Baral, 1995; Lifschitz, 1997, and others). What we will
+describe in this paper is an implemented system that builds on this recent work on causalitybased approaches to the ramification problem. Specifically, our system takes as input an
+action domain description where actions are described by their precondition axioms and
+direct effect axioms, and domain constraints are represented by what we call domain rules.
+The system returns as output a complete action specification both in STRIPS-like format
+and as a set of fully instantiated successor state axioms (Reiter, 1991).
+This paper is organized as follows. We begin by introducing our action description language. We then propose a procedure to compile an action domain specified in this language
+into a complete set of successor state axioms from which a STRIPS-like description is then
+extracted. We then show the soundness of this procedure with respect to a translation from
+action domain descriptions to situation calculus causal theories of Lin (1995). We next
+describe an implementation of this procedure, and present some experimental results. As
+one will see, one of the limitations of our system is that it is essentially propositional. While
+effect axioms and domain rules can have variables, they need to be fully instantiated during
+the compilation process. To partially overcome this limitation, we show some results that
+allow one to generalize the propositional output to the first-order case for certain classes of
+action domain descriptions. We then discuss some related work, and conclude this paper
+with some pointers for future work.
+
+2. An Action Description Language
+We assume a first-order language with equality. We shall call those predicates whose extensions may be changed by actions fluents, and those whose extensions are not changed by
+any actions static relations. We also call unary static relations types. By fluent atoms we
+280
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+mean those atomic formulas formed by fluents. An equality atom is one of the form u = v,
+where u and v are variables or constants, and an inequality constraint is one of the form
+u 6= v. Actions are represented by functions, and they are assumed to be the only functions
+with positive arities in the language.
+Our action description language includes the following components.
+2.1 Type Definitions
+A type definition is specified by expressions of the following form:
+Domain(p, {a1 , ..., an }),
+where p is a type, and a1 , ..., an are constants. The intuitive meaning of this expression is
+that the domain (extension) of the type p is the set {a1 , ..., an }. For instance, in the blocks
+world, we may have a type called block, and have, say, five blocks named numerically:
+Domain(block, {1, 2, 3, 4, 5}). In a logistics domain, we may have a type called loc for
+locations, and have, say, 3 locations l1 , l2 , and l3 : Domain(loc, {l1 , l2 , l3 }).
+2.2 Primitive Fluent Definitions
+Primitive fluents are defined by expressions of the following form:
+Fluent(f (x1 , ..., xn ), p1 (x1 )      pn (xn )  e1      em ),
+where f is an n-ary fluent, each pi , 1  i  n, a type, and each ei , 1  i  m, an
+inequality constraint of the form xj 6= xk , for some 1  j < k  n. The intuitive meaning
+of this expression is that f (x1 , ..., xn ) is a legal fluent atom if the second argument is true.
+For instance, in the blocks world, given the type definition Domain(block, {1, 2, 3}), the
+following fluent specification:
+Fluent(on(x, y), block(x)  block(y)  x 6= y)
+would generate the following six legal fluent atoms:
+on(1, 2), on(1, 3), on(2, 1), on(2, 3), on(3, 1), on(3, 2).
+Clearly, there should be exactly one fluent definition for each fluent.
+2.3 Complex Fluent Definitions
+Given a set of primitive fluents, one may want to define some new ones. For instance,
+in the blocks world, given the primitive fluent on, we can define clear in terms of on as:
+(x)clear(x)  (y)on(y, x).
+To specify complex fluents like clear, we first define fluent formulas as follows:
+ t1 = t2 is a fluent formula, where t1 and t2 are terms, i.e. either a constant in the
+domain of a type or a variable.
+ f (t1 , ..., tn ) is a fluent formula, where t1 , ..., tn are terms, and f is either an n-ary
+primitive fluent, a complex fluent, or a static relation.
+281
+
+fiLin
+
+ If  and 0 are fluent formula, then ,   0 ,   0 ,   0 , and   0 are also
+fluent formulas.
+ If  is a fluent formula, x a variable, and p a type, then (x, p) (for all x of type p,
+ holds) and (x, p) (for some x of type p,  holds) are fluent formulas. Notice that
+we require types to have finite domains, so these quantifications are really shorthands:
+If the domain of p is {a1 , ..., an }, then (x, p) stands for
+(x/a1 )      (x/an ),
+and (x, p) stands for
+(x/a1 )      (x/an ).
+A complex fluent is then specified in our language by a pair of expressions of the following
+form:
+Complex(f (x1 , ..., xn ), p1 (x1 )      pn (xn )  e1     em ),
+Defined(f (x1 , ..., xn ), ),
+where pi s and ei s are the same as in primitive fluent definitions, and  a fluent formula
+that does not mention any complex fluents and whose free variables are among x1 , ..., xn .
+The first expression specifies the syntax and the second the semantics of the complex fluent.
+For instance, the complex fluent clear in the blocks world can be specified as:
+Complex(clear(x), block(x)),
+Defined(clear(x), (y, block)on(y, x)).
+As we mentioned above, quantifiers here are just shorthands because each type must have
+a finite domain. For instance, given the following specification:
+Domain(block, {1, 2, 3}),
+Fluent(on(x, y), block(x)  block(y))
+the above fluent definition for clear will be expanded to:
+Defined(clear(1), (on(1, 1)  on(2, 1)  on(3, 1))),
+Defined(clear(2), (on(1, 2)  on(2, 2)  on(3, 2))),
+Defined(clear(3), (on(1, 3)  on(2, 3)  on(3, 3))).
+2.4 Static Relation Definitions
+As we mentioned, a static relation is one that is not changed by any action in the domain.
+For instance, in the robot navigation domain, we may have a proposition connected(d, r1, r2)
+meaning that door d connects rooms r1 and r2. The truth value of this proposition cannot
+be changed by the navigating robot that just rolls from room to room.
+In our language, a static relation is defined by an expression of the following form:
+Static(g(x1 , ..., xn ), p1 (x1 )      pn (xn )  e1      em ),
+where g is an n-ary predicate, and pi s and ei s are the same as in primitive fluent definitions.
+The meaning of this expression is similar to a fluent definition, and there should be exactly
+one definition for each static relation.
+282
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+2.5 Domain Axioms
+Domain axioms are constraints on static relations. For instance, for the static proposition
+connected(d, r1, r2), we may want to impose the following constraint: connected(d, r1, r2) 
+connected(d, r2, r1). In our language, domain axioms are specified by expressions of the
+form:
+Axiom(),
+where  is a fluent formula that does not mention any fluents, i.e. it mentions only static
+relations and equality. For instance, the above constraint on connected is written as:
+Axiom((d, door)(r1 , room)(r2 , room)connected(d, r1 , r2 ) 
+connected(d, r2 , r1 )),
+where door and room are types.
+2.6 Action Definitions
+Actions are defined by expressions of the following form:
+Action(a(x1 , ..., xn ), p1 (x1 )      pn (xn )  e1      em ),
+where a is an n-ary action, and pi s and ei s are the same as in primitive fluent definitions.
+For instance, in the blocks world, given the type definition Domain(block, {1, 2, 3}), the
+following action specification:
+Action(stack(x, y), block(x)  block(y)  x 6= y)
+would generate the following six action instances:
+stack(1, 2), stack(1, 3), stack(2, 1), stack(2, 3), stack(3, 1), stack(3, 2).
+There should be exactly one action definition for each action.
+2.7 Action Precondition Definitions
+Action precondition definitions are specified by expressions of the following form:
+P recond(a(x1 , ..., xn ), ),
+where a is an n-ary action,  is a fluent formula whose free variables are among x1 , ..., xn .
+There should be exactly one precondition definition for each action. For instance, in the
+blocks world, we may have:
+P recond(stack(x, y), clear(x)  clear(y)  ontable(x)),
+which says that for the action stack(x, y) to be executable in a situation, clear(x), clear(y),
+and ontable(x) must be true in it.
+283
+
+fiLin
+
+2.8 Action Effect Specifications
+Action effects are specified by expressions of the following form:
+Effect(a(x1 , ..., xn ), , f (y1 , ..., yk )),
+or of the form:
+Effect(a(x1 , ..., xn ), , f (y1 , ..., yk )),
+where  is a fluent formula, and f a primitive fluent. The intuitive meaning of these
+expressions is that if  is true in the initial situation, then action a(x1 , ..., xn ) will cause
+f (y1 , ..., yk ) to be true (false). For instance, in the blocks world, action stack(x, y) causes
+x to be on y:
+Effect(stack(x, y), true, on(x, y)).
+For an example of a context dependent effect, consider action drop(x) that breaks an object
+only if it is fragile:
+Effect(drop(x), f ragile(x), broken(x)).
+Notice here that the fluent formula  in the action effect specifications can have variables that are not in x1 , ..., xn , y1 , ..., yk . Informally, all the variables are supposed to be
+universally quantified. More precisely, when these expressions are instantiated, one can
+substitute any objects for these variables, provided the resulting formulas are well-formed.
+For instance, given the action effect specification Effect(move(x), g(x1 )  q(x1 , x2 ), f (y)),
+one can instantiate it to: Effect(move(a), g(b)  q(b, c), f (d)), as long as move(a) is a legal
+action (according to the action definition for move) and g(b), q(b, c), and f (d) are legal
+fluent atoms (according to the fluent definitions for g, q, and f ).
+2.9 Domain Rules
+Domain rules are specified by expressions of the following form:
+Causes(, f (x1 , ..., xn )),
+or of the following form:
+Causes(, f (x1 , ..., xn )),
+where  is a fluent formula, and f a primitive fluent. Like action effect specifications, 
+here can have variables that are not in x1 , ..., xn . The intuitive meaning of a domain rule
+is that in any situation, if  holds, then the fluent atom f (x1 , ..., xn ) will be caused to be
+true. A domain rule is stronger than material implication. Its formal semantics is given
+by mapping it to a causal rule of Lin (1995) (see Section 4), thus the name causes. For
+instance, in the blocks world, a block can be on only one other block:
+Causes(on(x, y)  y 6= z, on(x, z)).
+In a logistics domain, one may want to say that if a package is inside a truck which is at
+location l, then the package is at location l as well:
+Causes(in(x, y)  at(y, l), at(x, l)).
+284
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+2.10 Action Domain Descriptions
+The following definition sums up our action description language:
+Definition 1 An action domain description is a set of type definitions, primitive fluent
+definitions, complex fluent definitions, static proposition definitions, domain axioms, action
+definitions, action precondition definitions, action effect specifications, and domain rules.
+Example 1 The following action domain description defines a blocks world with three
+blocks:
+Domain(block, {1, 2, 3}),
+Fluent(on(x, y), block(x)  block(y)),
+Fluent(ontable(x), block(x)),
+Complex(clear(x), block(x)),
+Defined(clear(x), (y, block)on(y, x)),
+Causes(on(x, y)  x 6= z, on(z, y)),
+Causes(on(x, y)  y 6= z, on(x, z)),
+Causes(on(x, y), ontable(x)),
+Causes(ontable(x), on(x, y)),
+Action(stack(x, y), block(x)  block(y)  x 6= y),
+P recond(stack(x, y), ontable(x)  clear(x)  clear(y)),
+Effect(stack(x, y), true, on(x, y)),
+Action(unstack(x, y), block(x)  block(y)  x 6= y),
+P recond(unstack(x, y), clear(x)  on(x, y)),
+Effect(unstack(x, y), true, ontable(x)),
+Action(move(x, y, z), block(x)  block(y)  block(z)  x 6= y  x 6= z  y 6= z),
+P recond(move(x, y, z), on(x, y)  clear(x)  clear(z)),
+Effect(move(x, y, z), true, on(x, z)).
+
+3. A Procedural Semantics
+Given an action domain description D, we use the following procedure called CCP (Causal
+Completion Procedure) to generate a complete action effect specification:
+1. Use primitive and complex fluent definitions to generate all legal fluent atoms. In the
+following let F be the set of fluent atoms so generated.
+2. Use action definitions to generate all legal action instances, and for each such action
+instance A do the following.
+285
+
+fiLin
+
+2.1. For each primitive fluent atom F  F, collect all ground instances1 of As positive
+effects:
+Effect(A, 1 , F ),    , Effect(A, n , F ),
+all ground instances of As negative effects:
+Effect(A, 1 , F ),    , Effect(A, m , F ),
+all ground instances of positive domain rules:
+Causes(01 , F ),    , Causes(0k , F ),
+all ground instances of negative domain rules:
+Causes(01 , F ),    , Causes(0l , F ),
+and generate the following pseudo successor state axiom;
+succ(F )  init(1 )      init(n )  succ(01 )      succ(0l ) 
+init(F )  [init(1 )      init(m ) 
+succ(01 )      succ(0k )],
+
+(1)
+
+where for any fluent formula , init() is the formula obtained from  by replacing every fluent atom f in  by init(f ), and similarly succ() is the formula
+obtained from  by replacing every fluent atom f in  by succ(f ). Intuitively,
+init(f ) means that f is true in the initial situation, and succ(f ) that f is true
+in the successor situation of performing action A in the initial situation.
+2.2. Let Succ be the set of pseudo successor state axioms, one for each primitive
+fluent F , generated by the last step, Succ1 the following set of axioms:
+Succ1 = {succ(F )  succ() | Defined(F, ) is a complex fluent definition},
+and Init the following set of axioms:
+Init = { | Axiom() is a domain axiom} 
+{init()  init(F ) | Causes(, F ) is a domain rule} 
+{init()  init(F ) | Causes(, F ) is a domain rule} 
+{init(F )  init() | Defined(F, ) is a complex fluent definition} 
+{init(A ) | P recond(A, A ) is the precondition definition for A}.
+For each fluent atom F , if there is a formula F such that
+Init  Succ  Succ1 |= succ(F )  F ,
+and F does not mention propositions of the form succ(f ), then output the
+axiom
+succ(F )  F .
+1. When generating ground instances, all shorthands like (x, p) are expanded. See the definition of fluent
+formulas in the last section.
+
+286
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+Otherwise, the action As effect on F is indeterminate. In this case, output two
+axioms:
+succ(F )  F ,
+F  succ(F ),
+where F is a strongest formula satisfying the first implication, and F a weakest
+formula satisfying the second implication. In the following, to be explicit about
+the action A for which we are computing its effects, we will write the axioms as
+SuccA , InitA , and Succ1A .
+Conceptually, Step 2.1 in the above procedure is most significant. In the next section,
+we shall prove that this step is provably correct under a translation to the situation calculus
+causal theories of Lin (1995). Computationally, Step 2.2 is the most expensive. We shall
+describe the strategies that our system uses to implement it in Section 5.
+For this procedure to work properly, the action domain description should satisfy the
+following conditions.
+1. We require that all fluent atoms in Init, Succ, and Succ1 be among those generated
+in Step 1. This would rule out cases like
+Fluent(on(x, y), block(x)  block(y)  x 6= y)
+together with Defined(clear(x), (y, block)on(y, x)), as the latter would generate
+fluent atoms of the form on(x, x) which are ruled out by the fluent definition for on.
+Here one could either drop the inequality constraint in the definition of on or change
+the complex fluent definition into Defined(clear(x), (y, block)(on(y, x)  x 6= y)).
+We could have built in a test in our procedure above to reject an action domain
+description with incoherent fluent definitions like this. One easy way of making sure
+this does not happen is not to use inequality constraints in the definition of fluents.
+2. As we mentioned above, for each action there should be exactly one action precondition that captures exactly the conditions under which the action is executable.
+When the action precondition is given explicitly like this, one needs to be careful
+in writing action effect axioms and domain rules so that no contradictory effects
+would be generated. For instance, given P recond(A, true), the action effect axioms
+Effect(A, true, F ) and Effect(A, true, F ) are clearly not realizable simultaneously.
+Similarly, if Causes(true, F ) is given as a domain rule, then one should not write the
+effect axiom Effect(A, true, F ). Had we not insisted that A be always executable, we
+could simply conclude that A is not executable when its effect axioms are in contradiction or when some of its effect axioms contradict domain rules. It remains future
+work to extend our procedure to allow for automatic generation of these implicitly
+given action preconditions. For now, we shall assume that the given action domain
+specification is consistent in the sense that for each action instance A generated in
+Step 1, the following theory
+Init  Succ  Succ1  {init()  succ(F ) |
+Effect(A, , F ) is a ground instance of effect axiom}
+287
+
+fiLin
+
+is consistent.
+3. On a related point, our procedure assumes that information about the initial situation
+is given by Init. In particular, action effect axioms should not entail any information about the initial situation. For instance, given Causes(q, p), Effect(A, true, p),
+and P recond(A, true), it must be that in the initial situation, q cannot be true, for
+otherwise, it will persist into the next situation, causing p to be false, which contradicts the action effect. Formally, this means that given any set I of atoms of the
+form init(f ), where f is a primitive fluent atom, if I  I   Init is consistent, then
+I I  SuccSucc1 is also consistent, where I  , the complement of I, is the following
+set:
+{init(f ) | init(f ) 6 I and
+f is a primitive fluent atom generated by Step 1}
+Notice that for a similar reason, Reiter needed what he called the consistency assumption in order for his completion procedure to be sound and complete for generating
+successor state axioms (Reiter, 1991).
+While our action domain descriptions are clearly targeted at specifying deterministic actions,
+some indeterminate effects can sometimes arise from cyclic domain rules. For instance,
+consider the following action domain description:
+Causes(p, p),
+P recond(A, true)
+For action A, Init is a tautology, Succ1 is empty, and Succ consists of the following pseudosuccessor state axiom for p:
+succ(p)  succ(p)  init(p),
+which is equivalent to init(p)  succ(p). So if initially p is true, then after A is performed,
+we know that p will continue to be true. But if p is initially false, then after A is performed,
+we do not know if p is true or not.
+Example 2 Consider the blocks world description in Example 1. The set of fluent atoms
+generated by Step 1 is:
+F = {on(1, 1), on(1, 2), on(1, 3), on(2, 1), on(2, 2), on(2, 3),
+on(3, 1), on(3, 2), on(3, 3), clear(1), clear(2), clear(3),
+ontable(1), ontable(2), ontable(3)}.
+Step 2 generates the following action instances:
+stack(1, 2), stack(1, 3), stack(2, 1), stack(2, 3), stack(3, 1), stack(3, 2),
+unstack(1, 2), unstack(1, 3), unstack(2, 1), unstack(2, 3), unstack(3, 1),
+unstack(3, 2), move(1, 2, 3), move(1, 3, 2), move(2, 1, 3), move(2, 3, 1),
+move(3, 1, 2), move(3, 2, 1)
+288
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+For each of these action instances, we need to go through Steps 2.1 and 2.2. For instance,
+for stack(1, 2), there is only one effect axiom about on(1, 2):
+Effect(stack(1, 2), true, on(1, 2)),
+and the following causal rules about on(1, 2):
+Causes(on(1, 1), on(1, 2)),
+Causes(on(1, 3), on(1, 2)),
+Causes(on(2, 2), on(1, 2)),
+Causes(on(3, 2), on(1, 2)),
+Causes(ontable(1), on(1, 2)).
+Therefore Step 2.1 generates the following pseudo-successor state axiom for on(1, 2):
+succ(on(1, 2))  true 
+init(on(1, 2))  [succ(on(1, 1))  succ(on(1, 3)) 
+succ(on(2, 2))  succ(on(3, 2)  succ(ontable(1))].
+We can similarly generate the following pseudo-successor state axioms for the other primitive
+fluent atoms:
+succ(on(1, 1))  init(on(1, 1))  [succ(on(1, 2))  succ(on(1, 3)) 
+succ(on(2, 1))  succ(on(3, 1)  succ(ontable(1))],
+succ(on(1, 3))  init(on(1, 3))  [succ(on(1, 1))  succ(on(1, 2)) 
+succ(on(2, 3))  succ(on(3, 3))  succ(ontable(1))],
+succ(on(2, 1))  init(on(2, 1))  [succ(on(1, 1))  succ(on(3, 1)) 
+succ(on(2, 2))  succ(on(2, 3))  succ(ontable(2))],
+succ(on(2, 2))  init(on(2, 2))  [succ(on(1, 2))  succ(on(1, 3)) 
+succ(on(2, 1)  succ(on(2, 3))  succ(ontable(2))],
+succ(on(2, 3))  init(on(2, 3))  [succ(on(1, 3))  succ(on(3, 3)) 
+succ(on(2, 1)  succ(on(2, 2))  succ(ontable(2))],
+succ(on(3, 1))  init(on(3, 1))  [succ(on(3, 2))  succ(on(3, 3)) 
+succ(on(1, 1)  succ(on(1, 3))  succ(ontable(1))],
+succ(on(3, 2))  init(on(3, 2))  [succ(on(3, 1))  succ(on(3, 3)) 
+succ(on(1, 2)  succ(on(2, 2))  succ(ontable(2))],
+succ(on(3, 3))  init(on(3, 3))  [succ(on(3, 1))  succ(on(3, 2)) 
+succ(on(1, 3)  succ(on(2, 3))  succ(ontable(3))],
+succ(ontable(1)) 
+init(ontable(1))  [succ(on(1, 2))  succ(on(1, 1))  succ(on(1, 3))],
+succ(ontable(2)) 
+init(ontable(2))  [succ(on(2, 1))  succ(on(2, 2))  succ(on(2, 3))],
+289
+
+fiLin
+
+succ(ontable(3)) 
+init(ontable(3))  [succ(on(3, 1))  succ(on(3, 2))  succ(on(3, 3))].
+For the complex fluent clear, its definition yields the following axioms:
+succ(clear(1))  succ(on(1, 1))  succ(on(2, 1))  succ(on(3, 1)),
+succ(clear(2))  succ(on(1, 2))  succ(on(2, 2))  succ(on(3, 2)),
+succ(clear(3))  succ(on(1, 3))  succ(on(2, 3))  succ(on(3, 3)).
+We can then solve these pseudo-successor state axioms and generate the following successor state axioms:
+succ(on(1, 1))  f alse
+succ(on(1, 3))  f alse
+succ(on(2, 2))  f alse
+succ(on(3, 1))  f alse
+succ(on(3, 3))  init(on(3, 3))
+succ(ontable(2))  init(ontable(2))
+succ(clear(1))  init(clear(1))
+succ(clear(3))  init(clear(3))
+
+succ(on(1, 2))  true
+succ(on(2, 1))  f alse
+succ(on(2, 3))  init(on(2, 3))
+succ(on(3, 2))  f alse
+succ(ontable(1))  f alse
+succ(ontable(3))  init(ontable(3))
+succ(clear(2))  f alse
+
+Once we have a set of these fully instantiated successor state axioms, we then generate
+STRIPS-like descriptions like the following:
+stack(1, 2)
+Preconditions:
+Add list:
+Delete list:
+Cond. effects:
+Indet. effects:
+
+ontable(1), clear(1), clear(2).
+on(1, 2).
+ontable(1), clear(2).
+none.
+none.
+
+stack(1, 3)
+Preconditions:
+Add list:
+Delete list:
+Cond. effects:
+Indet. effects:
+
+ontable(1), clear(1), clear(3).
+on(1,3).
+ontable(1), clear(3).
+none.
+none.
+
+290
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+We have the following remarks:
+ Although we generate the axiom succ(on(1, 3))  f alse for stack(1, 2), we do not put
+on(1, 3) into its delete list. This is because we can deduce init(on(1, 3))  f alse from
+Init as well. A fluent atom is put into the add or the delete list of an action only if
+this fluent atoms truth value is definitely changed by the action. See Section 5 for
+more details about how a STRIPS-like description is generated from successor state
+axioms.
+ As one can see, our CCP procedure crucially depends on the fact that each type has
+a finite domain so that all reasoning can be done in propositional logic. This is a
+limitation of our current system, and this limitation is not as bad as one might think.
+First of all, typical planning problems all assume finite domains, and changing the
+domain of a type in an action description is easy - all one needs to do is to change the
+corresponding type definition. More significantly, a generic action domain description
+can often be obtained from one that assumes a finite domain. In our blocks world
+example, the numbers 1, 2, and 3 are generic names, and can be replaced by
+parameters. For instance, if we replace 1 by x and 2 by y in the above STRIPSlike description of stack(1, 2), we will get a STRIPS-like description for stack(x, y)
+that works for any x and y. We have found that this is a strategy that often works in
+planning domains.
+
+4. Formal Semantics
+The formal semantics of an action domain description is defined by translating it into a
+situation calculus causal theory of Lin (1995). We shall show that the procedure CCP given
+above is sound under this semantics.
+This section is mainly for those who are interested in nonmonotonic action theories. For
+those who are interested only in using our action description language for describing action
+domains, this section can be safely skipped.
+We first briefly review the language of the situation calculus.
+4.1 Situation Calculus
+The language of the situation calculus is a many sorted first-order language. We assume the
+following sorts: situation for situations, action for actions, fluent for propositional fluents,
+truth-value for truth values true and f alse, and object for everything else.
+We use the following domain independent predicates and functions:
+ Binary function do - for any action a and any situation s, do(a, s) is the situation
+resulting from performing a in s.
+ Binary predicate H - for any p and any situation s, H(p, s) is true if p holds in s.
+ Binary predicate P oss - for any action a and any situation s, P oss(a, s) is true if a is
+possible (executable) in s.
+ Ternary predicate Caused - for any fluent atom p, any truth value v, and any situation
+s, Caused(p, v, s) is true if the fluent atom p is caused (by something unspecified) to
+have the truth value v in the situation s.
+291
+
+fiLin
+
+In the last section, we introduced fluent formulas. We now extend H to these formulas:
+for any fluent formula  and situation s, H(, s) is defined as follows:
+ H(t1 = t2 , s) is t1 = t2 .
+ if P is a static proposition, then H(P, s) is P .
+ inductively, H(, s) is H(, s), H(  0 , s) is H(, s)  H(0 , s), and similarly for
+other connectives.
+ inductively, H((x, p), s) is x.[p(x)  H(, s)] and H((x, p), s) is x.[p(x) 
+H(, s)].
+According to this definition, H(, s) will be expanded to a situation calculus formula where
+H is applied to fluents.
+4.2 A Translation to the Situation Calculus
+Given a first-order language L for writing action domain descriptions, we assume that there
+will be a corresponding language L0 for the situation calculus such that constants in L
+will be constants of sort object in L0 , types in L will be types (unary predicates) in L0 ,
+static relations will be predicates of the same arities in L0 , fluents in L will be functions
+of sort f luent in L0 , and actions in L will be functions of sort action in L0 . Under these
+conventions, the following translation will map an action domain description to a situation
+calculus theory.
+Let D be an action domain description. The translation of D into a situation calculus
+theory is defined as follows:
+ a type definition Domain(p, {a1 , ..., ak }) is translated to:
+(x).p(x)  (x = a1      x = ak ),
+a1 6= a2 6=    6= ak .
+ a primitive fluent definition
+Fluent(f (x1 , ..., xn ), p1 (x1 )      pn (xn )  e1      em )
+is translated to
+(x1 , ..., xn ).Fluent(f (x1 , ..., xn ))  p1 (x1 )      pn (xn )  e1      em .
+ a complex fluent definition
+Complex(f (x1 , ..., xn ), p1 (x1 )      pn (x)  e1     em ),
+Defined(f (x1 , ..., xn ), ),
+is translated to
+(x1 , ..., xn ).Fluent(f (x1 , ..., xn ))  p1 (x1 )      pn (x)  e1     em ,
+(x1 , ..., xn , s).Fluent(f (x1 , ..., xn ))  [H(f (x1 , ..., xn ), s)  H(, s)].
+292
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+ a domain axiom about static propositions:
+Axiom()
+is translated to  with quantifiers in it treated as shorthands:
+(x, p) = x.p(x)  ,
+(x, p) = x.p(x)  .
+ an action definition
+Action(a(x1 , ..., xn ), p1 (x1 )      pn (xn )  e1      em )
+is translated to
+(x1 , ..., xn ).Action(a(x1 , ..., xn ))  p1 (x1 )      pn (xn )  e1      em .
+We assume here that the domain description has only one action definition for each
+action.
+ An action precondition axiom
+P recond(a(x1 , ..., xn ), )
+is translated to
+~ s).Action(a(x1 , ..., xn ))  [P oss(a(x1 , ..., xn ), s)  H(, s)],
+(,
+where ~ is the list of all free variables in a(x1 , ..., xn ) and . We mentioned earlier
+that one of the limitations of our current system is that action preconditions have to
+be given explicitly. This is reflected in the above translation.
+ An action effect axiom:
+Effect(a(x1 , ..., xn ), , f (y1 , ..., yk )),
+is translated to
+~ s).Action(a(x1 , ..., xn ))  Fluent(f (y1 , ..., yk ))  P oss(a(x1 , ..., xn ), s) 
+(,
+{H(, s)  Caused(f (y1 , ..., yk ), true, do(a(x1 , ..., xn ), s))},
+where ~ is the list of all free variables in a(x1 , ..., xn ), f (y1 , ..., yk ), and .
+Similarly, an effect axiom
+Effect(a(x1 , ..., xn ), , f (y1 , ..., yk )),
+is translated to
+~ s).Action(a(x1 , ..., xn ))  Fluent(f (y1 , ..., yk ))  P oss(a(x1 , ..., xn ), s) 
+(,
+{H(, s)  Caused(f (y1 , ..., yk ), f alse, do(a(x1 , ..., xn ), s))}.
+293
+
+fiLin
+
+ A domain rule of the form
+Causes(, f (x1 , ..., xn ))
+is translated to
+~
+().Fluent(f
+(x1 , ..., xn ))  (s){H(, s)  Caused(f (x1 , ..., xn ), true, s)},
+where ~ is the list of all free variables in f (x1 , ..., xn ) and . Similarly, a domain rule
+of the form
+Causes(, f (x1 , ..., xn ))
+is translated to
+~
+().Fluent(f
+(x1 , ..., xn ))  (s){H(, s)  Caused(f (x1 , ..., xn ), f alse, s)}.
+Now given an action domain description D, let T be its translation in the situation
+calculus. The semantics of T is then determined by its completion comp(T ) that is defined
+as the set of following sentences:
+1. The circumscription of Caused in T with all other predicates fixed.
+2. The following basic axioms about Caused that says that if a fluent atom is caused to
+be true (false), then it is true (false):
+Caused(p, true, s)  Holds(p, s),
+
+(2)
+
+Caused(p, f alse, s)  Holds(p, s).
+
+(3)
+
+3. For the truth values, the following unique names and domain closure axiom:
+true 6= f alse  (v)(v = true  v = f alse).
+
+(4)
+
+4. The unique names assumptions for fluents and actions. Specifically, if F1 ,..., Fn are
+all the fluents, then we have:
+Fi (~x) 6= Fj (~y ), i and j are different,
+Fi (~x) = Fi (~y )  ~x = ~y .
+Similarly for actions.
+5. For each primitive fluent atom F , the following generic successor state axiom:
+a, s.P oss(a, s)  H(F, do(a, s)) 
+
+(5)
+
+[Caused(F, true, do(a, s))  H(F, s)  Caused(F, f alse, do(a, s))].
+6. The foundational axioms (Lin & Reiter, 1994b) for the discrete situation calculus.
+These axioms characterize the structure of the space of situations. For the purpose
+of this paper, it is enough to mention that they include the following unique names
+axioms for situations:
+s 6= do(a, s),
+do(a, s) = do(a0 , s0 )  (a = a0  s = s0 ).
+294
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+The following theorem shows that the procedural semantics given in the previous section
+is sound with respect to the semantics given here.
+Theorem 1 Let D be an action domain description, and T its translation in the situation
+calculus. Let A be any ground action instance, s a situation variable, and (s) a situation
+calculus formula that satisfies the following two conditions (1) it contains at most the two
+situation terms s and do(A, s); and (2) it does not mention any predicate other than H,
+equality, and static relations. Let  be obtained from  by replacing each H(f, s) in it by
+init(f ), and each H(f, do(A, s)) in it by succ(f ). Then
+comp(T ) |= s.P oss(A, s)  (s)
+
+(6)
+
+Init  Succ  Succ1 |= ,
+
+(7)
+
+if
+where Init, Succ, and Succ1 are the sets of axioms generated for A according to the procedure in Section 3
+Proof: Suppose S is a situation and M is a model of comp(T )  {P oss(A, S)}. Construct
+MS,A as follows:
+ the domain of MS,A is the object domain of M .
+ the interpretations of non-situational function and predicate symbols in MS,A are the
+same as those in M .
+ for any fluent atom f , MS,A |= init(f ) iff M |= H(f, S) and MS,A |= succ(f ) iff
+M |= H(f, do(A, S)).
+Clearly, M |= (S) iff MS,A |= . We show below that MS,A is a model of the left hand
+side of (7). From this, we see that if (7), then (6).
+Notice first that a ground fluent atom F is generated by the procedure CCP iff Fluent(F )
+is true in M . Notice also that all fluent atoms in Init  Succ  Succ1 must be generated by
+the procedure.
+We show first that MS,A is a model of Init:
+1. If Axiom() is a domain axiom, then  is in T . Thus M satisfies . Since  has no
+fluent symbols in it, MS,A satisfies it too.
+2. If Causes(, f (x1 , ..., xn )) is a domain rule, then
+~
+().Fluent(f
+(x1 , ..., xn ))  (s){H(, s)  Caused(f (x1 , ..., xn ), true, s)}
+is in T . Thus M satisfies
+~
+().Fluent(f
+(x1 , ..., xn ))  (s){H(, s)  H(f (x1 , ..., xn ), s)}.
+Thus if init( 0 )  init(F ) is a corresponding formula in Init, where  0 and F is
+some ground instantiation of  and f (x1 , ..., xn ), respectively, then Fluent(F ) must
+be true in M (otherwise the above formula would not be in Init), so M satisfies
+H( 0 , S)  H(F, S). By the construction of MS,A , it satisfies init( 0 )  init(F ). The
+case for Causes(, f ) is similar.
+295
+
+fiLin
+
+3. Suppose Defined(F, ) is an instantiation of a complex fluent definition such that
+F   is in Init. For it to be in Init, Fluent(F ) must be true. Thus M must satisfy
+H(F, S)  H(, S). By the construction of MS,A , it satisfies init(F )  init(, S).
+4. Suppose P recond(A, A ) is the precondition axiom for A. Since M satisfies P oss(A, S)
+and Action(A) (because A is one of the action instances generated by the procedure),
+thus M satisfies H(A , S). So MS,A satisfies init(A ).
+We now show that MS,A is a model of Succ, that is, for each primitive fluent atom F
+generated by the procedure in Step 1, the pseudo-successor state axiom (1) holds. Referring
+to the notation in the axiom, we need to show that M satisfies the following formula:
+H(F, do(A, S))  H(1 , S)      H(n , S) 
+H(01 , do(A, S))      H(0l , do(A, S)) 
+H(F, S)  [H(1 , S)      H(m , S) 
+H(01 , do(A, S))      H(0k , do(A, S))].
+First of all, instantiating the generic successor state axiom (5) over A and S, we get:
+P oss(A, S)  H(F, do(A, S)) 
+[Caused(F, true, do(A, S))  H(F, S)  Caused(F, f alse, do(A, S))].
+Since M is a model of P oss(A, S), we have
+H(F, do(A, S)) 
+
+(8)
+
+[Caused(F, true, do(A, S))  H(F, S)  Caused(F, f alse, do(A, S))].
+Now consider the circumscription of Caused in T with all other predicates fixed. Notice that
+all axioms about Caused in T have the form W  Caused(x, y, z), where W is a formula
+that does not mention Caused. Therefore the circumscription of Caused is equivalent to
+the predicate completion of Caused. Suppose F is f (t), and that all of the axioms about
+Caused(f (x), v, s) in T are as follows:
+W1  Caused(f (x), v, s),    , Wi  Caused(f (x), v, s).
+Because of the unique names axioms about fluents, the result of predicate completion on
+Caused will entail:
+Caused(f (x), v, s)  W1      Wi .
+Now W1 ,...,Wi are from action effect axioms and domain rules about f . By the way that
+(1) is generated, and noting that Action(A), Fluent(F ), and P oss(A, S) are true, one can
+see that when the above equivalence is instantiated by replacing t for x, true for v, and S
+for s, we will get
+Caused(F, true, do(A, S))  H(1 , S)      H(n , S) 
+H(01 , do(A, S))      H(0l , do(A, S)).
+296
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+Similarly, we have the following axiom about Caused(F, f alse, do(A, S)):
+Caused(F, f alse, do(A, S))  H(1 , S)      H(m , S) 
+H(01 , do(A, S))      H(0k , do(A, S)).
+From these two axioms and (8), we get:
+H(F, do(A, S))  H(1 , S)      H(n , S) 
+H(01 , do(A, S))      H(0l , do(A, S)) 
+H(F, S)  [H(1 , S)      H(m , S) 
+H(01 , do(A, S))      H(0k , do(A, S))].
+Since M is a model of Comp(T ), M satisfies the above formula. By the construction of
+MS,A , it satisfies the pseudo-successor state axiom (1).
+Finally, the fact that MS,A is a model of Succ1 should be apparent.
+2
+In general, (6) does not imply (7). There are several reasons:
+ As we mentioned after the procedure CCP, we assume that all information about the
+initial situation is given by Init.
+ Our procedure works on actions one at a time. The situation calculus theory T
+captures the effects of all actions in a single theory. So it is possible that a bad specification of an action causes the entire theory to become inconsistent. For instance,
+if we have Causes(true, p), P recond(A, true), and Effect(A, f alse, p), then the corresponding situation calculus theory will be inconsistent because of action A. But for
+our procedure, it will generate an inconsistent theory only on A.
+
+5. An Implementation
+Except for Step 2.2, the procedure CCP in Section 3 is straightforward to implement. This
+section describes the strategy that our system uses for implementing Step 2.2. The main
+idea comes from the work of Lin (2001a) on strongest necessary and weakest sufficient
+conditions.
+Given a propositional theory T , a proposition q, and a set B of propositions, a formula
+ is said to be a sufficient condition of q on B under T if  consists of propositions in B
+and T |=   q. It is said to be the weakest sufficient condition if for any such sufficient
+condition 0 , we have that T |= 0  . Similarly, a formula  is said to be a necessary
+condition of q on B under T if  consists of propositions in B and T |= q  . It is said
+to be the strongest necessary condition if for any such necessary condition 0 , we have that
+T |=   0 .
+It is easy to see that the weakest sufficient condition and the strongest necessary condition are unique up to logical equivalence under the background theory. It was shown (Lin,
+2001a) that these two notions are closely related, and can be computed using the technique
+of forgetting (Lin & Reiter, 1994a). In particular, for action theories, an effective strategy is to first compute the strongest necessary condition, add it to the background theory,
+297
+
+fiLin
+
+and then compute the weakest sufficient condition under the new theory. This strategy is
+justified by the following proposition Lin (2001a):
+Proposition 1 Let T be a theory, q a proposition, and B a set of propositions. If  is a
+necessary condition of q on B under T , and  the weakest sufficient condition of q on B
+under T  {}, then    is the weakest sufficient condition of q on B under T .
+We can now describe our strategy for implementing Step 2.2 of the procedure CCP. In
+the following, given an action instance A, as in Step 2.2, let Succ be the set of pseudosuccessor state axioms for primitive fluent atoms, Succ1 the set of pseudo-successor state
+axioms for complex fluent atoms, and Init the set of initial situation axioms derived from
+the action precondition axiom for A, domain axioms, domain rules, and complex fluent
+definitions. Also in the following, a succ-proposition is one of the form succ(f ), and an
+init-proposition is one of the form init(f ).
+1. Transform Init into a clausal form and derive from it a set of unit clauses U nit.
+2. Use U nit to simplify the axioms in Succ and for each resulting axiom in it:
+succ(f )  f ,
+
+(9)
+
+if f does not mention succ-propositions, then delete it from Succ, output it and
+replace succ(f ) in the rest of the axioms by f .
+3. For each fluent atom f whose pseudo-successor state axiom (9) is in Succ, if f has
+the form init(f )  ... (a candidate of a frame axiom), then check to see if succ(f ) can
+be derived from Succ, U nit, and init(f ) by unit resolution. If so, delete it from Succ,
+output succ(f )  init(f ), and replace succ(f ) in Succ by init(f ).
+4. For each fluent atom f whose pseudo-successor state axiom (9) is in Succ, compute
+the strongest necessary condition f of succ(f ) on the init-propositions under the
+theory Init  Succ, and the weakest sufficient condition f of succ(f ) on the initpropositions under the theory {f }  Init  Succ. If f is a tautology, then delete
+(9) from Succ, output succ(f )  f , and replace succ(f ) in Succ by f . If  is not
+a tautology, then output succ(f )  f and f  f  succ(f ), but do not delete (9)
+from Succ. The correctness of this step follows from Proposition 1.
+5. The previous steps solve the equations in Succ, and generate appropriate output for
+primitive fluent atoms. For each complex fluent atom F :
+Defined(F, ),
+if every primitive fluent atom in  has a successor state axiom, then do the following:
+(a) if no primitive fluent atoms in  are changed by the action, then this complex
+fluent atom is not changed by the action either, so output succ(F )  init(F );
+(b) otherwise, output succ(F )  , where  is obtained from succ() by replacing
+every succ-proposition in it by the right side of its successor state axiom.
+298
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+Otherwise, if some of the primitive fluent atoms in  do not have a successor state
+axiom, which means the action may have an indeterminate effect on them, then this
+action may have an indeterminate effect on F as well. Compute the strongest necessary and weakest sufficient conditions of succ(F ) under Init  Succ  Succ1 as in the
+last step, and output them.
+6. This step will try to generate a STRIPS-like description for the action instance A
+based on the results of Steps 4 and 5. For each fluent atom F , do according to one of
+the following cases:
+(a) if its successor state axiom is succ(F )  true, then put F into the add list unless
+init(F ) is entailed by Init;
+(b) if its successor state axiom is succ(F )  f alse, then put F into the delete list
+unless init(F ) is entailed by Init;
+(c) if its successor state axiom is succ(F )  , and  is not the same as true, f alse,
+or init(F ), then put F in the conditional effect list and output its successor state
+axiom.
+(d) If F does not have a successor state axiom, then put it in the list of indeterminate
+effects.
+Clearly, if F is not put into any of the lists, then its truth value is not affected by A.
+Steps 4 and 5 of the above procedure are the bottleneck as in the worst case, computing
+the strongest necessary condition of a proposition is coNP-hard. However, it has been our
+experience that if action A has a context-free effect on fluent atom F , then its successor
+state axiom can be computed without going through Step 4.
+We have implemented the procedure CCP using the above strategy in SWI-Prolog 3.2.92 .
+The url for this system is as follows:
+http://www.cs.ust.hk/~flin/ccp.html
+Using the system, we have encoded in our action description language many of the planning
+domains that come with the original release of PDDL (McDermott, 1998), and compiled
+them to STRIPS-like specifications. Our encodings of the domains and the results returned
+by the system are included in the online appendix. In the following, we illustrate some
+interesting features of our system using the following two domains: the blocks world and
+the monkey and bananas domain.
+5.1 The Blocks World
+We have used the blocks world as the running example. Here we shall give an alternative specification of the domain using the following better known set of actions: stack,
+unstack, pickup, and putdown. We shall use this domain to show that changing slightly
+the precondition of one of the actions can result in a very different action specification.
+2. SWI-Prolog is developed by Jan Wielemaker at University of Amsterdam
+
+299
+
+fiLin
+
+We begin with a description that corresponds to the standard STRIPS encoding of the
+domain.
+Fluent(on(x, y), block(x)  block(y)),
+Fluent(ontable(x), block(x)),
+Fluent(holding(x), block(x)),
+Complex(clear(x), block(x),
+Defined(clear(x), ((y, block)on(y, x))  holding(x)),
+Complex(handempty, true),
+Defined(handempty, (x, block)holding(x)),
+Causes(on(x, y)  x 6= z, on(z, y)),
+Causes(on(x, y)  y 6= z, on(x, z)),
+Causes(on(x, y), ontable(x)),
+Causes(ontable(x), on(x, y)),
+Causes(on(x, y), holding(x)),
+Causes(on(x, y), holding(y)),
+Causes(holding(x), ontable(x)),
+Causes(holding(x), on(x, y)),
+Causes(holding(x), on(y, x)),
+Causes(holding(x)  y 6= x, holding(y)),
+Action(stack(x, y), block(x)  block(y)  x 6= y),
+P recond(stack(x, y), holding(x)  clear(y)),
+Effect(stack(x, y), true, on(x, y)),
+Action(unstack(x, y), block(x)  block(y)  x 6= y),
+P recond(unstack(x, y), clear(x)  on(x, y)  handempty),
+Effect(unstack(x, y), true, holding(x)),
+Action(putdown(x), block(x)),
+P recond(putdown(x), holding(x)),
+Effect(putdown(x), true, ontable(x)),
+Action(pickup(x), block(x)),
+P recond(pickup(x), handempty  ontable(x)  clear(x)),
+Effect(pickup(x), true, holding(x)).
+Notice that compared to the description in Example 1, there are two more fluents, holding
+and handempty here. Thus we have a few more domain rules about them, and the definition
+of clear is changed to take into account that when a block is held, it is not considered to
+be clear.
+300
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+Now assuming a domain with three blocks Domain(block, {1, 2, 3}), our system will
+generate 19 fluent atoms, and 18 action instances. For each action instance, it returns
+both a complete set of successor state axioms and a STRIPS-like representation. The total
+computation time for all actions is 835K inferences and 0.5 seconds.3 This is a pure STRIPS
+domain, i.e. all actions are context free. For this type of domains, as we mentioned earlier,
+Step 4 in our implementation procedure is not needed, and Step 5 is easy.
+The results are as expected. For instance, for action pickup(1), the STRIPS-like representation returned by the system looks like the following: track 1 to track 2), the STRIPSlike representation looks like:
+pickup(1):
+Preconditions: clear(1), handempty, ontable(1)
+Add list: holding(1)
+Delete list: ontable(1), clear(1), handempty
+Conditional effects:
+Indeterminate effects:
+The complete output is given in the online appendix. Now let us consider what happen
+if we drop ontable(x) from the precondition of pickup(x):
+P recond(pickup(x), handempty  clear(x)).
+This means that as long as a block is clear, it can be picked up. With this new precondition,
+our system returns the following STRIPS-like representation for action pickup(1);
+pickup(1):
+Preconditions: clear(1), handempty
+Add list: holding(1)
+Delete list: clear(1), handempty, on(1, 2), on(1, 3), ontable(1)
+Conditional effects:
+succ(clear(2))<-> - (init(on(2, 2))\/init(on(3, 2)))
+succ(clear(3))<-> - (init(on(2, 3))\/init(on(3, 3)))
+Indeterminate effects:
+Here - is negation, and \/ is disjunction. An ADL-like description for this action
+would be something like the following:
+pickup(x):
+Preconditions: clear(x), handempty
+Add list: holding(x),
+clear(y) when on(x,y)
+Delete list: clear(x), handempty,
+on(x,y) when on(x,y)
+ontable(x) when ontable(x)
+3. All times in this paper refer to CPU times on a Pentium III 1GHz machine with 512MB RAM running
+SWI-Prolog 3.2.9 under Linux. The number of inferences is the one reported by SWI-Prolog, and
+roughly corresponds to the number of resolution steps carried out by the Prolog interpreter, and is
+machine independent.
+
+301
+
+fiLin
+
+5.2 The Monkey and Bananas Domain
+This domain is again adapted from McDermotts PDDL library of planning domains, which
+attributes it to the University of Washingtons UCPOP collection of action domains, which
+in turn attributes it to Prodigy. While some of the action effects generated by our system
+are context-dependent, they are all context-free in the other systems. We shall elaborate
+on this difference later.
+In this domain, there are two types, loc for locations (we assume there are three locations
+here), and object for things like monkey, banana, box, etc.:
+Domain(loc, {1, 2, 3}),
+Domain(object, {monkey, box, banana, knif e, glass, f ountain}).
+The following are fluent definitions:
+Fluent(onF loor),
+Fluent(at(M, X), object(M )  loc(X)),
+Fluent(hasknif e),
+Fluent(onbox(X), loc(X)),
+Fluent(hasbanana),
+Fluent(haswater),
+Fluent(hasglass).
+The following are domain rules about these fluents:
+Causes(onbox(X), at(monkey, X)),
+
+(10)
+
+Causes(onbox(X), at(box, X)),
+
+(11)
+
+Causes(onbox(X), onF loor),
+
+(12)
+
+Causes(onF loor, onbox(X)),
+
+(13)
+
+Causes(at(M, X)  X 6= Y, at(M, Y )),
+
+(14)
+
+Causes(hasglass  at(monkey, X), at(glass, X)),
+
+(15)
+
+Causes(hasknif e  at(monkey, X), at(knif e, X)),
+
+(16)
+
+Causes(hasbanana  at(monkey, X), at(banana, X)).
+
+(17)
+
+The following are action definitions along with their respective preconditions and effect
+axioms:
+ goto(x, y) - the monkey goes to x from y:
+Action(goto(X, Y ), loc(X)  loc(Y )  X 6= Y ),
+P recond(goto(X, Y ), at(monkey, Y )  onF loor),
+Effect(goto(X, Y ), true, at(monkey, X)).
+302
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+ climb(X) - the monkey climbs onto the box at location X:
+Action(climb(X), loc(X)),
+P recond(climb(X), at(box, X)  onF loor  at(monkey, X)),
+Effect(climb(X), true, onbox(X)).
+ pushbox(X, Y ) - the monkey pushes the box from Y to X.
+Action(pushbox(X, Y ), loc(X)  loc(Y )  X 6= Y ),
+P recond(pushbox(X, Y ), at(monkey, Y )  at(box, Y ))  onF loor),
+Effect(pushbox(X, Y ), true, at(monkey, X)),
+Effect(pushbox(X, Y ), true, at(box, X)).
+ getknif e(X) - get knife at location X.
+Action(getknif e(X), loc(X)),
+P recond(getknif e(X), at(knif e, X)  at(monkey, X)  hasknif e),
+Effect(getknif e(X), true, hasknif e).
+ getbanana(X) - grab banana at loc X, provided the monkey is on the box.
+Action(getbanana(X), loc(X)),
+P recond(getbanana(X), onbox(X)  at(banana, X)  hasbanana),
+Effect(getbanana(X), true, hasbanana).
+ pickglass(X) - pick up glass at loc X.
+Action(pickglass(X), loc(X)),
+P recond(pickglass(X), at(glass, X)  at(monkey, X)  hasglass),
+Effect(pickglass(X), true, hasglass).
+ getwater(X) - get water from fountain at loc X, provided the monkey is on the box,
+and has a glass in hand.
+Action(getwater(X), loc(X)),
+P recond(getwater(X), at(f ountain, X)  onbox(X)  hasglass  haswater),
+Effect(getwater(X), true, haswater).
+This domain has 27 actions and 26 fluent atoms. Again, for each action, our system
+generates both a complete set of fully instantiated successor state axioms and a STRIPSlike representation. For instance, for action goto(1, 2), the following is the STRIPS-like
+representation generated by the system:
+303
+
+fiLin
+
+Action goto(1, 2)
+Preconditions: at(monkey, 2), onFloor
+Add list: at(monkey, 1)
+Delete list: at(monkey, 2)
+Conditional effects:
+succ(at(banana, 1)) <-> init(hasbanana) \/ init(at(banana, 1))
+succ(at(knife, 1)) <-> init(hasknife) \/ init(at(knife, 1))
+succ(at(glass, 1)) <-> init(hasglass) \/ init(at(glass, 1))
+succ(at(banana, 2)) <-> - init(hasbanana) & init(at(banana, 2))
+succ(at(knife, 2)) <-> - init(hasknife) & init(at(knife, 2))
+succ(at(glass, 2)) <-> - init(hasglass) & init(at(glass, 2))
+The total running time for all actions is 8 seconds while performing 20 million inferences.
+About 90 percent of time is spent on Step 4, i.e. on computing the strongest necessary
+and weakest sufficient conditions of fluent atoms on which the given action has contextdependent effects. For instance, for action goto(1, 2) above, the majority of time was spent
+on generating the above 6 conditional effects.
+For this action, actually for all the actions in this domain, we could use an ADL-like
+description (Pednault, 1989) for conditional effects:
+Add list: at(banana,1) when hasbanana
+at(knife,1) when hasknife
+at(glass,1) when hasglass
+Delete list: at(banana,2) when hasbanana
+at(knife,2) when hasknife
+at(glass,2) when hasglass
+However, it is not clear whether this can always be done in the general case.
+We mentioned earlier that the specifications for this domain given in McDermotts collection as well as others are all context-free. For instance, the following is a specification
+for action goto in PDDL in McDermotts collection:
+(:action GO-TO
+:parameters (?x ?y)
+:precondition (and (location ?x) (location ?y)
+(not (= ?y ?x)) (on-floor) (at monkey ?y))
+:effect (and (at monkey ?x) (not (at monkey ?y))))
+This corresponds to a context-free action that does not change any other fluent except at.
+It is clear that the design of this action does not take into account domain rules (15) - (17).
+With this specification, if initially banana is at location 1, then the goal of having banana
+at location 2 would not be achievable.
+304
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+5.3 Summary
+The other domains that we have experimented including a scheduling domain that includes
+Pednaults dictionary and paycheck domain as a special case, the rocket domain, the SRI
+robot domain, the machine shop assembling domain, the ferry domain, the grid domain,
+the sokoban domain, and the gear domain. They are all included in the online appendix.
+We summarize below some of the common features of these domains:
+ In all the domains that we tried, it is quite straightforward to decide what effects of
+an action should be encoded as direct effects (those given by the predicate Effect) and
+what effects as indirect effects (those derived from domain rules).
+ The most common domain rules are functional dependency constraints. For instance,
+in the blocks world, the fluent atom on(x, y) is functional on both arguments; in
+the monkey and banana domain, the fluent atom at(object, loc) is functional on the
+second argument (each object can be at only one location). It makes sense then that
+we would have a special shorthand for these domain rules, and perhaps a special
+procedure for handling them as well. But more significantly, given the prevalence
+of these functional dependency constraints in action domains, it is worthwhile to
+investigate the possibility of a general purpose planner making good use of these
+constraints.
+ As we mentioned earlier, our system is propositional. The generated successor state
+axioms and STRIPS-like systems are all fully instantiated. However, it is often easy
+for the user to generalize these propositional specifications to first-order ones. We
+shall investigate the generality of this observation next.
+
+6. Generalizing Propositional STRIPS-Like Systems to Ones With
+Parameters
+As we mentioned, for many action domain descriptions, the successor state axioms and
+STRIPS-like systems generated for a specific domain can be generalized to arbitrary ones.
+More precisely, let D be a domain description, and
+Domain(p1 , Dp1 ),    , Domain(pk , Dpk )
+its type specification. Suppose in D for action A we have that InitA  SuccA |= . Now
+suppose D0 is another domain description that is just like D except that it has a different
+type specification:
+Domain(p1 , Dp0 1 ),    , Domain(pk , Dp0 k ).
+The question that we are interested in is this: given any one-to-one mapping from the type
+specification of D to that of D0 , will InitA0  SuccA0 |= 0 be true in D0 ? Here A0 (resp. 0 )
+is the result of replacing all objects in A (resp. ) according to the mapping.
+For instance, if the above is true for the blocks world, then we can generalize the results
+for the domain description in Example 1 as follows. As we have shown, for action stack(1, 2),
+both succ(on(1, 2)) and succ(on(1, 3)) are true. Now if we change the type specification
+to Domain(block, {a, b, c, d, e}), and if we map 1 to a, 2 to c, and 3 to e, in the new domain
+305
+
+fiLin
+
+specification, we will have that for action stack(a, c), succ(on(a, c)) and succ(on(a, e)) are
+true. Furthermore, by changing the mapping for 3, we see that for any x that is different
+from a and c (the mapping needs to be one-to-one), succ(on(a, x)) is true.
+Obviously, this is to be expected of the blocks world. We now proceed to show that for
+some general classes of domain descriptions, we can do this as well. We first make precise
+the mapping from one type specification to another.
+Definition 2 Given two type specifications O:
+Domain(p1 , Dp1 ),    , Domain(pk , Dpk ),
+and O0 :
+Domain(p1 , Dp0 1 ),    , Domain(pk , Dp0 k ),
+an embedding from O to O0 is a one-to-one mapping  from Dp1   Dpk to Dp0 1   Dp0 k
+such that for any 1  i  k, and any a  Dpi , f (a)  Dp0 i .
+Clearly, if there is an embedding of O to O0 , then for each type p, the size of the domain
+for p in O0 must be at least the size of the domain for p in O. Given such an embedding
+ , any expression  (actions, propositions, formulas) in an action domain description D
+with O as its type specification can be mapped to  () in the language of D0 : one simply
+replaces each object a in  by  (a), where D0 differs from D only in that it uses O0 as its
+type specification. Notice that only objects (those in the domain of some type) are to be
+replaced, not constants that may occur in the effect axioms or domain rules.
+Definition 3 An action domain description belongs to simple-I class if it does not mention
+any function of positive arity, does not mention any complex fluents except in complex fluent
+definitions, and satisfies the following conditions:
+1. If P recond(A, A ) is an action precondition definition, then A has the form
+(x, p)...(y, q)W , where W is a fluent formula that does not have any quantifiers.
+2. If Effect(A, , F ) or Effect(A, , F ) is an action effect axiom, then  does not have
+any quantifiers, and the variables in  and F are among those in A. That is, one
+cannot have something like
+Effect(explodeAt(x), nearby(y, x), dead(y)).
+3. If Causes(, F ) or Causes(, F ) is a domain rule, then  does not have any quantifiers, and all the variables in  must be in F .
+Theorem 2 Let D be a simple-I action domain description, and A an action instance in
+D. Let D0 be just like D except for the type specification. Then for any formula  that
+does not mention any complex fluent and has no quantifiers, and any embedding  from
+the type specification of D to that of D0 , we have that if InitA  SuccA |=  in D. then
+Init (A)  Succ (A) |=  () in D0 .
+306
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+Proof: Suppose Init (A)  Succ (A) |=  () is not true, and that M1 is a truth assignment
+in the language of D0 that satisfies Init (A)  Succ (A) and  (). Now construct a truth
+assignment M2 in the language of D as follows: for any proposition P in the language of
+D that does not mention any complex fluent, M2 |= P iff M1 |=  (P ) (P is really either
+a static proposition, succ(F ),or init(F ), where F is a primitive fluent atom). The truth
+values of complex fluent atoms in M2 are defined according to their definitions. Clearly,
+M2 |= . We now need to show that M2 also satisfies InitA and SuccA . For InitA , there
+are three cases:
+1. M2 |= init(F )  init() when Defined(F, ) is a complex fluent definition. This
+follows from the construction of M2 .
+2. M2 |= init(A ) when P recond(A, A ) is the precondition definition for A. By our
+assumption, A has the form (x, p)...(y, q).W , where W is a formula without any
+quantifiers. Without loss of generality, let us assume it is (x, p)W . Then this formula
+is equivalent to
+_
+W (x/a)
+aDp
+
+under D, where Dp is the domain of type p in D. So M2 |= (x, p)W iff
+M2 |=
+
+_
+
+W (x/a)
+
+aDp
+
+iff
+M1 |=
+
+_
+
+W (x/ (a)),
+
+aDp
+
+which is true since M1 |= (x, p)W .
+3. All other formulas in InitA do not mention complex fluents and have no quantifiers.
+They are true in M2 because the corresponding ones are true in M1 .
+For SuccA , suppose F is a primitive fluent atom, and its pseudo-successor state axiom F
+as constructed according to the procedure CCP given in Section 3 is as follows:
+succ(F )  init(1 )      init(n )  succ(01 )      succ(0l ) 
+init(F )  [init(1 )      init(m )  succ(01 )      succ(0k )].
+Because of the following properties about D:
+ each effect axiom Effect(A, , F ) or Effect(A, , F ) has the property that  has no
+quantifier, and that the variables in  are also in F ;
+ each domain rule of the form Causes(, F ) or Causes(, F ) has the property that
+ has no quantifier, and that the variables in  are also in F ;
+so the pseudo-successor state axiom for  (succ(F )) under D0 is just  (F ). Thus M2 |= F
+since M1 |=  (F ). This proves that M2 is a model of SuccA , thus the theorem.
+2
+
+307
+
+fiLin
+
+However, most of the examples that we have in the paper do not belong to this simple-I
+class, for two reasons: action preconditions, like those in the blocks world, can mention
+complex fluents; and some of the negative domain rules Causes(, F ) may have some
+variables not in F . The first problem is not a problem in principle as complex fluents can
+be replaced by their definitions. The second problem is more serious, and that leads to a
+new type of simple action theories.
+Definition 4 An action domain description belongs to simple-II class if it does not mention
+any function of positive arity, does not mention any complex fluents except in complex fluent
+definitions, and satisfies the following conditions:
+1. If P recond(A, A ) is an action precondition definition, then A has the form
+(x, p)...(y, q)W , where W is a fluent formula that does not have any quantifiers.
+2. If Effect(A, , F ) or Effect(A, , F ) is an action effect axiom, then  does not have
+any quantifiers, and the variables in  and F are among those in A.
+3. There are no positive domain rules of the form Causes(, F ).
+4. If Causes(, F ) is a domain rule, then  must be of the form 1  2 , where 1 is
+any formula that does not mention any fluents and 2 is a fluent atom. Notice that
+there is no restriction on variables in 2 .
+Simple-II class action domain descriptions seem to be very limited in that there can be no
+positive domain rules, and the only negative domain rules allowed are binary. Nevertheless,
+they still capture many context-free action domains. For instance, both the blocks world
+and meet-and-pass domains in this paper belong to this class: for the blocks world, notice
+that while it uses the complex fluent clear in some of its action precondition definitions, as in
+P recond(stack(x, y), ontable(x)  clear(x)  clear(y)), these definitions can be reformulated
+as follows using clears definition:
+P recond(stack(x, y),
+ontable(x)  (x1 , block)(y1 , block)(on(x1 , x)  on(y1 , y))).
+This will then satisfy the condition about P recond in the above definition of simple-II
+action domain descriptions. While we have not verified it formally, it seems that all the
+context-free action domains in McDermotts PDDL library of action domains, including the
+logistics domain, belong to the simple-II class.
+Theorem 3 Let D be a simple-II action domain description, and A an action instance in
+D. Let D0 be just like D except for the type specification. Then for any formula  that
+does not mention any complex fluent and has no quantifiers, and any embedding  from
+the type specification of D to that of D0 , we have that if InitA  SuccA |=  in D then
+Init (A)  Succ (A) |=  () in D0 .
+Proof: Suppose Init (A)  Succ (A) |=  () is not true, and that M1 is a truth assignment
+in the language of D0 that satisfies Init (A)  Succ (A) and  (). Now construct a truth
+308
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+assignment M2 in the language of D as follows: for any proposition P in the language of
+D that does not mention any complex fluent, M2 |= P iff M1 |=  (P ) (P is really either
+a static proposition, succ(F ),or init(F ), where F is a primitive fluent atom). The truth
+values of complex fluent atoms in M2 are defined according to their definitions. Clearly,
+M2 |= . We now need to show that M2 also satisfies InitA and SuccA . For InitA , there
+are three cases:
+1. M2 |= init(F )  init() when Defined(F, ) is a complex fluent definition. This
+follows from the construction of M2 .
+2. M2 |= init(A ) when P recond(A, A ) is the precondition definition for A. By our
+assumption, A has the form (x, p)...(y, q).W , where W is a formula without any
+quantifiers. Without loss of generality, let us assume it is (x, p1 )W . Then this
+formula is equivalent to
+W (x/a11 )      W (x/a1n1 )
+under D. So M2 |= (x, p1 )W iff
+M2 |= W (x/a11 )      W (x/a1n1 )
+iff
+M1 |= W (x/ (a11 ))      W (x/ (a1n1 )),
+which is true since M1 |= (x, p1 )W .
+3. All other formulas in InitA do not mention complex fluents and have no quantifiers.
+They are true in M2 because the corresponding ones are true in M1 .
+For SuccA , suppose F is a primitive fluent atom. Since there is no positive domain rule of
+the form Causes(, F ), the pseudo-successor state axiom for F as constructed according to
+the procedure CCP given in Section 3 must be of the following form:
+succ(F )  init(1 )      init(n ) 
+init(F )  [init(1 )      init(m )  succ(01 )      succ(0k )],
+where for each 1  i  k, Causes(0i , F ) is an instance of a domain rule in D.
+Because in D and D0 , each effect axiom Effect(, F ) or Effect(, F ) has the property
+that  has no quantifier, and that the variables in  are also in F , the pseudo-successor
+state axiom for  (succ(F )) under D0 must have the form:
+succ( (F ))  init( (1 ))      init( (n )) 
+init( (F ))  [init( (1 ))      init( (m )) 
+succ( (01 ))
+
+  
+
+succ( (0k ))
+
+(18)
+
+ succ()],
+
+where  is a disjunction such that each disjunct  must be such that Causes(,  (F )) is
+an instance in D0 and that the fluent atom in  contains an object not in  (A) and  (F ).
+There are two cases:
+309
+
+fiLin
+
+ Suppose M2 |= succ(F ). Then M1 |= succ( (F )). Since M1 is a model of Succ (A) ,
+M1 satisfies the above axiom about succ( (F )). Therefore M1 satisfies the following
+formula:
+init( (1 ))      init( (n )) 
+init( (F ))  [init( (1 ))      init( (m )) 
+succ( (01 ))      succ( (0k ))].
+Since the above formula does not mention any complex fluents and has no quantifiers,
+M2 satisfies the corresponding formula:
+init(1 )      init(n ) 
+
+(19)
+
+init(F )  [init(1 )      init(m ) 
+
+succ(01 )
+
+  
+
+succ(0k )],
+
+which is the right side of the equivalence of the pseudo-successor state axiom for
+succ(F ) in SuccA .
+ Now suppose M2 satisfies (19). Well show that M1 satisfies the right side of (18),
+thus M1 |= succ( (F )) so M2 |= succ(F ). There are two cases:
+ M2 satisfies the following formula:
+init(1 )      init(n ).
+
+(20)
+
+In this case, since the above formula does not mention any complex fluents and
+has no quantifier, M1 satisfies the following corresponding formula:
+init( (1 ))      init( (n )).
+
+(21)
+
+Thus M1 satisfies the right side of (18).
+ M2 does not satisfy (20) but satisfies the following formula:
+init(F )  [init(1 )      init(m )  succ(01 )      succ(0k )].
+Thus M1 satisfies the following formula:
+init( (F ))  [init( (1 ))      init( (m )) 
+succ( (01 ))      succ( (0k ))].
+So to show that the right side of the equivalence of (18) is satisfied by M1 , we
+need to show that M1 |= succ(). Recall that  is a disjunction such that each
+disjunct  must correspond to a domain rule of the form Causes(,  (F )), and
+that  is of the form 1  G such that 1 does not mention fluents, and G is
+a fluent atom that mentions an object that does not occur in  (A). Note that
+init()  init( (F )) is an axiom in Succ (A) , which is satisfied by M1 . Thus
+M1 |= init(). This means that either 1 or init(G) is false in M1 . If 1
+is false, then succ() is false since succ(1 ) is the same as 1 . Suppose that
+init(G) is false in M1 . Notice that since there are no positive domain rules, and
+310
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+that G has an object not in  (A) and  (F ), the pseudo-successor state axiom
+for G in Succ (A) must be of the form succ(G)  init(G)  . Therefore from
+M1 |= init(G) we get M1 |= succ(). Since  is any disjunct of , we have
+proved that M1 |= succ(). Therefore M1 |= succ( (F )). Thus M2 |= succ(F ).
+2
+
+7. Related Work
+In planning, the most closely related work is the causal reasoning module in Wilkinss SIPE
+system (Wilkins, 1988). Wilkins writes (page 85, Wilkins, 1988): Use of the STRIPS
+assumptions has made operators unacceptably difficult to describe in previous classical
+planners... One of the primary reasons for this is that all effects of an action must be explicitly stated... Deductive causal theories are one of the most important mechanisms used
+by SIPE to alleviate problems in operator representation caused by the STRIPS assumption. This is certainly one of the motivations for our system as well. In SIPE, domain rules
+have triggers, preconditions, conditions, and effects. Informally, when the triggers become
+true in the new situation, SIPE would then check in sequence to see if the preconditions
+were true in the old situation, and the conditions are true in the new situation. If all these
+conditions are true, it will then deduce the effects. For instance, a SIPE causal rule for
+on(x, y) in the blocks world would look like:
+Causal-rule: Not-on
+Arguments: x, y, z;
+Trigger: on(x,y);
+Precondition: on(x,z);
+Effects: not on(x,z);
+In comparison, our domain rules are much simpler. For instance, our corresponding rule
+for the above SIPE rule is simply: Causes(on(x, y)  y 6= z, on(x, z)). We do not need
+procedural directives like triggers. To a large degree, we can see our system as a rational
+reconstruction of the causal reasoning module in SIPE. As we have shown in Theorem 1,
+the procedure used by our system is sound under a translation to causal theories in the
+situation calculus. While Wilkins also gave a translation of his causal rules to formulas in
+the situation calculus, he did not specify an underlying logic to reason about such formulas.
+In fact, as shown by Lin (1995), such translations would not work.
+For those familiar with PDDL, the original version by McDermott and the AIPS-98
+Planning Competition Committee allows domain axioms over stratified theories. According
+to the manual of PDDL 1.2 (McDermott, 1998), axioms are logical formulas that assert
+relationships among propositions that hold within a situation. The format for writing
+axioms in PDDL is as follows:
+(:axiom
+:vars (?x ?y ...)
+:context W
+:implies P)
+311
+
+fiLin
+
+where W is a formula and P a literal. Axioms are treated directionally, from W to P . The
+following is the rule and intention for using the axioms according to the manual:
+The rule is that action definitions are not allowed to have effects that mention
+predicates that occur in the :implies field of an axiom. The intention is that
+action definitions mention primitive predicates like on, and that all changes in
+truth value of derived predicates like above occur through axioms. Without
+axioms, the action definitions will have to describe changes in all predicates that
+might be affected by an action, which leads to a complex software engineering
+(or domain engineering) problem.
+It is clear from this quotation that axioms in PDDL are intended for defining derived
+predicates. They are similar to our complex fluent definitions. New versions of PDDL have
+extended the original version by allowing actions with durations and continuous changes.
+They have not considered using axioms to derive changes to primitive predicates like what
+we have done here with domain rules.
+Our action domain description language, while having a very different syntax that is
+strongly influenced by Prolog syntax, shares much of the same ideas behind action languages
+(Gelfond & Lifschitz, 1999). However, unlike action languages, ours does not provide facilities for expressing the truth value of a fluent atom in a particular situation like the initial
+situation. Rather, it is aimed at specifying the generic effects of actions. On the other hand,
+it has facilities for specifying types and static relations. Most importantly, to date, action
+languages are either implemented directly or mapped to a nonmonotonic logic programming
+system rather than by compilation into a monotonic system where action effects are given
+explicitly, as is done here. For instance, a new SAT-based planning method would have to
+be implemented (e.g. McCain & Turner, 1998) for action languages. In comparison, once
+an action domain description is compiled to a STRIPS-like description, existing planning
+systems such as Blackbox (Selman & Kautz, 1999) or System R (Lin, 2001b) can be directly
+called.
+
+8. Concluding Remarks
+We have described a system for generating the effects of actions from direct action effect
+axioms and domain rules, among other things. We have shown the soundness of the procedure used by the system and tested it successfully in many benchmark action domains used
+by current AI planners. For future work, we are considering how to generalize the simple
+action theories in Section 6 to include context-dependent action domain descriptions like
+the monkey and bananas domain.
+
+Acknowledgments
+An extended abstract of part of this paper appeared in Proceedings of AAAI-2000. I would
+like to thank the anonymous reviewers for both JAIR and AAAI2000 as well as the associate
+editor in charge of this paper for JAIR for their insightful comments on earlier versions of
+this paper. This work was supported in part by the Research Grants Council of Hong Kong
+under Competitive Earmarked Research Grant HKUST6061/00E.
+312
+
+fiFrom Causal Theories to STRIPS-Like Systems
+
+References
+Baral, C. (1995). Reasoning about actions: nondeterministic effects, constraints, and qualification. In Proceedings of the Fourteenth International Joint Conference on Artificial
+Intelligence (IJCAI95), IJCAI Inc. Distributed by Morgan Kaufmann, San Mateo,
+CA., pp. 20172023.
+Fikes, R. E., & Nilsson, N. J. (1971). STRIPS: A new approach to theorem proving in
+problem solving. Artificial Intelligence, 2, 189208.
+Fox, M., & Long, D. (1998). The automatic inference of state invariants in TIM. Journal
+of Artificial Intelligence Research, 9, 367421.
+Gelfond, M., & Lifschitz, V. (1999). Action languages. Electronic Transactions on Artificial
+Intelligence, http://www.ep.liu.se/ea/cis, Vol 3, nr 016.
+Gerevini, A., & Schubert, L. (1998). Inferring state constraints for domain-independent
+planning. In Proceedings of the 15th National Conference on Artificial Intelligence
+(AAAI98), AAAI Press, Menlo Park, CA.
+Levesque, H., Reiter, R., Lesperance, Y., Lin, F., & Scherl, R. (1997). GOLOG: A logic
+programming language for dynamic domains. Journal of Logic Programming, Special
+issue on Reasoning about Action and Change, 31, 5984.
+Lifschitz, V. (1997). On the logic of causal explanation. Artificial Intelligence, 96, 451465.
+Lin, F. (1995). Embracing causality in specifying the indirect effects of actions. In Proceedings of the Fourteenth International Joint Conference on Artificial Intelligence
+(IJCAI95), IJCAI Inc. Distributed by Morgan Kaufmann, San Mateo, CA., pp. 1985
+1993.
+Lin, F. (1996). Embracing causality in specifying the indeterminate effects of actions. In
+Proceedings of the 13th National Conference on Artificial Intelligence (AAAI96),
+AAAI Press, Menlo Park, CA., pp. 670676.
+Lin, F. (2001a). On strongest necessary and weakest sufficient conditions. Artificial Intelligence, 128(1-2), 143159.
+Lin, F. (2001b). A planner called R. AI Magazine, 22(3), 7376.
+Lin, F., & Reiter, R. (1994a). Forget it!. In Greiner, R., & Subramanian, D. (Eds.),
+Working Notes of AAAI Fall Symposium on Relevance, pp. 154159. The American Association for Artificial Intelligence, Menlo Park, CA. Also available at
+http://www.cs.toronto.edu/cogrobo/forgetting.ps.Z.
+Lin, F., & Reiter, R. (1994b). State constraints revisited. Journal of Logic and Computation,
+Special Issue on Actions and Processes, 4(5), 655678.
+McCain, N., & Turner, H. (1995). A causal theory of ramifications and qualifications. In
+Proceedings of the Fourteenth International Joint Conference on Artificial Intelligence
+(IJCAI95), IJCAI Inc. Distributed by Morgan Kaufmann, San Mateo, CA., pp. 1978
+1984.
+McCain, N., & Turner, H. (1997). Causal theories of action and change. In Proceedings
+of the 14th National Conference on Artificial Intelligence (AAAI97), AAAI Press,
+Menlo Park, CA., pp. 460465.
+313
+
+fiLin
+
+McCain, N., & Turner, H. (1998). Satisfiability planning with causal theories. In Proceedings
+of the Sixth International Conference on Principles of Knowledge Representation and
+Reasoning (KR98), pp. 212221.
+McDermott, D. (1998). PDDL  the planning domain definition language. Tech. rep. TR98-003/DCS TR-1165, Yale Center for Computational Vision and Control.
+Pednault, E. P. (1989). ADL: Exploring the middle ground between STRIPS and the situation calculus. In Proceedings of the First International Conference on Principles of
+Knowledge Representation and Reasoning (KR89), pp. 324332. Morgan Kaufmann
+Publishers, Inc.
+Reiter, R. (1991). The frame problem in the situation calculus: a simple solution (sometimes) and a completeness result for goal regression. In Lifschitz, V. (Ed.), Artificial
+Intelligence and Mathematical Theory of Computation: Papers in Honor of John McCarthy, pp. 418420. Academic Press, San Diego, CA.
+Selman, B., & Kautz, H. (1999). Unifying SAT-based and graph-based planning. In Proceedings of the Sixteenth International Joint Conference on Artificial Intelligence (IJCAI
+99), IJCAI Inc. Distributed by Morgan Kaufmann, San Mateo, CA., pp. 318325.
+Thielscher, M. (1995). Computing ramification by post-processing. In Proceedings of the
+Fourteenth International Joint Conference on Artificial Intelligence (IJCAI95), IJCAI Inc. Distributed by Morgan Kaufmann, San Mateo, CA., pp. 19942000.
+Thielscher, M. (1997). Ramification and causality. Artificial Intelligence, 89, 317364.
+Wilkins, D. (1988). Practical planning: extending the classical AI planning paradigm. Morgan Kaufmann, San Mateo, CA.
+Zhang, Y., & Foo, N. (1997). Deriving invariants and constraints from action theories.
+Fundamenta Informaticae, 30(1), 109123.
+
+314
+
+fi

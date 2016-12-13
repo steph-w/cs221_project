@@ -1,0 +1,2973 @@
+Journal of Artificial Intelligence Research 23 (2005) 587-623
+
+Submitted 7/04; published 5/05
+
+An Improved Search Algorithm
+for Optimal Multiple-Sequence Alignment
+Stefan Schroedl
+
+stefan.schroedl@gmx.de
+
+848 14th St
+San Francisco CA 94114
++1 (415) 522-1148
+
+Abstract
+Multiple sequence alignment (MSA) is a ubiquitous problem in computational biology.
+Although it is NP -hard to find an optimal solution for an arbitrary number of sequences,
+due to the importance of this problem researchers are trying to push the limits of exact
+algorithms further. Since MSA can be cast as a classical path finding problem, it is attracting a growing number of AI researchers interested in heuristic search algorithms as a
+challenge with actual practical relevance.
+In this paper, we first review two previous, complementary lines of research. Based on
+Hirschbergs algorithm, Dynamic Programming needs O(kN k1 ) space to store both the
+search frontier and the nodes needed to reconstruct the solution path, for k sequences of
+length N . Best first search, on the other hand, has the advantage of bounding the search
+space that has to be explored using a heuristic. However, it is necessary to maintain all
+explored nodes up to the final solution in order to prevent the search from re-expanding
+them at higher cost. Earlier approaches to reduce the Closed list are either incompatible
+with pruning methods for the Open list, or must retain at least the boundary of the Closed
+list.
+In this article, we present an algorithm that attempts at combining the respective
+advantages; like A it uses a heuristic for pruning the search space, but reduces both
+the maximum Open and Closed size to O(kN k1 ), as in Dynamic Programming. The
+underlying idea is to conduct a series of searches with successively increasing upper bounds,
+but using the DP ordering as the key for the Open priority queue. With a suitable choice
+of thresholds, in practice, a running time below four times that of A can be expected.
+In our experiments we show that our algorithm outperforms one of the currently most
+successful algorithms for optimal multiple sequence alignments, Partial Expansion A , both
+in time and memory. Moreover, we apply a refined heuristic based on optimal alignments
+not only of pairs of sequences, but of larger subsets. This idea is not new; however, to
+make it practically relevant we show that it is equally important to bound the heuristic
+computation appropriately, or the overhead can obliterate any possible gain.
+Furthermore, we discuss a number of improvements in time and space efficiency with
+regard to practical implementations.
+Our algorithm, used in conjunction with higher-dimensional heuristics, is able to calculate for the first time the optimal alignment for almost all of the problems in Reference 1
+of the benchmark database BAliBASE .
+
+1. Introduction: Multiple Sequence Alignment
+The multiple sequence alignment problem (MSA) in computational biology consists in aligning several sequences, e.g. related genes from different organisms, in order to reveal simic
+2005
+AI Access Foundation. All rights reserved.
+
+fiSchroedl
+
+larities and differences across the group. Either DNA can be directly compared, and the
+underlying alphabet  consists of the set {C,G,A,T} for the four standard nucleotide bases
+cytosine, guanine, adenine and thymine; or we can compare proteins, in which case 
+comprises the twenty amino acids.
+Roughly speaking, we try to write the sequences one above the other such that the
+columns with matching letters are maximized; thereby gaps (denoted here by an additional
+letter  ) may be inserted into either of them in order to shift the remaining characters into
+better corresponding positions. Different letters in the same column can be interpreted as
+being caused by point mutations during the course of evolution that substituted one amino
+acid by another one; gaps can be seen as insertions or deletions (since the direction of
+change is often not known, they are also collectively referred to as indels). Presumably, the
+alignment with the fewest mismatches or indels constitutes the biologically most plausible
+explanation.
+There is a host of applications of MSA within computational biology; e.g., for determining the evolutionary relationship between species, for detecting functionally active sites
+which tend to be preserved best across homologous sequences, and for predicting threedimensional protein structure.
+Formally, one associates a cost with an alignment and tries to find the (mathematically)
+optimal alignment, i.e., that one with minimum cost. When designing a cost function,
+computational efficiency and biological meaning have to be taken into account. The most
+widely-used definition is the sum-of-pairs cost function. First, we are given a symmetric
+(|| + 1)2 matrix containing penalties (scores) for substituting a letter with another one
+(or a gap). In the simplest case, this could be one for a mismatch and zero for a match,
+but more biologically relevant scores have been developed. Dayhoff, Schwartz, and Orcutt
+(1978) have proposed a model of molecular evolution where they estimate the exchange
+probabilities of amino acids for different amounts of evolutionary divergence; this gives rise
+to the so-called PAM matrices, where PAM250 is generally the most widely used; Jones,
+Taylor, and Thornton (1992) refined the statistics based on a larger body of experimental
+data. Based on such a substitution matrix, the sum-of-pairs cost of an alignment is defined
+as the sum of penalties between all letter pairs in corresponding column positions.
+A pairwise alignment can be conveniently depicted as a path between two opposite
+corners in a two-dimensional grid (Needleman and Wunsch, 1981): one sequence is placed
+on the horizontal axis from left to right, the other one on the vertical axis from top to
+bottom. If there is no gap in either string, the path moves diagonally down and right; a gap
+in the vertical (horizontal) string is represented as a horizontal (vertical) move right (down),
+since a letter is consumed in only one of the strings. The alignment graph is directed and
+acyclic, where a (non-border) vertex has incoming edges from the left, top, and top-left
+adjacent vertices, and outgoing edges to the right, bottom, and bottom-right vertices.
+Pairwise alignment can be readily generalized to the simultaneous alignment of multiple
+sequences, by considering higher-dimensional lattices. For example, an alignment of three
+sequences can be visualized as a path in a cube. Fig. 1 illustrates an example for the strings
+ABCB, BCD, and DB. It also shows the computation of the sum-of-pairs cost, for a hypothetical
+substitution matrix. A real example (problem 2trx of BAliBASE , see Sec. 7.3) is given in
+Fig. 2.
+588
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+Alignment:
+
+Substitution matrix:
+
+A B C _ B
+_ B C D _
+_ _ _ D B
+
+A B C D _
+A 0 2 4 2 3
+B
+1 3 3 3
+C
+2 2 3
+D
+1 3
+_
+0
+
+Cost: 6+7+8+7+7 = 35
+
+end
+
+D
+
+C
+
+B
+
+B
+
+D
+
+B
+
+A
+
+C
+
+B
+
+start
+
+Figure 1: Fictitious alignment problem: Column representation, cost matrix, threedimensional visualization of the alignment path through the cube.
+
+A number of improvements can be integrated into the sum-of-pairs cost, like associating
+weights with sequences, and using different substitution matrices for sequences of varying
+evolutionary distance. A major issue in multiple sequence alignment algorithms is their
+ability to handle gaps. Gap penalties can be made dependent on the neighbor letters.
+Moreover, it has been found (Altschul, 1989) that assigning a fixed score for each indel
+sometimes does not produce the biologically most plausible alignment. Since the insertion
+of a sequence of x letters is more likely than x separate insertions of a single letter, gap cost
+functions have been introduced that depend on the length of a gap. A useful approximation
+are affine gap costs, which distinguish between opening and extension of a gap and charge
+a + b  x for a gap of length x, for appropriate a and b. Another frequently used modification
+is to waive the penalties for gaps at the beginning or end of a sequence.
+Technically, in order to deal with affine gap costs we can no longer identify nodes in the
+search graph with lattice vertices, since the cost associated with an edge depends on the
+preceding edge in the path. Therefore, it is more suitable to store lattice edges in the priority
+589
+
+fiSchroedl
+
+1thx
+1grx
+1erv
+2trcP
+
+_aeqpvlvyfwaswcgpcqlmsplinlaantysdrlkvvkleidpnpttvkkyk______vegvpal
+__mqtvi__fgrsgcpysvrakdlaeklsnerdd_fqyqyvdiraegitkedlqqkagkpvetvp__
+agdklvvvdfsatwcgpckmikpffhslsekysn_viflevdvddcqdvasece______vksmptf
+_kvttivvniyedgvrgcdalnssleclaaeypm_vkfckira_sntgagdrfs______sdvlptl
+
+1thx
+1grx
+1erv
+2trcP
+
+rlvkgeqildstegvis__kdkllsf_ldthln_________
+qifvdqqhiggytdfaawvken_____lda____________
+qffkkgqkvgefsgan___kek_____leatine__lv____
+lvykggelisnfisvaeqfaedffaadvesflneygllper_
+
+Figure 2: Alignment of problem 2trx of BAliBASE , computed with algorithm settings as
+described in Sec. 7.3.
+
+A
+
+B
+
+C
+
+D
+
+A
+g = 53
+
+cost(_,C)=3
+gap penalty = 4
+g = 60
+
+B
+
+A
+cost(A,_)=3
+gap penalty = 4
+g = 60
+
+cost(A,C)=4
+gap penalty = 0
+g = 57
+
+D
+
+Figure 3: Example of computing path costs with affine gap function; the substitution matrix
+of Fig. 1 and a gap opening penalty of 4 is used.
+
+queue, and let the transition costs for u  v, v  w be the sum-of-pairs substitution costs
+for using one character from each sequence or a gap, plus the incurred gap penalties for
+v  w followed by u  v. This representation was adopted in the program MSA (Gupta,
+Kececioglu, & Schaeffer, 1995). Note that the state space in this representation grows by
+a factor of 2k . An example of how successor costs are calculated, with the cost matrix of
+Fig. 1 and a gap opening penalty of 4, is shown in Fig. 3.
+For convenience of terminology in the sequel we will still refer to nodes when dealing
+with the search algorithm.
+590
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+2. Overview
+Wang and Jiang (1994) have shown that the optimal multiple sequence alignment problem is
+NP -hard; therefore, we cannot hope to achieve an efficient algorithm for an arbitrary number
+of sequences. As a consequence, alignment tools most widely used in practice sacrifice the
+sound theoretical basis of exact algorithms, and are heuristic in nature (Chan, Wong, &
+Chiu, 1992). A wide variety of techniques has been developed. Progressive methods build
+up the alignment gradually, starting with the closest sequences and successively adding
+more distant ones. Iterative strategies refine an initial alignment through a sequence of
+improvement steps.
+Despite their limitation to moderate number of sequences, however, the research into
+exact algorithms is still going on, trying to push the practical boundaries further. They still
+form the building block of heuristic techniques, and incorporating them into existing tools
+could improve them. For example, an algorithm iteratively aligning two groups of sequences
+at a time could do this with three or more, to better avoid local minima. Moreover, it is
+theoretically important to have the gold standard available for evaluation and comparison,
+even if not for all problems.
+Since MSA can be cast as a minimum-cost path finding problem, it turns out that it is
+amenable to heuristic search algorithms developed in the AI community; these are actually
+among the currently best approaches. Therefore, while many researchers in this area have
+often used puzzles and games in the past to study heuristic search algorithms, recently there
+has been a rising interest in MSA as a testbed with practical relevance, e.g., (Korf, 1999;
+Korf & Zhang, 2000; Yoshizumi, Miura, & Ishida, 2000; Zhou & Hansen, 2003b); its study
+has also led to major improvements of general search techniques.
+It should be pointed out that the definition of the MSA problem as given above is not the
+only one; it competes with other attempts at formalizing biological meaning, which is often
+imprecise or depends on the type of question the biologist investigator is pursuing. E.g., in
+this paper we are only concerned with global alignment methods, which find an alignment of
+entire sequences. Local methods, in contrast, are geared towards finding maximally similar
+partial sequences, possibly ignoring the remainder.
+In the next section, we briefly review previous approaches, based on dynamic programming and incorporating lower and upper bounds. In Sec. 4, we describe a new algorithm
+that combines and extends some of these ideas, and allows to reduce the storage of Closed
+nodes by partially recomputing the solution path at the end (Sec. 5). Moreover, it turns out
+that our algorithms iterative deepening strategy can be transferred to find a good balance
+between the computation of improved heuristics and the main search (Sec. 6), an issue that
+has previously been a major obstacle for their practical application. Sec. 7 presents an
+experimental comparison with Partial Expansion A (Yoshizumi, Miura, & Ishida, 2000),
+one of the currently most successful approaches. We also solve all but two problems of
+Reference 1 of the widely used benchmark database BAliBASE (Thompson, Plewniak, &
+Poch, 1999). To the best of our knowledge, this has not been achieved previously with an
+exact algorithm.
+591
+
+fiSchroedl
+
+3. Previous Work
+A number of exact algorithms have been developed previously that can compute alignments
+of a moderate number of sequences. Some of them are mostly constrained by available
+memory, some by the required computation time, and some on both. We can roughly
+group them into two categories: those based on the dynamic programming paradigm, which
+proceed primarily in breadth-first fashion; and best-first search, utilizing lower and upper
+bounds to prune the search space. Some recent research, including our new algorithm
+introduced in Sec. 4, attempts to beneficially combine these approaches.
+3.1 Dijkstras Algorithm and Dynamic Programming
+Dijkstra (1959) presented a general algorithm for finding the shortest (resp. minimum cost)
+path in a directed graph. It uses a priority queue (heap) to store nodes v together with
+the shortest found distance from the start node s (i.e., the top-left corner of the grid) to v
+(also called the g-value of v). Starting with only s in the priority queue, in each step, an
+edge with the minimum g-value is removed from the priority queue; its expansion consists
+in generating all of its successors (vertices to the right and/or below) reachable in one step,
+computing their respective g-value by adding the edge cost to the previous g-value, and
+inserting them in turn into the priority queue in case this newly found distance is smaller
+than their previous g-value. By the time a node is expanded, the g-value is guaranteed to
+be the minimal path cost from the start node, g  (v) = d(s, v). The procedure runs until the
+priority queue becomes empty, or the target node t (the bottom-right corner of the grid)
+has been reached; its g-value then constitutes the optimal solution cost g  (t) = d(s, t) of
+the alignment problem. In order to trace back the path corresponding to this cost, we move
+backwards to the start node choosing predecessors with minimum cost. The nodes can either
+be stored in a fixed matrix structure corresponding to the grid, or they can be dynamically
+generated; in the latter case, we can explicitly store at each node a backtrack-pointer to
+this optimal parent.
+For integer edge costs, the priority queue can be implemented as a bucket array pointing
+to doubly linked lists (Dial, 1969), so that all operations can be performed in constant time
+(To be precise, the DeleteMin-operation also needs a pointer that runs through all different
+g-values once; however, we can neglect this in comparison to the number of expansions).
+To expand a vertex, at most 2k  1 successor vertices have to be generated, since we have
+the choice of introducing a gap in each sequence. Thus, Dijkstras algorithm can solve the
+multiple sequence alignment problem in O(2k N k ) time and O(N k ) space for k sequences of
+length  N .
+A means to reduce the number of nodes that have to be stored for path reconstruction
+is by associating a counter with each node that maintains the number of children whose
+backtrack-pointer refers to them (Gupta et al., 1995). Since each node can be expanded at
+most once, after this the number of referring backtrack-pointers can only decrease, namely,
+whenever a cheaper path to one of its children is found. If a nodes reference count goes
+to zero, whether immediately after its expansion or when it later loses a child, it can
+be deleted for good. This way, we only keep nodes in memory that have at least one
+descendant currently in the priority queue. Moreover, auxiliary data structures for vertices
+592
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+and coordinates are most efficiently stored in tries (prefix trees); they can be equipped with
+reference counters as well and be freed accordingly when no longer used by any edge.
+The same complexity as for Dijkstras algorithm holds for dynamic programming (DP);
+it differs from the former one in that it scans the nodes in a fixed order that is known
+beforehand (hence, contrary to the name the exploration scheme is actually static). The
+exact order of the scan can vary (e.g., row-wise or column-wise), as long as it is compatible
+with the topological ordering of the graph (e.g., for two sequences that the cells left, top,
+and diagonally top-left have been explored prior to a cell). One particular such ordering is
+that of antidiagonals, diagonals running from upper-right to lower-left. The calculation of
+the antidiagonal of a node merely amounts to summing up its k coordinates.
+Hirschberg (1975) noticed that in order to determine only the cost of the optimal alignment g  (t), it would not be necessary to store the whole matrix; instead, when proceeding
+e.g. by rows it suffices to keep track of only k of them at a time, deleting each row as soon
+as the next one is completed. This reduces the space requirement by one dimension from
+O(N k ) to O(kN k1 ). In order to recover the solution path at the end, re-computation of
+the lost cell values is needed. A Divide-and-conquer -strategy applies the algorithm twice
+to half the grid each, once in forward and once in backward direction, meeting at a fixed
+middle row. By adding the corresponding forward and backward distances in this middle
+row and finding the minimum, one cell lying on an optimal path can be recovered. This
+cell essentially splits the problem into two smaller subproblems, one from the upper left
+corner to it, and the other one to the lower right corner; they can be recursively solved
+using the same method. In two dimensions, the computation time is at most doubled, and
+the overhead reduces even more in higher dimensions.
+The FastLSA algorithm (Davidson, 2001) further refines Hirschbergs algorithm by exploiting additionally available memory to store more than one node on an optimal path,
+thereby reducing the number of re-computations.
+3.2 Algorithms Utilizing Bounds
+While Dijkstras algorithm and dynamic programming can be viewed as variants of breadthfirst search, we achieve best first search if we expand nodes v in the order of an estimate
+(lower bound) of the total cost of a path from s to the t passing through v. Rather than using
+the g-value as in Dijkstras algorithm, we use f (v) := g(v) + h(v) as the heap key, where
+h(v) is a lower bound on the cost of an optimal path from v to t. If h is indeed admissible,
+then the first solution found is guaranteed to be optimal (Hart, Nilsson, & Raphael, 1968).
+This is the classical best-first search algorithm, the A algorithm, well known in the artificial
+intelligence community. In this context, the priority queue maintaining the generated nodes
+is often also called the Open list, while the nodes that have already been expanded and
+removed from it constitute the Closed list. Fig. 4 schematically depicts a snapshot during a
+two-dimensional alignment problem, where all nodes with f -value no larger than the current
+fmin have been expanded. Since the accuracy of the heuristic decreases with the distance to
+the goal, the typical onion-shaped distribution results, with the bulk being located closer
+to the start node, and tapering out towards higher levels.
+The A algorithm can significantly reduce the total number of expanded and generated
+nodes; therefore, in higher dimensions it is clearly superior to dynamic programming. How593
+
+fiSchroedl
+
+M
+i
+ax
+um
+m
+m
+ia
+
+D
+er
+et
+
+Closed
+Open
+Possible back leak
+
+Le
+ve
+ls
+
+(a
+n
+
+tid
+
+ia
+go
+
+na
+ls)
+
+X
+
+Start
+X X
+X
+X
+X
+X
+
+X
+X
+X
+X
+X
+End
+
+Figure 4: Snapshot during best-first search in pairwise alignment (schematically).
+
+ever, in contrast to the Hirschberg algorithm, it still stores all of the explored nodes in the
+Closed list. Apart from keeping track of the solution path, this is necessary to prevent the
+search from leaking back, in the following sense.
+A heuristic h is called consistent if h(x)  h(x0 )+c(x, x0 ), for any node x and its child x0 .
+A consistent heuristic ensures that (as in the case of Dijkstras algorithm) at the time a node
+is expanded, its g-value is optimal, and hence it is never expanded again. However, if we try
+to delete the Closed nodes, then there can be topologically smaller nodes in Open with a
+higher f -value; when those are expanded at a later stage, they can lead to the re-generation
+of the node at a non-optimal g-value, since the first instantiation is no longer available for
+duplicate checking. In Fig. 4, nodes that might be subject to spurious re-expansion are
+marked X.
+Researchers have tried to avoid these leaks, while retaining the basic A search scheme.
+Korf proposed to store a list of forbidden operators with each node, or to place the parents
+of a deleted node on Open with f -value infinity (Korf, 1999; Korf & Zhang, 2000). However,
+as Zhou and Hansen (2003a) remark, it is hard to combine this algorithm with techniques
+for reduction of the Open list, and moreover the storage of operators lets the size of the
+nodes grow exponentially with the number of sequences. In their algorithm, they keep
+track of the kernel of the Closed list, which is defined as the set of nodes that have only
+Closed nodes as parents; otherwise a Closed node is said to be in the boundary. The key
+idea is that only the boundary nodes have to be maintained, since they shield the kernel
+from re-expansions. Only when the algorithm gets close to the memory limit nodes from
+the kernel are deleted; the backtrack pointer of the children is changed to the parents of
+594
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+the deleted nodes, which become relay nodes for them. For the final reconstruction of the
+optimal solution path, the algorithm is called recursively for each relay node to bridge the
+gap of missing edges.
+In addition to the Closed list, also the Open list can grow rapidly in sequence alignment
+problems. Particularly, since in the original A algorithm the expansion of a node generates
+all of its children at once, those whose f -value is larger than the optimal cost g  (t) are kept
+in the heap up to the end, and waste much of the available space.
+If an upper bound U on the optimal solution cost g  (t) is known, then nodes v with
+f (v) > U can be pruned right away; this idea is used in several articles (Spouge, 1989; Gupta
+et al., 1995). One of the most successful approaches is Yoshizumi et al.s (2000) Partial
+Expansion A (PEA ). Each node stores an additional value F , which is the minimum
+f -value of all of its yet ungenerated children. In each step, only a node with minimum
+F -value is expanded, and only those children with f = F are generated. This algorithm
+clearly only generates nodes with f value no larger than the optimal cost, which cannot
+be avoided altogether. However, the overhead in computation time is considerable: in the
+straightforward implementation, if we want to maintain nodes of constant size, generating
+one edge requires determining the f -values of all successors, such that for an interior node
+which eventually will be fully expanded the computation time is of the order of the square
+of the number of successors, which grows as O(2k ) with the number of sequences k. As a
+remedy, in the paper it is proposed to relax the condition by generating all children with
+f  F + C, for some small C.
+An alternative general search strategy to A that uses only linear space is iterative
+deepening A (IDA ) (Korf, 1985). The basic algorithm conducts a depth-first search up to
+a pre-determined threshold for the f -value. During the search, it keeps track of the smallest
+f -value of a generated successor that is larger than the threshold. If no solution is found,
+this provides an increased threshold to be used in the next search iteration.
+Wah and Shang (1995) suggested more liberal schemes for determining the next threshold dynamically in order to minimize the number of recomputations. IDA is most efficient
+in tree structured search spaces. However, it is difficult to detect duplicate expansions without additional memory; Therefore, unfortunately it is not applicable in lattice-structured
+graphs like in the sequence alignment problem due to the combinatorially explosive number
+of paths between any two given nodes.
+A different line of research tries to restrict the search space of the breadth-first approaches by incorporating bounds. Ukkonen (1985) presented an algorithm for the pairwise
+alignment problem which is particularly efficient for similar sequences; its computation time
+scales as O(dm), where d is the optimal solution cost. First consider the problem of deciding
+whether a solution exists whose cost is less than some upper threshold U . We can restrict
+the evaluation of the DP matrix to a band of diagonals where the minimum number of
+indels required to reach the diagonal, times the minimum indel cost, does not exceed U .
+In general, starting with a minimum U value, we can successively double G until the test
+returns a solution; the increase of computation time due to the recomputations is then also
+bounded by a factor of 2.
+Another approach for multiple sequence alignment is to make use of the lower bounds h
+from A . The key idea is the following: Since all nodes with an f -value lower than g  (t) have
+to be expanded anyway in order to guarantee optimality, we might as well explore them in
+595
+
+fiSchroedl
+
+any reasonable order, like that of Dijkstras algorithm or DP, if we only knew the optimal
+cost. Even slightly higher upper bounds will still help pruning. Spouge (1989) proposed to
+bound DP to vertices v where g(v) + h(v) is smaller than an upper bound for g  (t).
+Linear Bounded Diagonal Alignment (LBD-Align) (Davidson, 2001) uses an upper
+bound in order to reduce the computation time and memory in solving a pairwise alignment
+problem by dynamic programming. The algorithm calculates the DP matrix one antidiagonal at a time, starting in the top left corner, and working down towards bottom-right.
+While A would have to check the bound in every expansion, LBD-Align only checks the
+top and bottom cell of each diagonal. If e.g. the top cell of a diagonal has been pruned, all
+the remaining cells in that row can be pruned as well, since they are only reachable through
+it; this means that the pruning frontier on the next row can be shifted down by one. Thus,
+the pruning overhead can be reduced from a quadratic to a linear amount in terms of the
+sequence length.
+3.3 Obtaining Heuristic Bounds
+Up to now we have assumed lower and upper bounds, without specifying how to derive them.
+Obtaining an inaccurate upper bound on g  (t) is fairly easy, since we can use the cost of any
+valid path through the lattice. Better estimates are e.g. available from heuristic linear-time
+alignment programs such as FASTA and BLAST (Altschul, Gish, Miller, Myers, & Lipman,
+1990), which are a standard method for database searches. Davidson (2001) employed a
+local beam search scheme.
+Gusfield (1993) proposed an approximation called the star-alignment. Out of all the
+sequences to be aligned, one consensus sequence is chosen such that the sum of its pairwise
+alignment costs to the rest of the sequences is minimal. Using this best sequence as
+the center, the other ones are aligned using the once a gap, always a gap rule. Gusfield
+showed that the cost of the optimal alignment is greater or equal to the cost of this star
+alignment, divided by (2  2/k).
+For use in heuristic estimates, lower bounds on the k-alignment are often based on
+optimal alignments of subsets of m < k sequences. In general, for a vertex v in k-space, we
+are looking for a lower bound for a path from v to the target corner t. Consider first the
+case m = 2. The cost of such a path is, by definition, the sum of its edge costs, where each
+edge cost in turn is the sum of all pairwise (replacement or gap) penalties. Each multiple
+sequence alignment induces a pairwise alignment for sequences i and j, by simply copying
+rows i and j and ignoring columns with a   in both rows. These pairwise alignments can
+be visualized as the projection of an alignment onto its faces, cf. Fig. 1.
+By interchange of the summation order, the sum-of-pairs cost is the sum of all pairwise
+alignment costs of the respective paths projected on a face, each of which cannot be smaller
+than the optimal pairwise path cost. Thus, we can construct an admissible heuristic hpair
+by computing, for each pairwise alignment and for each cell in a pairwise problem, the
+cheapest path cost to the goal node.
+The optimal solutions to all pairwise alignment problems needed for the lower bound h
+values are usually computed prior to the main search in a preprocessing step (Ikeda & Imai,
+1994). To this end, it suffices to apply the ordinary DP procedure; however, since this time
+we are interested in the lowest cost of a path from v to t, it runs in backward direction,
+596
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+proceeding from the lower right corner to the upper left, expanding all possible parents of
+a vertex in each step.
+Let U be an upper bound on the cost of an optimal multiple sequence alignment G.
+The sum of all optimal alignment costs Lij = d(sij , tij ) for pairwise subproblems i, j 
+{1, . . . , k}, i < j, call it L, is a lower bound on G. Carrillo and Lipman (1988) pointed out
+that by the additivity of the sum-of-pairs cost function, any pairwise alignment induced
+by the optimal multiple sequence alignment can at most be  = U  L larger than the
+respective optimal pairwise alignment. This bound can be used to restrict the number of
+values that have to be computed in the preprocessing stage and have to be stored for the
+calculation of the heuristic: for the pair of sequences i, j, only those nodes v are feasible
+such that a path from the start node si,j to the goal node ti,j exists with total cost no more
+than Li,j + . To optimize the storage requirements, we can combine the results of two
+searches. First, a forward pass determines for each relevant node v the minimum distance
+d(sij , v) from the start node. The subsequent backward pass uses this distance like an exact
+heuristic and stores the distance d(v, tij ) from the target node only for those nodes with
+d(sij , v) + d(v, tij )  d(s, t) +  1 .
+Still, for larger alignment problems the required storage size can be extensive. The
+program MSA (Gupta et al., 1995) allows the user to adjust  to values below the CarrilloLipman bound individually for each pair of sequences. This makes it possible to generate
+at least heuristic alignments if time or memory doesnt allow for the complete solution;
+moreover, it can be recorded during the search if the -bound was actually reached. In the
+negative case, optimality of the found solution is still guaranteed; otherwise, the user can
+try to run the program again with slightly increased bounds.
+The general idea of precomputing simplified problems and storing the solutions for use as
+a heuristic has been explored under the name of pattern databases (Culberson & Schaeffer,
+1998). However, these approaches implicitly assume that the computational cost can be
+amortized over many search instances to the same target. In contrast, in the case of MSA,
+the heuristics are instance-specific, so that we have to strike a balance. We will discuss this
+in greater depth in Sec. 6.2.
+
+4. Iterative-Deepening Dynamic Programming
+As we have seen, a fixed search order as in dynamic programming can have several advantages over pure best-first selection.
+ Since Closed nodes can never be reached more than once during the search, it is safe to
+delete useless ones (those that are not part of any shortest path to the current Open
+1. A slight technical complication arises for affine gap costs: recall that DP implementations usually charge
+the gap opening penalty to the g-value of the edge e starting the gap, while the edge e0 ending the gap
+carries no extra penalty at all. However, since the sum of pairs heuristics h is computed in backward
+direction, using the same algorithm we would assign the penalty for the same path instead to e0 . This
+means that the heuristic f = g + h would no longer be guaranteed to be a lower bound, since it
+contains the penalty twice. As a remedy, it is necessary to make the computation symmetric by charging
+both the beginning and end of a gap with half the cost each. The case of the beginning and end of
+the sequences can be handled most conveniently by starting the search from a dummy diagonal edge
+((1, . . . , 1), (0, . . . , 0)), and defining the target edge to be the dummy diagonal edge ((N, . . . , N ), (N +
+1, . . . , N + 1)), similar to the arrows shown in Fig. 1.
+
+597
+
+fiSchroedl
+
+nodes) and to apply path compression schemes, such as the Hirschberg algorithm.
+No sophisticated schemes for avoiding back leaks are required, such as the abovementioned methods of core set maintenance and dummy node insertion into Open.
+ Besides the size of the Closed list, the memory requirement of the Open list is determined by the maximum number of nodes that are open simultaneously at any
+time while the algorithm is running. When the f -value is used as the key for the
+priority queue, the Open list usually contains all nodes with f -values in some range
+(fmin , fmin + ); this set of nodes is generally spread across all over the search space,
+since g (and accordingly h = (f  g)) can vary arbitrarily between 0 and fmin + . As
+opposed to that, if DP proceeds along levels of antidiagonals or rows, at any iteration
+at most k levels have to be maintained at the same time, and hence the size of the
+Open list can be controlled more effectively. In Fig. 4, the pairwise alignment is partitioned into antidiagonals: the maximum number of open nodes in any two adjacent
+levels is four, while the total amounts to seventeen2 .
+ For practical purposes, the running time should not only be measured in terms of the
+number of node expansions, but one should also take into account the execution time
+needed for an expansion. By arranging the exploration order such that edges with
+the same head node (or more generally, those sharing a common coordinate prefix)
+are dealt with one after the other, much of the computation can be cached, and edge
+generation can be sped up significantly. We will come back to this point in Sec. 6.
+The remaining issue of a static exploration scheme consists in adequately bounding the
+search space using the h-values. A is known to be minimal in terms of the number of node
+expansions. If we knew the cost g  (t) of a cheapest solution path beforehand, we could
+simply proceed level by level of the grid, however only immediately prune generated edges
+e whenever f (e) > g  (t). This would ensure that we only generate those edges that would
+have been generated by algorithm A , as well. An upper threshold would additionally help
+reduce the size of the Closed list, since a node can be pruned if all of its children lie beyond
+the threshold; additionally, if this node is the only child of its parent, this can give rise to
+a propagating chain of ancestor deletions.
+We propose to apply a search scheme that carries out a series of searches with successively larger thresholds, until a solution is found (or we run out of memory or patience).
+The use of such an upper bound parallels that in the IDA algorithm.
+The resulting algorithm, which we will refer to as Iterative-Deepening Dynamic Programming (IDDP), is sketched in Fig. 5. The outer loop initializes the threshold with a
+lower bound (e.g., h(s)), and, unless a solution is found, increases it up to an upper bound.
+In the same manner as in the IDA algorithm, in order to make sure that at least one additional edge is explored in each iteration the threshold has to be increased correspondingly
+at least to the minimum cost of a fringe edge that exceeded the previous threshold. This
+fringe increment is maintained in the variable minNextThresh, initially estimated as the
+upper bound, and repeatedly decreased in the course of the following expansions.
+2. Contrary to what the figure might suggest, A can open more than two nodes per level in pairwise
+alignments, if the set of nodes no worse than some fmin contains holes.
+
+598
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+procedure IDDP(Edge startEdge, Edge targetEdge, int lowerBound, int upperBound)
+int thresh = lowerBound
+{Outer loop: Iterative deepening phases}
+while (thresh  upperBound) do
+Heap h = {(startEdge, 0)}
+int minNextThresh = upperBound
+{Inner loop: Bounded dynamic programming}
+while (not h.IsEmpty()) do
+Edge e = h.DeleteMin() {Find and remove an edge with minimum level}
+if (e == targetEdge) then
+{Optimal alignment found}
+return TraceBackPath(startEdge, targetEdge)
+end if
+Expand(e, thresh, minNextThresh)
+end while
+int threshIncr = ComputeThreshIncr() {Compute search threshold for next iteration, see text}
+thresh = max(thresh + threshIncr, minNextThresh)
+end while
+print(No alignment with cost at most upperBound found)
+
+Figure 5: Algorithm Iterative-Deepening Dynamic Programming.
+In each step of the inner loop, we select and remove a node from the priority queue
+whose level is minimal. As explained later in Sec. 6, it is favorable to break ties according
+to the lexicographic order of target nodes. Since the total number of possible levels is
+comparatively small and known in advance, the priority queue can be implemented using
+an array of linked lists (Dial, 1969); this provides constant time operations for insertion and
+deletion.
+The expansion of an edge e is partial (Fig. 6). A child edge might already exist from an
+earlier expansion of an edge with the same head vertex; we have to test if we can decrease
+the g-value. Otherwise, we generate a new edge, if only temporarily for the sake of calculating its f -value; that is, if its f -value exceeds the search threshold of the current iteration,
+its memory is immediately reclaimed. Moreover, in this case the fringe threshold minNextThresh is updated. In a practical implementation, we can prune unnecessary accesses to
+partial alignments inside the calculation of the heuristic e.GetH() as soon as as the search
+threshold has already been reached.
+The relaxation of a child edge within the threshold is performed by the subprocedure
+UpdateEdge (cf. Fig. 7). This is similar to the corresponding relaxation step in A , updating
+the childs g- and f values, its parent pointers, and inserting it into Open, if not already
+contained. However, in contrast to best-first search, it is inserted into the heap according to
+the antidiagonal level of its head vertex. Note that in the event that the former parent loses
+its last child, propagation of deletions (Fig. 8) can ensure that only those Closed nodes
+continue to be stored that belong to some solution path. Edge deletions can also ensue
+deletion of dependent vertex and coordinate data structures (not shown in the pseudocode).
+The other situation that gives rise to deletions is if immediately after the expansion of a
+node no children are pointing back to it (the children might either be reachable more cheaply
+from different nodes, or their f -value might exceed the threshold).
+599
+
+fiSchroedl
+
+procedure Expand(Edge e, int thresh, int minNextThresh)
+for all Edge child  Succ(e) do
+{Retrieve child or tentatively generate it if not yet existing, set boolean variable created
+accordingly}
+int newG = e.GetG() + GapCost(e, child)
++ child.GetCost()
+int newF = newG + child.GetH()
+if (newF  thresh and newG < child.GetG()) then
+{Shorter path than current best found, estimate within threshold}
+child.SetG(newG)
+UpdateEdge(e, child, h) {Update search structures}
+else if (newF > thresh) then
+minNextThresh =
+min(minNextThresh, newF)
+{Record minimum of pruned edges}
+if (created) then
+Delete(child) {Make sure only promising edges are stored}
+end if
+end if
+end for
+if (e.ref == 0) then
+DeleteRec(e) {No promising children could be inserted into the heap}
+end if
+
+Figure 6: Edge expansion in IDDP.
+procedure UpdateEdge(Edge parent, Edge child, Heap h)
+parent.ref++
+child.GetBacktrack().ref
+if (child.GetBacktrack().ref == 0) then
+DeleteRec(child.GetBacktrack()) {The former parent has lost its last child and becomes useless}
+end if
+child.SetBacktrack(parent)
+if (not h.Contains(child)) then
+h.Insert(child, child.GetHead().GetLevel())
+end if
+
+Figure 7: Edge relaxation in IDDP.
+
+The correctness of the algorithm can be shown analogously to the soundness proof of A .
+If the threshold is smaller than g  (t), the DP search will terminate without encountering
+a solution; otherwise, only nodes are pruned that cannot be part of an optimal path. The
+invariant holds that there is always a node in each level which lies on an optimal path and
+is in the Open list. Therefore, if the algorithm terminates only when the heap runs empty,
+the best found solution will indeed be optimal.
+The iterative deepening strategy results in an overhead computation time due to reexpansions, and we are trying to restrict this overhead as much as possible. More precisely,
+600
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+procedure DeleteRec(Edge e)
+if (e.GetBacktrack() 6= nil) then
+e.GetBacktrack().ref
+if (e.GetBacktrack().ref == 0) then
+DeleteRec(e.GetBacktrack())
+end if
+end if
+Delete(e)
+
+Figure 8: Recursive deletion of edges that are no longer part of any solution path.
+procedure TraceBack(Edge startEdge, Edge e)
+if (e == startEdge) then
+return {End of recursion}
+end if
+if (e.GetBackTrack().GetTarget() 6= e.GetSource()) then
+{Relay node: recursive path reconstruction}
+IDDP( e.GetBackTrack(), e, e.GetF(), e.GetF())
+end if
+OutputEdge(e)
+TraceBack(startEdge, e.GetBackTrack())
+
+Figure 9: Divide-and-Conquer solution reconstruction in reverse order.
+we want to minimize the ratio
+=
+
+nIDDP
+,
+nA
+
+where nIDDP and nA denote the number of expansions in IDDP and A , respectively. One
+way to do so (Wah & Shang, 1995) is to choose a threshold sequence 1 , 2 , . . . such that
+the number of expansions ni in stage i satisfies
+ni = rni1 ,
+for some fixed ratio r. If we choose r too small, the number of re-expansions and hence
+the computation time will grow rapidly, if we choose it too big, then the threshold of the
+last iteration can exceed the optimal solution cost significantly, and we will explore many
+irrelevant edges. Suppose that n0 rp < nA  n0 rp+1 . Then the algorithm performs p + 1
+iterations. In the worst case, the overshoot will be maximal if A finds the optimal solution
+just above the previous threshold, nA = n0 rp + 1. The total number of expansions is
+P
+r(r p+1 1)
+r2
+i
+n0 p+1
+, and the ratio  becomes approximately r1
+. By setting the
+i=0 r = n0
+r1
+derivative of this expression to zero, we find that the optimal value for r is 2; the number
+of expansions should double from one search stage to the next. If we achieve doubling, we
+will expand at most four times as many nodes as A .
+Like in Wah and Shangs (1995) scheme, we dynamically adjust the threshold using runtime information. Procedure ComputeThreshIncr stores the sequence of expansion numbers
+and thresholds from the previous search stages, and then uses curve fitting for extrapolation
+(in the first few iterations without sufficient data available, a very small default threshold
+is applied). We found that the distribution of nodes n() with f -value smaller or equal to
+601
+
+fiSchroedl
+
+threshold  can be modeled very accurately according to the exponential approach
+n() = A  B  .
+Consequently, in order to attempt to double the number of expansions, we choose the next
+threshold according to
+1
+i+1 = i +
+.
+log2 B
+
+5. Sparse Representation of Solution Paths
+When the search progresses along antidiagonals, we do not have to fear back leaks, and
+are free to prune Closed nodes. Similarly as in Zhou and Hansens (2003a) work, however,
+we only want to delete them lazily and incrementally when being forced by the algorithm
+approaching the computers memory limit.
+When deleting an edge e, the backtrack-pointers of its child edges that refer to it are
+redirected to the respective predecessor of e, whose reference count is increased accordingly.
+In the resulting sparse solution path representation, backtrack pointers can point to any
+optimal ancestors.
+After termination of the main search, we trace back the pointers starting with the goal
+edge; this is outlined in Procedure TraceBack (Fig. 9), which prints out the solution path
+in reverse order. Whenever an edge e points back to an ancestor e0 which is not its direct
+parent, we apply an auxiliary search from start edge e0 to goal edge e in order to reconstruct
+the missing links of the optimal solution path. The search threshold can now be fixed at the
+known solution cost; moreover, the auxiliary search can prune those edges that cannot be
+ancestors of e because they have some coordinate greater than the corresponding coordinate
+in e. Since also the shortest distance between e and e0 is known, we can stop at the first path
+that is found at this cost. To improve the efficiency of the auxiliary search even further,
+the heuristic could be recomputed to suit the new target. Therefore, the cost of restoring
+the solution path is usually marginal compared to that of the main search.
+Which edges are we going to prune, in which order? For simplicity, assume for the
+moment that the Closed list consists of a single solution path. According to the Hirschberg
+approach, we would keep only one edge, preferably lying near the center of the search
+space (e.g., on the longest anti-diagonal), in order to minimize the complexity of the two
+auxiliary searches. With additional available space allowing to store three relay edges, we
+would divide the search space into four subspaces of about equal size (e.g., additionally
+storing the antidiagonals half-way between the middle antidiagonal and the start node resp.
+the target node). By extension, in order to incrementally save space under diminishing
+resources we would first keep only every other level, then every fourth, and so on, until only
+the start edge, the target edge, and one edge half-way on the path would be left.
+Since in general the Closed list contains multiple solution paths (more precisely, a tree
+of solution paths), we would like to have about the same density of relay edges on each of
+them. For the case of k sequences, an edge reaching level l with its head node can originate
+with its tail node from level l  1, . . . , l  k. Thus, not every solution path passes through
+each level, and deleting every other level could result in leaving one path completely intact,
+while extinguishing another totally. Thus, it is better to consider contiguous bands of k
+602
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+procedure SparsifyClosed()
+for (int sparse = 1 to blog2 N c) do
+while (UsedMemory() > maxMemory and exists {Edge e  Open | e.GetLastSparse() <
+sparse}) do
+Edge pred = e.GetBacktrack()
+{Trace back solution path}
+while (pred 6= nil and e.GetLastSparse() < sparse) do
+e.SetLastSparse(sparse) {Mark to avoid repeated trace-back}
+if (bpred.GetHead().GetLevel() / kc mod 2sparse 6= 0) then
+{pred lies in prunable band: redirect pointer}
+e.SetBacktrack(pred.GetBacktrack())
+e.GetBacktrack().ref++
+pred.ref
+if (pred.ref == 0) then
+{e is the last remaining edge referring to pred}
+DeleteRec(pred)
+end if
+else
+{Not in prunable band: continue traversal}
+e = e.GetBacktrack()
+end if
+pred = e.GetBacktrack()
+end while
+end while
+end for
+
+Figure 10: Sparsification of Closed list under restricted memory.
+
+levels each, instead of individual levels. Bands of this size cannot be skipped by any path.
+The total number of antidiagonals in an alignment problem of k sequences of length N is
+k  N  1; thus, we can decrease the density in blog2 N c steps.
+A technical implementation issue concerns the ability to enumerate all edges that reference some given prunable edge, without explicitly storing them in a list. However, the
+reference counting method described above ensures that any Closed edge can be reached by
+following a path bottom-up from some edge in Open. The procedure is sketched in Fig. 10.
+The variable sparse denotes the interval between level bands that are to be maintained in
+memory. In the inner loop, all paths to Open nodes are traversed in backward direction;
+for each edge e0 that falls into a prunable band, the pointer of the successor e on the path
+is redirected to its respective backtrack pointer. If e was the last edge referencing e0 , the
+latter one is deleted, and the path traversal continues up to the start edge. When all Open
+nodes have been visited and the memory bound is still exceeded, the outer loop tries to
+double the number of prunable bands by increasing sparse.
+Procedure SparsifyClosed is called regularly during the search, e.g., after each expansion.
+However, a naive version as described above would incur a huge overhead in computation
+time, particularly when the algorithms memory consumption is close to the limit. Therefore, some optimizations are necessary. First, we avoid tracing back the same solution path
+at the same (or lower) sparse interval by recording for each edge the interval when it was
+603
+
+fiSchroedl
+
+traversed the last time (initially zero); only for an increased variable sparse there can be
+anything left for further pruning. In the worst case, each edge will be inspected blog2 N c
+times. Secondly, it would be very inefficient to actually inspect each Open node in the inner
+loop, just to find that its solution path has been traversed previously, at the same or higher
+sparse value; however, with an appropriate bookkeeping strategy it is possible to reduce the
+time for this search overhead to O(k).
+
+6. Use of Improved Heuristics
+As we have seen, the estimator hpair , the sum of optimal pairwise goal distances, gives
+a lower bound on the actual path length. However, more powerful heuristics are also
+conceivable. While their computation will require more resources, the trade-off can prove
+itself worthwhile; the tighter the estimator is, the smaller is the space that the main search
+needs to explore.
+6.1 Beyond Pairwise Alignments
+Kobayashi and Imai (1998) suggested to generalize hpair by considering optimal solutions
+for subproblems of size m > 2. They proved that the following heuristics are admissible
+and more informed than the pairwise estimate.
+ hall,m is the sum of all m-dimensional optimal costs, divided by
+
+k2 
+m2 .
+
+ hone,m splits the sequences into two sets of sizes m and k  m; the heuristic is the sum
+of the optimal cost of the first subset, plus that of the second one, plus the sum of all
+2-dimensional optimal costs of all pairs of sequences in different subsets. Usually, m
+is chosen close to k/2.
+These improved heuristics can reduce the main search effort by orders of magnitudes.
+However, in contrast to pairwise sub-alignments, time and space resources devoted to compute and store higher-dimensional heuristics are in general no longer negligible compared
+to the main search. Kobayashi and Imai (1998) noticed that even for the case m = 3 of
+triples of sequences, it can be impractical to compute the entire subheuristic hall,m . As one
+reduction, they show that it suffices to restrict oneself to nodes where the path cost does
+not exceed the optimal path cost of the subproblem by more than
+!
+
+=
+
+X
+k2
+U
+d(si1 ,...,im , ti1 ,...,im );
+m2
+i ,...,i
+1
+
+m
+
+this threshold can be seen as a generalization of the Carrillo-Lipman bound. However,
+it can still
+incur excessive overhead in space and computation time for the computation of
+k
+the m
+lower-dimensional subproblems. A drawback is that it requires an upper bound
+U , on whose accuracy also the algorithms efficiency hinges. We could improve this bound
+by applying more sophisticated heuristic methods, but it seems counterintuitive to spend
+more time doing so which we would rather use to calculate the exact solution. In spite of
+its advantages for the main search, the expensiveness of the heuristic calculation appears
+as a major obstacle.
+604
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+McNaughton, Lu, Schaeffer, and Szafron (2002) suggested to partition the heuristic
+into (hyper-) cubes using a hierarchical oct-tree data structure; in contrast to full cells,
+empty cells only retain the values at their surface. When the main search tries to use one
+of them, its interior values are recomputed on demand. Still, this work assumes that each
+node in the entire heuristic is calculated at least once using dynamic programming.
+We see one cause of the dilemma in the implicit assumption that a complete computation
+is necessary. The bound  above refers to the worst-case, and can generally include many
+more nodes than actually required in the main search. However, since we are only dealing
+with the heuristic, we can actually afford to miss some values occasionally; while this might
+slow down the main search, it cannot compromise the optimality of the final solution.
+Therefore, we propose to generate the heuristics with a much smaller bound . Whenever
+the attempt to retrieve a value of the m-dimensional subheuristic
+fails during the main
+m
+search, we simply revert to replacing it by the sum of the 2 optimal pairwise goal distances
+it covers.
+We believe that the IDDP algorithm lends itself well to make productive use of higherdimensional heuristics. Firstly and most importantly, the strategy of searching to adaptively
+increasing thresholds can be transferred to the -bound as well; this will be addressed in
+more detail in the next section.
+Secondly, as far as a practical implementation is concerned, it is important to take into
+account not only how a higher-dimensional heuristic affects the number of node expansions,
+but also their time complexity. This time is dominated by the number of accesses to subalignments. With k sequences, in the worst case an edge has 2k  1 successors, leading to
+a total of
+!
+k
+k
+(2  1)
+m
+evaluations for hall,m . One possible improvement is to enumerate all edges emerging from a
+given vertex in lexicographic order, and to store partial sums of heuristics of prefix subsets
+of sequences for later re-use. In this way, if we allow for a cache of linear size, the number
+of accesses is reduced to
+!
+i=k
+X
+i i1
+;
+2
+m1
+i=m
+correspondingly, for a quadratic cache we only need
+i=k
+X
+i=m
+
+!
+
+2
+
+i
+
+i2
+m2
+
+evaluations. For instance, in aligning 12 sequences using hall,3 , a linear cache reduces the
+evaluations to about 37 percent within one expansion.
+As mentioned above, in contrast to A , IDDP gives us the freedom to choose any
+particular expansion order of the edges within a given level. Therefore, when we sort edges
+lexicographically according to the target nodes, much of the cached prefix information can
+be shared additionally across consecutively expanded edges. The higher the dimension of
+the subalignments, the larger are the savings. In our experiments, we experienced speedups
+of up to eighty percent in the heuristic evaluation.
+605
+
+fiSchroedl
+
+Execution time [s]
+
+100
+
+Main search
+Heuristic
+Total time
+
+10
+
+1
+
+0.1
+0
+
+10
+
+20
+
+30 40 50 60 70
+Heuristic miss ratio r [%]
+
+80
+
+90
+
+100
+
+Figure 11: Trade-off between heuristic and main search: Execution times for problem 1tvxA
+as a function of heuristic miss ratio.
+
+6.2 Trade-Off between Computation of Heuristic and Main Search
+As we have seen, we can control the size of the precomputed sub-alignments by choosing
+the bound  up to which f -values of edges are generated beyond the respective optimal
+solution cost. There is obviously a trade-off between the auxiliary and main searches. It
+is instructive to consider the heuristic miss ratio r, i.e., the fraction of calculations of
+the heuristic h during the main search when a requested entry in a partial MSA has not
+been precomputed. The optimum for the main search is achieved if the heuristic has been
+computed for every requested edge (r = 0). Going beyond that point will generate an
+unnecessarily large heuristic containing many entries that will never be actually used. On
+the other hand, we are free to allocate less effort to the heuristic, resulting in r > 0 and
+consequently decreasing performance of the main search. Generally, the dependence has
+an S-shaped form, as exemplified in Fig. 11 for the case of problem 1tvxA of BAliBASE
+(cf. next section). Here, the execution time of one iteration of the main search at a fixed
+threshold of 45 above the lower bound is shown, which includes the optimal solution.
+Fig. 11 illustrates the overall time trade-off between auxiliary and main search, if we fix
+ at different levels. The minimum total execution time, which is the sum of auxiliary and
+main search, is attained at about r = 0.15 (5.86 seconds). The plot for the corresponding
+memory usage trade-off has a very similar shape.
+Unfortunately, in general we do not know in advance the right amount of auxiliary search.
+As mentioned above, choosing  according to the Carrillo-Lipman bound will ensure that
+606
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+Execution time [s]
+
+100
+
+10
+
+1
+
+0.1
+0
+
+10
+
+20
+
+30
+
+40
+50
+60
+70
+Heuristic miss ratio r [%]
+
+80
+
+90
+
+100
+
+Figure 12: Time of the last iteration in the main search for problem 1tvxA as a function of
+heuristic miss ratio.
+
+every requested sub-alignment cost will have been precomputed; however, in general we will
+considerably overestimate the necessary size of the heuristic.
+As a remedy, our algorithm IDDP gives us the opportunity to recompute the heuristic in
+each threshold iteration in the main search. In this way, we can adaptively strike a balance
+between the two.
+When the currently experienced miss rate r rises above some threshold, we can suspend
+the current search, recompute the pairwise alignments with an increased threshold , and
+resume the main search with the improved heuristics.
+Like for the main search, we can accurately predict the auxiliary computation time
+and space at threshold  using exponential fitting. Due to the lower dimensionality, it
+will generally increase less steeply; however, the constant factor might be higher for the
+k
+heuristic, due to the combinatorial number of m
+alignment problems to be solved.
+A doubling scheme as explained above can bound the overhead to within a constant
+factor of the effort in the last iteration. In this way, when also limiting the heuristic
+computation time by a fixed fraction of the main search, we can ensure as an expected
+upper bound that the overall execution time stays within a constant factor of the search
+time that would be required using only the pairwise heuristic.
+If we knew the exact relation between , r, and the speedup of the main search, an ideal
+strategy would double the heuristic whenever the expected computation time is smaller than
+the time saved in the main search. However, as illustrated in Fig. 12, this dependence is
+more complex than simple exponential growth, it varies with the search depth and specifics
+of the problem. Either we would need a more elaborate model of the search space, or the
+607
+
+fiSchroedl
+
+algorithm would have to conduct exploratory searches in order to estimate the relation.
+We leave this issue to future work, and restrict ourselves here to a simplified, conservative
+heuristic: We hypothesize that the main search can be made twice as fast by a heuristic
+doubling if the miss rate r rises above 25 percent; in our experiments, we found that this
+assumption is almost always true. In this event, since the effective branching factor of the
+main search is reduced by the improved heuristic, we also ignore the history of main search
+times in the exponential extrapolation procedure for subsequent iterations.
+
+7. Experimental Results
+In the following, we compare IDDP to one of the currently most successful approaches,
+Partial Expansion A . We empirically explore the benefit of higher-dimensional heuristics;
+finally, we show its feasibility by means of the benchmark database BAliBASE .
+7.1 Comparison to Partial Expansion A
+For the first series of evaluations, we ran IDDP on the same set of sequences as chosen by
+Yoshizumi et al. (2000) (elongation factors EF-TU and EF-1 from various species, with a
+high degree of similarity). As in this work, substitution costs were chosen according to the
+PAM-250 matrix. The applied heuristic was the sum of optimal pairwise goal distances. The
+expansion numbers do not completely match with their results, however, since we applied
+the biologically more realistic affine gap costs: gaps of length x were charged 8+8x, except
+at the beginning and end of a sequence, where the penalty was 8  x.
+All of the following experiments were run under RedHat Linux 7.3 on an Intel XeonT M
+CPU with 3.06 GHz, and main memory of 2 Gigabytes; we used the gcc 2.96 compiler.
+The total space consumption of a search algorithm is determined by the peak number of
+Open and Closed edges over the entire running time. Table 1 and Fig. 13 give these values
+for the series of successively larger sets of input sequences (with the sequences numbered as
+defined in Yoshizumi et al., 2000) 1  4, 1  5, . . ., 1  12.
+With our implementation, the basic A algorithm could be carried out only up to 9
+sequences, before exhausting our computers main memory.
+Confirming the results of Yoshizumi et al. (2000), Partial Expansion requires only about
+one percent of this space. Interestingly, during the iteration with the peak in total numbers
+of nodes held in memory, no nodes are actually closed except in problem 6. This might
+be explained with the high degree of similarity between sequences in this example. Recall
+that PEA only closes a node if all of its successors have an f -value of no more than the
+optimal solution cost; if the span to the lower bound is small, each node can have at least
+one bad successor that exceeds this difference.
+IDDP reduces the memory requirements further by a factor of about 6. The diagram
+also shows the maximum size of the Open list alone. For few sequences, the difference
+between the two is dominated by the linear length to store the solution path. As the
+problem size increases, however, the proportion of the Closed list of the total memory drops
+to about only 12 percent for 12 sequences. The total number of expansions (including all
+search stages) is slightly higher than in PEA ; however, due to optimizations made possible
+by the control of the expansion order, the execution time at 12 sequences is reduced by
+about a third.
+608
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+Num
+Exp
+
+Time
+[sec]
+
+Max
+Open
+
+Max
+Open +
+Closed
+
+626
+1599
+3267
+10781
+116261
+246955
+
+A
+0.01
+0.05
+0.25
+1.94
+49.32
+318.58
+
+7805
+32178
+124541
+666098
+9314734
+35869671
+
+8432
+33778
+127809
+676880
+9430996
+36116627
+
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+448
+716
+2610
+6304
+23270
+330946
+780399
+5453418
+20887627
+36078736
+
+PEA
+0.01
+0.01
+0.05
+0.33
+2.63
+87.24
+457.98
+7203.17
+62173.78
+237640.14
+
+442
+626
+1598
+3328
+10874
+118277
+249279
+1569815
+5620926
+9265949
+
+442
+626
+1598
+3331
+10874
+118277
+249279
+1569815
+5620926
+9265949
+
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+496
+1367
+6776
+12770
+26026
+362779
+570898
+4419297
+21774869
+36202456
+
+IDDP
+0.01
+0.02
+0.14
+0.59
+2.46
+73.62
+250.48
+4101.96
+43708.14
+158987.80
+
+4
+9
+171
+414
+889
+13620
+21506
+160240
+860880
+1417151
+
+434
+443
+501
+972
+1749
+19512
+30009
+192395
+997163
+1616480
+
+4
+5
+6
+7
+8
+9
+
+Table 1: Algorithm comparison for varying number of input sequences (elongation factors
+EF-TU and EF-1).
+
+Since PEA does not prune edges, its maximum space usage is always the total number
+of edges with f -value smaller than g  (t) (call these edges the relevant edges, since they have
+to be inspected by each admissible algorithm). In IDDP, on the other hand, the Open list
+can only comprise k adjacent levels out of those edges (not counting the possible threshold
+overshoot, which would contribute a factor of at most 2). Thus, the improvement of IDDP
+over PEA will tend to increase with the overall number of levels (which is the sum of
+609
+
+fiSchroedl
+
+1e+08
+1e+07
+
+Edges in memory
+
+1e+06
+100000
+10000
+1000
+100
+A* max open+closed
+PEA* max open+closed
+IDDP max open+closed
+IDDP max open
+
+10
+1
+3
+
+4
+
+5
+
+6
+
+7
+8
+9
+Number of sequences
+
+10
+
+11
+
+12
+
+Figure 13: Memory requirements for A , IDDP, and PEA (elongation factors EF-TU and
+EF-1).
+
+all string lengths), divided by the number of sequences; in other words, with the average
+sequence length.
+Moreover, the ratio depends on how well the heuristic suits the particular problem.
+Fig. 14 shows the distribution of all edges with f value smaller or equal to g  (t), for the
+case of 9 of the example sequences. This problem is quite extreme as the bulk of these edges
+is concentrated in a small level band between 1050 and 1150. As an example with a more
+even distribution, Fig. 15 depicts the situation for problem 1cpt from Reference 1 in the
+benchmark set BAliBASE (Thompson et al., 1999) with heuristic hall,3 . In this case, the
+proportion of the overall 19492675 relevant edges that are maximal among all 4 adjacent
+levels amounts to only 0.2 percent. The maximum Open size in IDDP is 7196, while the
+total number of edges generated by PEA is 327259, an improvement by about a factor of
+45.
+7.2 Multidimensional Heuristics
+On the same set of sequences, we compared different improved heuristics in order to get an
+impression for their respective potential. Specifically, we ran IDDP with heuristics hpair ,
+hall,3 , hall,4 , and hone,k/2 at various thresholds . Fig. 16 shows the total execution time
+for computing the heuristics, and performing the main search. In each case, we manually
+selected a value for  which minimized this time. It can be seen that the times for hone,k/2
+lie only a little bit below hpair ; For few sequences (less than six), the computation of the
+heuristics hall,3 and hall,4 dominates their overall time. With increasing dimensions, how610
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+0.016
+
+Open edges / sum open edges [%]
+
+0.014
+0.012
+0.01
+0.008
+0.006
+0.004
+0.002
+0
+0
+
+500
+
+1000
+
+1500
+
+2000
+Level
+
+2500
+
+3000
+
+3500
+
+4000
+
+Figure 14: Distribution of relevant edges over levels (elongation factors EF-TU and EF-1);
+compare to the schematic projection in Fig. 4.
+
+ever, this investment starts to yield growing returns, with hall,3 being the fastest algorithm,
+requiring only 5 percent of the time of hpair at 12 sequences.
+As far as memory is concerned, Fig. 17 reveals that the maximum size of the Open and
+Closed list, for the chosen  values, is very similar for hpair and hone,k/2 on the one hand,
+and hall,3 and hall,4 on the other hand.
+At 12 sequences, hone,6 saves only about 60 percent of edges, while hall,3 only needs 2.6
+percent and hall,4 only 0.4 percent of the space required by the pairwise heuristic. Using
+IDDP, we never ran out of main memory; even larger test sets could be aligned, the range
+of the shown diagrams was limited by our patience to wait for the results for more than two
+days.
+Based on the experienced burden of computing the heuristic, Kobayashi and Imai (1998)
+concluded that hone,m should be preferred to hall,m . We do not quite agree with this judgment. We see that the heuristic hall,m is able to reduce the search space of the main search
+considerably stronger than hone,m , so that it can be more beneficial with an appropriate
+amount of heuristic computation.
+7.3 The Benchmark Database BAliBASE
+BAliBASE (Thompson et al., 1999) is a widely used database of manually-refined multiple
+sequence alignments specifically designed for the evaluation and comparison of multiple sequence alignment programs. The alignments are classified into 8 reference sets. Reference 1
+contains alignments of up to six about equidistant sequences. All the sequences are of sim611
+
+fiSchroedl
+
+Open edges / sum open edges [%]
+
+0.00012
+
+0.0001
+
+8e-05
+
+6e-05
+
+4e-05
+
+2e-05
+
+0
+0
+
+200
+
+400
+
+600
+
+800
+Level
+
+1000
+
+1200
+
+1400
+
+1600
+
+Figure 15: Distribution of relevant edges over levels, problem 1cpt from BAliBASE .
+ilar length; they are grouped into 9 classes, indexed by sequence length and the percentage
+of identical amino acids in the same columns. Note that many of these problems are indeed much harder than the elongation factor examples from the previous section; despite
+consisting of fewer sequences, their dissimilarities are much more pronounced.
+We applied our algorithm to Reference 1, with substitution costs according to the PET91
+matrix (Jones et al., 1992) and affine gap costs of 9x+8, except for leading and trailing gaps,
+where no gap opening penalty was charged. For all instances, we precomputed the pairwise
+sub-alignments up to a fixed bound of 300 above the optimal solution; the optimal solution
+was found within this bound in all cases, and the effort is generally marginal compared to
+the overall computation. For all problems involving more than three sequences, the heuristic
+hall,3 was applied.
+Out of the 82 alignment problems in Reference 1, our algorithm could solve all but 2
+problems (namely, 1pamA and gal4 ) on our computer. Detailed results are listed in Tables 2
+through 10.
+Thompson, Plewniak, and Poch (1999) compared a number of widely used heuristic
+alignment tools using the so-called SP -score; their software calculates the percentage of
+correctly aligned pairs within the biologically significant motifs. They found that all programs perform about equally well for the sequences with medium and high amino acid
+identity; differences only occurred for the case of the more distant sequences with less
+than 25 percent identity, the so-called twilight zone. Particularly challenging was the
+group of short sequences. In this subgroup, the three highest scoring programs are PRRP,
+CLUSTALX, and SAGA, with respective median scores of 0.560, 0.687, and 0.529. The
+medium score for the alignments found in our experiments amounts to 0.558; hence, it is
+about as good as PRRP, and only beaten by CLUSTALX. While we focused in our exper612
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+1e+06
+100000
+10000
+
+Total time [sec]
+
+1000
+100
+10
+1
+0.1
+2-fold heuristic
+div-conq heuristic
+3-fold heuristic
+4-fold heuristic
+
+0.01
+0.001
+2
+
+4
+
+6
+
+8
+10
+Number of sequences
+
+12
+
+14
+
+Figure 16: Comparison of execution times (including calculation of heuristics), elongation
+factors EF-TU and EF-1.
+
+iments on algorithmic feasibility rather than on solution quality, it would be worthwhile
+to attempt to improve the alignments found by these program using their more refined
+penalty functions. CLUSTALX, for example, uses different PAM matrices depending on
+the evolutionary distance of sequences; moreover, it assigns weights to sequences (based on
+a phylogenetic tree), and gap penalties are made position-specific. All of these improvements can be easily integrated into the basic sum-of-pairs cost function, so that we could
+attempt to compute an optimal alignment with respect to these metrics. We leave this line
+of research for future work.
+Fig. 18 shows the maximum number of edges that have to be stored in Open during the
+search, in dependence of the search threshold in the final iteration. For better comparability,
+we only included those problems in the diagram that consist of 5 sequences. The logarithmic
+scale emphasizes that the growth fits an exponential curve quite well. Roughly speaking, an
+increase of the cost threshold by 50 leads to a ten-fold increase in the space requirements.
+This relation is similarly applicable to the number of expansions (Fig. 19).
+Fig. 20 depicts the proportion between the maximum Open list size and the combined
+maximum size of Open and Closed. It is clearly visible that due to the pruning of edges
+outside of possible solution paths, the Closed list contributes less and less to the overall
+space requirements the more difficult the problems become.
+Finally, we estimate the reduction in the size of the Open list compared to all relevant
+edges by the ratio of the maximum Open size in the last iteration of IDDP to the total
+number of expansions in this stage, which is equal to the number of edges with f -value
+less or equal to the threshold. Considering possible overshoot of IDDP, algorithm PEA
+613
+
+fiSchroedl
+
+Maximum size of open + closed
+
+1e+07
+
+1e+06
+
+100000
+
+10000
+
+1000
+
+2-fold heuristic
+div-conq heuristic
+3-fold heuristic
+4-fold heuristic
+
+100
+2
+
+4
+
+6
+
+8
+10
+Number of sequences
+
+12
+
+14
+
+Figure 17: Combined maximum size of Open and Closed, for different heuristics (elongation
+factors EF-TU and EF-1).
+
+1e+07
+1e+06
+
+Max open
+
+100000
+10000
+1000
+100
+10
+
+Short
+Medium length
+Long
+
+1
+0
+
+50
+
+100
+150
+200
+Threshold - Lower bound
+
+250
+
+300
+
+Figure 18: Maximum size of Open list, dependent on the final search threshold (BAliBASE ).
+
+614
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+1e+08
+1e+07
+
+Expansions
+
+1e+06
+100000
+10000
+1000
+100
+
+Short
+Medium length
+Long
+
+10
+0
+
+50
+
+100
+150
+200
+Threshold - Lower bound
+
+250
+
+300
+
+Figure 19: Number of expansions in the final search iteration (BAliBASE ).
+
+80
+
+Max open/ Max open + closed [%]
+
+70
+60
+50
+40
+30
+20
+10
+
+Short
+Medium length
+Long
+
+0
+0
+
+50
+
+100
+150
+200
+Threshold - Lower bound
+
+250
+
+300
+
+Figure 20: Maximum number of Open edges, divided by combined maximum of Open and
+Closed (BAliBASE ).
+
+615
+
+fiSchroedl
+
+5
+
+Short
+Medium length
+Long
+
+Max Open / Expansions [%]
+
+4
+
+3
+
+2
+
+1
+
+0
+0
+
+50
+
+100
+150
+200
+Threshold - Lower bound
+
+250
+
+300
+
+Figure 21: Percentage of reduction in Open size (BAliBASE ).
+would expand at least half of these nodes. The proportion ranges between 0.5 to 5 percent
+(cf. Fig. 21). Its considerable scatter indicates the dependence on individual problem properties; however, a slight average decrease can be noticed for the more difficult problems.
+
+616
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+8. Conclusion and Discussion
+We have presented a new search algorithm for optimal multiple sequence alignment that
+combines the effective use of a heuristic bound as in best-first search with the ability of the
+dynamic programming approach to reduce the maximum size of the Open and Closed lists
+by up to one order of magnitude of the sequence length. The algorithm performs a series
+of searches with successively increasing bounds that explore the search space in DP order;
+the thresholds are chosen adaptively so that the expected overhead in recomputations is
+bounded by a constant factor.
+We have demonstrated that the algorithm can outperform one of the currently most
+successful algorithms for optimal multiple sequence alignments, Partial Expansion A , both
+in terms of computation time and memory consumption. Moreover, the iterative-deepening
+strategy alleviates the use of partially computed higher-dimensional heuristics. To the best
+of our knowledge, the algorithm is the first one that is able to solve standard benchmark
+alignment problems in BAliBASE with a biologically realistic cost function including affine
+gap costs without end gap penalties. The quality of the alignment is in the range of the
+best heuristic programs; while we have concentrated on algorithmic feasibility, we deem it
+worthwhile to incorporate their refined cost metrics for better results; we will study this
+question in future work.
+Recently, we learned about related approaches developed simultaneously and independently by Zhou and Hansen (2003b, 2004). SweepA explores a search graph according
+to layers in a partial order, but still uses the f -value for selecting nodes within one layer.
+Breadth-First Heuristic Search implicitly defines the layers in a graph with uniform costs
+according to the breadth-first traversal. Both algorithms incorporate upper bounds on the
+optimal solution cost for pruning; however, the idea of adaptive threshold determination to
+limit re-expansion overhead to a constant factor is not described. Moreover, they do not
+consider the flexible use of additional memory to minimize the divide-and-conquer solution
+reconstruction phase.
+Although we described our algorithm entirely within the framework of the MSA problem,
+it is straightforward to transfer it to any domain in which the state space graph is directed
+and acyclic. Natural candidates include applications where such an ordering is imposed by
+time or space coordinates, e.g., finding the most likely path in a Markov model.
+Two of the BAliBASE benchmark problems could still not be solved by our algorithm
+within the computers main memory limit. Future work will include the integration of
+techniques exploiting secondary memory. We expect that the level-wise exploration scheme
+of our algorithm lends itself naturally to external search algorithms, another currently very
+active research topic in Artificial Intelligence and theoretical computer science.
+
+Acknowledgments
+The author would like to thank the reviewers of this article whose comments have helped
+in significantly improving it.
+
+617
+
+fiSchroedl
+
+Appendix A
+
+Table 2: Results for BAliBASE Reference 1, group of short sequences with low amino acid
+identity. The columns denote: S  number of aligned sequences;   upper
+bound for precomputing optimal solutions for partial problems in last iteration of
+main search; g  (t)  optimal solution cost; h(s)  lower bound for solution cost,
+using heuristics; #Exp  total number of expansions in all iterations of the main
+search; #Op  peak number of edges in Open list over the course of the search;
+#Op+Cl  peak combined number of edges in either Open or Closed list during
+search; #Heu  peak number of subalignment edge costs stored as heuristic;
+Time: total running time including auxiliary and main search, in seconds; Mem
+ peak total memory usage for face alignments, heuristic, and main search, in
+KB.
+1aboA
+1idy
+1r69
+1tvxA
+1ubi
+1wit
+2trx
+
+S
+5
+5
+4
+4
+4
+5
+4
+
+
+57
+50
+20
+44
+30
+69
+20
+
+g  (t)
+9006
+8165
+6215
+5532
+7395
+14287
+7918
+
+h(s)
+8898
+8075
+6183
+5488
+7357
+14176
+7899
+
+#Exp
+3413786
+1732008
+634844
+1263849
+1614286
+6231378
+63692
+
+#Op
+104613
+74865
+19938
+24226
+26315
+209061
+3502
+
+#Op+Cl
+176126
+121404
+41719
+48633
+54059
+351582
+5790
+
+#Heu
+1654547
+970933
+88802
+476622
+289599
+2442098
+127490
+
+Time
+331.029
+167.867
+22.517
+52.860
+62.133
+578.907
+4.572
+
+Mem
+15568
+10893
+3568
+5278
+5448
+27273
+1861
+
+Table 3: Short sequences, medium similarity.
+1aab
+1fjlA
+1hfh
+1hpi
+1csy
+1pfc
+1tgxA
+1ycc
+3cyr
+451c
+
+S
+4
+6
+5
+4
+5
+5
+4
+4
+4
+5
+
+
+20
+20
+30
+20
+30
+30
+20
+20
+48
+49
+
+g  (t)
+6002
+13673
+16556
+5858
+14077
+15341
+4891
+8926
+8480
+11440
+
+h(s)
+5984
+13625
+16504
+5835
+14026
+15277
+4856
+8903
+8431
+11333
+
+#Exp
+263
+900
+137914
+1560
+52718
+118543
+18987
+54049
+583260
+1213162
+
+#Op
+12
+106
+4852
+83
+3872
+6477
+543
+1118
+13422
+38004
+
+618
+
+#Op+Cl
+83
+155
+8465
+164
+5613
+8905
+1080
+2010
+25806
+54115
+
+#Heu
+4404
+19573
+70471
+5269
+56191
+55887
+5507
+77156
+193690
+583363
+
+Time
+0.572
+0.985
+14.077
+0.679
+6.165
+11.850
+1.196
+3.780
+22.592
+111.675
+
+Mem
+691
+1589
+2882
+656
+2252
+2478
+649
+1644
+3076
+6529
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+Table 4: Short sequences, high similarity.
+S
+5
+5
+4
+5
+4
+5
+5
+5
+5
+5
+
+1aho
+1csp
+1dox
+1fkj
+1fmb
+1krn
+1plc
+2fxb
+2mhr
+9rnt
+
+
+20
+20
+20
+20
+20
+20
+20
+20
+20
+20
+
+g  (t)
+8251
+8434
+7416
+13554
+7571
+9752
+12177
+6950
+14317
+12382
+
+h(s)
+8187
+8427
+7405
+13515
+7568
+9747
+12152
+6950
+14306
+12367
+
+#Exp
+30200
+90
+782
+2621
+172
+101
+454
+88
+256
+350
+
+#Op
+2255
+2
+50
+140
+4
+1
+25
+2
+4
+19
+
+#Op+Cl
+3074
+78
+186
+222
+108
+87
+103
+71
+121
+108
+
+#Heu
+10971
+3528
+8406
+10925
+1804
+6244
+10641
+1432
+7853
+6100
+
+Time
+3.175
+0.569
+0.652
+0.945
+0.540
+0.623
+0.728
+0.534
+0.668
+0.695
+
+Mem
+1042
+784
+823
+1511
+788
+1035
+1415
+617
+1558
+1250
+
+Table 5: Medium-length sequences, low similarity.
+
+1bbt3
+1sbp
+1havA
+1uky
+2hsdA
+2pia
+3grs
+kinase
+
+S
+5
+5
+5
+4
+4
+4
+4
+5
+
+
+160
+200
+200
+94
+96
+161
+126
+200
+
+g  (t)
+30598
+42925
+31600
+18046
+21707
+22755
+20222
+45985
+
+h(s)
+30277
+42512
+31234
+17915
+21604
+22616
+20061
+45520
+
+#Exp
+902725789
+2144000052
+2488806444
+179802791
+65580608
+97669470
+107682032
+2446667393
+
+#Op
+11134608
+6839269
+10891271
+659435
+293357
+789446
+640391
+13931051
+
+#Op+Cl
+15739188
+11882990
+16321376
+1281339
+668926
+1673807
+1396982
+19688961
+
+#Heu
+23821767
+65341855
+58639851
+15233338
+12497761
+25718770
+24104710
+32422084
+
+Time
+43860.175
+106907.000
+132576.000
+7006.560
+2646.880
+4310.030
+4267.880
+125170.460
+
+Mem
+927735
+735053
+927735
+106184
+67788
+142318
+130425
+927734
+
+Table 6: Medium-length sequences, medium similarity.
+
+1ad2
+1aym3
+1gdoA
+1ldg
+1mrj
+1pgtA
+1pii
+1ton
+2cba
+
+S
+4
+4
+4
+4
+4
+4
+4
+5
+5
+
+
+20
+20
+58
+20
+20
+50
+20
+102
+160
+
+g  (t)
+16852
+19007
+20696
+25764
+20790
+17442
+20837
+32564
+40196
+
+h(s)
+16843
+18978
+20613
+25736
+20751
+17398
+20825
+32428
+39914
+
+#Exp
+379
+466536
+10795040
+446123
+252601
+1870204
+25256
+13571887
+60545205
+
+#Op
+16
+4801
+57110
+4981
+4067
+19200
+584
+351174
+1037828
+
+619
+
+#Op+Cl
+221
+8914
+102615
+9052
+7380
+32476
+1414
+526102
+1595955
+
+#Heu
+27887
+83634
+1265777
+169038
+33942
+485947
+116670
+11549908
+19186631
+
+Time
+0.959
+15.386
+363.549
+16.115
+8.694
+73.066
+3.089
+1373.180
+2904.651
+
+Mem
+2186
+3163
+12028
+4484
+2905
+5869
+3338
+58704
+140712
+
+fiSchroedl
+
+Table 7: Medium-length sequences, high similarity.
+S
+5
+4
+5
+4
+5
+4
+4
+5
+4
+5
+
+1amk
+1ar5A
+1ezm
+1led
+1ppn
+1pysA
+1thm
+1tis
+1zin
+5ptp
+
+
+20
+20
+20
+20
+20
+20
+20
+20
+20
+20
+
+g  (t)
+31473
+15209
+37396
+18795
+27203
+19242
+21470
+35444
+16562
+29776
+
+h(s)
+31453
+15186
+37381
+18760
+27159
+19215
+21460
+35395
+16546
+29735
+
+#Exp
+447
+3985
+613
+93220
+18517
+10810
+361
+31996
+771
+6558
+
+#Op
+7
+128
+4
+2956
+489
+190
+2
+448
+23
+309
+
+#Op+Cl
+259
+356
+324
+4951
+864
+801
+293
+915
+225
+539
+
+#Heu
+13120
+22220
+15751
+39962
+20209
+14344
+8090
+42716
+6619
+37883
+
+Time
+0.825
+1.066
+0.836
+3.761
+2.545
+1.200
+0.682
+4.409
+0.654
+1.767
+
+Mem
+3366
+1755
+3900
+2564
+2991
+2224
+2469
+4122
+1767
+3600
+
+Table 8: Long sequences, low similarity.
+
+1ajsA
+1cpt
+1lvl
+1ped
+2myr
+4enl
+
+S
+4
+4
+4
+3
+4
+3
+
+
+160
+160
+160
+50
+200
+50
+
+g  (t)
+38382
+39745
+43997
+15351
+43414
+16146
+
+h(s)
+38173
+39628
+43775
+15207
+43084
+16011
+
+#Exp
+318460012
+873548
+537914936
+2566052
+3740017645
+5169296
+
+#Op
+1126697
+5260
+1335670
+7986
+7596730
+9650
+
+#Op+Cl
+2310632
+12954
+2706940
+27718
+45488908
+30991
+
+#Heu
+27102589
+10494564
+37491416
+0
+118747184
+0
+
+Time
+9827.233
+223.926
+16473.420
+20.035
+136874.980
+41.716
+
+#Heu
+18464119
+96176
+101816849
+12801019
+1476154
+6040375
+31318364
+5962640
+3585721
+75819994
+38368530
+22622910
+
+Time
+6815.760
+7.829
+8795.000
+843.402
+334.475
+348.134
+2251.190
+505.778
+463.962
+32965.522
+15972.000
+733.202
+
+Mem
+208951
+32119
+255123
+4447
+927735
+5589
+
+Table 9: Long sequences, medium similarity.
+
+1ac5
+1adj
+1bgl
+1dlc
+1eft
+1fieA
+1gowA
+1pkm
+1sesA
+2ack
+arp
+glg
+
+S
+4
+4
+4
+4
+4
+4
+4
+4
+5
+5
+5
+5
+
+
+92
+20
+243
+106
+56
+86
+166
+89
+58
+250
+143
+160
+
+g  (t)
+37147
+32815
+78366
+47430
+31377
+53321
+38784
+36356
+57670
+76937
+54939
+74282
+
+h(s)
+37020
+32785
+78215
+47337
+31301
+53241
+38632
+36256
+57557
+76466
+54696
+74059
+
+#Exp
+169779871
+207072
+188429118
+14993317
+9379999
+6905957
+45590739
+11197890
+4755983
+994225856
+182635167
+9251905
+
+#Op
+732333
+3106
+857008
+65288
+42620
+46779
+275256
+75144
+96014
+8077412
+1291185
+87916
+
+620
+
+#Op+Cl
+1513853
+5145
+1744149
+126608
+72502
+90937
+544800
+140472
+136677
+12436928
+2160263
+120180
+
+Mem
+124877
+4595
+291618
+43158
+13115
+26884
+99537
+27244
+27452
+765715
+193364
+72148
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+Table 10: Long sequences, high similarity.
+
+1ad3
+1gpb
+1gtr
+1lcf
+1rthA
+1taq
+3pmg
+actin
+
+S
+4
+5
+5
+6
+5
+5
+4
+5
+
+
+20
+54
+60
+160
+128
+250
+51
+53
+
+g  (t)
+33641
+101296
+55242
+149249
+69296
+133723
+42193
+48924
+
+h(s)
+33604
+101231
+55133
+148854
+69133
+133321
+42133
+48826
+
+#Exp
+104627
+1232707
+2037633
+181810148
+14891538
+1693501628
+1036943
+824295
+
+621
+
+#Op
+2218
+62184
+54496
+3235312
+71081
+9384718
+8511
+35283
+
+#Op+Cl
+3461
+98476
+91656
+3824010
+105082
+17298456
+15540
+53009
+
+#Heu
+34539
+2702949
+1916127
+28614215
+24587882
+145223167
+777639
+777058
+
+Time
+4.196
+178.610
+226.791
+15363.051
+1721.070
+5713.240
+50.796
+96.147
+
+Mem
+3968
+25698
+18050
+294688
+70569
+1170673
+8133
+11198
+
+fiSchroedl
+
+References
+Altschul, S., Gish, W., Miller, W., Myers, E., & Lipman, D. (1990). Basic local alignment
+search tool. Journal of Molecular Biology, 215, 403410.
+Altschul, S. F. (1989). Gap costs for multiple sequence alignment. Journal of Theoretical
+Biology, 138, 297309.
+Carrillo, H., & Lipman, D. (1988). The multiple sequence alignment problem in biology.
+SIAM Journal of Applied Mathematics, 5 (48), 10731082.
+Chan, S. C., Wong, A. K. C., & Chiu, D. K. Y. (1992). A survey of multiple sequence
+comparison techniques. Bulletin of Mathematical Biology, 54 (4), 563598.
+Culberson, J. C., & Schaeffer, J. (1998). Pattern databases. Computational Intelligence,
+14 (4), 318334.
+Davidson, A. (2001). A fast pruning algorithm for optimal sequence alignment. In Proceedings of The 2nd IEEE International Symposium on Bioinformatics and Bioengineering
+(BIBE2001), pp. 4956.
+Dayhoff, M. O., Schwartz, R. M., & Orcutt, B. C. (1978). A model of evolutionary change
+in proteins. In Dayhoff, M. O. (Ed.), Atlas of Protein Sequence and Structure, pp.
+345352, Washington, D.C. National Biomedical Research Foundation.
+Dial, R. B. (1969). Shortest-path forest with topological ordering. Comm. ACM, 12 (11),
+632633.
+Dijkstra, E. W. (1959). A note on two problems in connection with graphs.. Numerische
+Mathematik, 1, 269271.
+Gupta, S., Kececioglu, J., & Schaeffer, A. (1995). Improving the practical space and time
+efficiency of the shortest-paths approach to sum-of-pairs multiple sequence alignment.
+J. Computational Biology, 2 (3), 459472.
+Gusfield, D. (1993). Efficient methods for multiple sequence alignment with guaranteed
+error bounds. Bull. of Math. Biol., 55 (1), 141154.
+Hart, P. E., Nilsson, N. J., & Raphael, B. (1968). A formal basis for heuristic determination
+of minimum path cost. IEEE Trans. on Systems Science and Cybernetics, 4, 100107.
+Hirschberg, D. S. (1975). A linear space algorithm for computing maximal common subsequences. Comm. ACM, 6 (18), 341343.
+Ikeda, T., & Imai, H. (1994). Fast A* algorithms for multiple sequence alignment. In
+Proceedings of the Genome Informatics Workshop, pp. 9099.
+Jones, D. T., Taylor, W. R., & Thornton, J. M. (1992). The rapid generation of mutation
+data matrices from protein sequences. CABIOS, 3, 275282.
+Kobayashi, H., & Imai, H. (1998). Improvement of the A* algorithm for multiple sequence
+alignment. In Miyano, S., & Takagi, T. (Eds.), Genome Informatics, pp. 120130,
+Tokyo. Universal Academy Press.
+Korf, R. E. (1985). Depth-first iterative-deepening: An optimal admissible tree search.
+Artificial Intelligence, 27 (1), 97109.
+622
+
+fiAn Improved Search Algorithm for Optimal Multiple-Sequence Alignment
+
+Korf, R. E. (1999). Divide-and-conquer bidirectional search: First results. In Proceedings
+of the Sixteenth International Conference on Artificial Intelligence (IJCAI-99), pp.
+11811189, Stockholm, Sweden.
+Korf, R. E., & Zhang, W. (2000). Divide-and-conquer frontier search applied to optimal
+sequence alignment. In Proceedings of the Eighteenth National Conference on Artificial
+Intelligence (AAAI-00), pp. 210216.
+McNaughton, M., Lu, P., Schaeffer, J., & Szafron, D. (2002). Memory-efficient A* heuristics
+for multiple sequence alignment. In Proceedings of the Eighteenth National Conference
+on Artificial Intelligence (AAAI-02), Edmonton, Alberta, Canada.
+Spouge, J. L. (1989). Speeding up dynamic programming algorithms for finding optimal
+lattice paths. SIAM J. Applied Mathematics, 49 (5), 15521566.
+Thompson, J. D., Plewniak, F., & Poch, O. (1999). A comprehensive comparison of multiple
+sequence alignment programs. Nucleic Acids Res., 13 (27), 26822690.
+Ukkonen, E. (1985). Algorithms for approximate string matching. Information and Control,
+64, 110118.
+Wah, B. W., & Shang, Y. (1995). A comparison of a class of IDA* search algorithms.
+International Journal of Tools with Artificial Intelligence, 3 (4), 493523.
+Wang, L., & Jiang, T. (1994). On the complexity of multiple sequence alignment. Journal
+of Computational Biology, 1, 337348.
+Yoshizumi, T., Miura, T., & Ishida, T. (2000). A* with partial expansion for large branching
+factor problems. In AAAI/IAAI, pp. 923929.
+Zhou, R., & Hansen, E. A. (2003a). Sparse-memory graph search. In 18th International
+Joint Conference on Artificial Intelligence (IJCAI-03), Acapulco, Mexico.
+Zhou, R., & Hansen, E. A. (2003b). Sweep A*: Space-efficient heuristic search in partiallyordered graphs. In 15th IEEE International Conference on Tools with Artificial Intelligence, Sacramento, CA.
+Zhou, R., & Hansen, E. A. (2004). Breadth-first heuristic search. In Fourteenth International Conference on Automated Planning and Scheduling (ICAPS-04), Whistler, BC,
+Canada.
+
+623
+
+fi

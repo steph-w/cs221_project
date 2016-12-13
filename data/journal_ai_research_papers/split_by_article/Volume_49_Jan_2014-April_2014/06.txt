@@ -1,0 +1,3220 @@
+Journal of Artificial Intelligence Research 49 (2014) 527-568
+
+Submitted 10/13; published 03/14
+
+Large-Scale Optimization for Evaluation Functions with
+Minimax Search
+Kunihito Hoki
+
+hoki@cs.uec.ac.jp
+
+Department of Communication Engineering and Informatics
+The University of Electro-Communications
+
+Tomoyuki Kaneko
+
+kaneko@acm.org
+
+Department of Graphics and Computer Sciences
+The University of Tokyo
+
+Abstract
+This paper presents a new method, Minimax Tree Optimization (MMTO), to learn
+a heuristic evaluation function of a practical alpha-beta search program. The evaluation
+function may be a linear or non-linear combination of weighted features, and the weights
+are the parameters to be optimized. To control the search results so that the move decisions agree with the game records of human experts, a well-modeled objective function
+to be minimized is designed. Moreover, a numerical iterative method is used to find local
+minima of the objective function, and more than forty million parameters are adjusted by
+using a small number of hyper parameters. This method was applied to shogi, a major
+variant of chess in which the evaluation function must handle a larger state space than
+in chess. Experimental results show that the large-scale optimization of the evaluation
+function improves the playing strength of shogi programs, and the new method performs
+significantly better than other methods. Implementation of the new method in our shogi
+program Bonanza made substantial contributions to the programs first-place finish in the
+2013 World Computer Shogi Championship. Additionally, we present preliminary evidence
+of broader applicability of our method to other two-player games such as chess.
+
+1. Introduction
+Heuristic search is a powerful method in artificial intelligence. In 1997, the chess-playing
+computer Deep Blue defeated the world chess champion Garry Kasparov (Campbell, Hoane,
+& Hsu, 2002). The computer decided its moves after making a large number of searches
+of the minimax game tree and using heuristic evaluation functions. In this framework of
+artificial intelligence, the heuristic evaluation functions, as well as the search methods, are
+crucial for making strong computer players. Thus, researchers working on various games
+have made substantial efforts in a quest to create effective evaluation functions by using machine learning techniques (Furnkranz, 2001). However, fully automated learning of
+the heuristic evaluation functions remains a challenging goal in chess variants. For example, developers have reported that the majority of the features and weights in Deep Blue
+were created/tuned by hand (Campbell et al., 2002). It is said that recent top-level chess
+programs tune some of their parameters automatically, although we have yet to find any
+publication describing the methods they use. Moreover, reinforcement learning has been
+applied to chess (Baxter, Tridgell, & Weaver, 2000; Veness, Silver, Uther, & Blair, 2009).
+c
+2014
+AI Access Foundation. All rights reserved.
+
+fiHoki & Kaneko
+
+However, to the best of the authors knowledge, the evaluation functions learned by the
+methods reported in the literature are still weaker than the best hand-crafted functions in
+terms of chess-playing strength.
+In this paper, we revisit the idea behind earlier research on learning chess evaluation
+functions (Marsland, 1985; Hsu, Anantharaman, Campbell, & Nowatzyk, 1990; Tesauro,
+2001) and reformulate the task as an optimization problem using an alternative learning
+method, called Minimax Tree Optimization (MMTO). The objective here is to optimize
+a full set of parameters in the evaluation function so that the search results match the
+desired move decisions, e.g., the recorded moves of grandmaster games. The evaluation
+functions are learned through iteration of two procedures: (1) a shallow heuristic search for
+all training positions using the current parameters and (2) a parameter update guided by an
+approximation of the gradient of the objective function. To achieve scalability and stability,
+we introduce a new combination of optimization techniques: a simplified loss function, gridadjacent update, equality constraint, and l1 -regularization. One of the resulting merits is
+that MMTO can ensure the existence of a local minimum within a convenient range of
+parameters.
+This study demonstrates the performance of MMTO in shogi, a variant of chess where
+evaluation functions need to handle a wider variety of features and positions than in Western
+chess. Implementation of MMTO in our shogi program Bonanza (described in Section 4.6)
+made substantial contribution to the programs first-place finish in the 2013 World Computer Shogi Championship. The rules of shogi, as well as a survey of approaches in artificial
+intelligence, are described in the literature (Iida, Sakuta, & Rollason, 2002). Basic techniques, such as a minimax search guided by heuristic evaluation functions, are as effective
+in shogi as in chess. However, the drop rule that allows a player to reuse captured pieces
+significantly changes a few properties: (1) the number of legal moves, as well as average
+game length, is greater than in chess, (2) endgame databases are not available, (3) and
+the material balance is less important than in chess, especially in the endgame. Thus, the
+performance of a shogi program is more dependent on the quality of its evaluation function.
+Through experiments, we first show that the full set of parameters in the evaluation
+functions can be optimized with respect to the rate of agreement with the training set.
+After that, we examine the performance of various learned evaluation functions in terms of
+their rates of agreement with the test positions and win rates against references. Scalability
+is demonstrated up to about forty million parameters, which is far too many to tune by
+hand. The features we used are piece values and extended versions of piece-square tables
+that are commonly used to learn evaluation functions in chess (Tesauro, 2001; Baxter et al.,
+2000; Veness et al., 2009). We also briefly examine the performance of MMTO in chess to
+catch a glimpse of the applicability of MMTO to other games.
+The rest of this paper is organized as follows. The next section reviews related research.
+The third section presents the MMTO method. The fourth section shows our experimental
+results, where forty million of parameters are adjusted for better performance, and compares
+the performance of our method with that of existing methods. The last section presents
+our concluding remarks. This paper incorporates and extends our previous work (Hoki &
+Kaneko, 2012; Kaneko & Hoki, 2012).
+528
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+2. Related Work
+This section reviews related research on learning evaluation functions. First, we describe
+supervised learning methods that use the desired moves. Second, we discuss other learning
+methods, including regression and reinforcement learning. Third, we briefly discuss the difficulty of supervised learning in terms of numerical optimization. Although machine learning
+of other components besides evaluation functions in game programs would be an interesting
+research topic (Bjornsson & Marsland, 2002; Tsuruoka, Yokoyama, & Chikayama, 2002;
+Coulom, 2007; Silver & Tesauro, 2009), this review only focuses on research that has been
+done on learning evaluation functions.
+2.1 Learning from Desired Moves in Chess
+Grandmaster games are a popular source of information for learning chess. Let us say
+that we have a set of positions P and the desired moves for each position in P. Typically,
+such positions and moves are sampled from grandmaster games. A chess program has an
+evaluation function e(p, w ), where p is a game position and the feature weight vector w
+contains the parameters to be adjusted.
+Let us assume that the evaluation function e(p, w ) is partially differentiable with respect
+to wi for any i. Here, wi is the i-th component of w . For
+P example, the function could be
+a linear combination of weighted features, i.e., e(p, w ) = i wi fi (p), where fi (p) is the i-th
+feature value of position p. The aim of learning is to find a better weight vector w for
+strengthening the play of the program. The hypothesis behind this kind of learning is that
+the more the computer play agrees with the desired moves, the better it plays.
+Let us begin with a simple intuitive goal: make the results of a one-ply search agree
+with the desired moves. For simplicity, let us assume that the maximizing player moves first
+at the root position p. In a one-ply search, the move with the highest evaluation value is
+selected. Thus, w should be adjusted so that the desired move has the highest evaluation of
+all the moves. This goal can formally be written as a mathematical minimization problem
+with an objective function:
+P
+w) =
+JH
+(w
+
+X X
+
+H (e(p.m, w )  e(p.dp , w )) .
+
+(1)
+
+pP mM0p
+
+Here, p.m is the position after move m in position p, dp is the desired move in position p, M0p
+is the set of all legal moves in p excluding dp , and H(x) is the Heaviside step function, i.e.,
+H(x) equals 1 if x  0, and 0 otherwise. Because this objective function counts the number
+of moves that have an evaluation value greater than or equal to that of the desired move,
+a better w can be found by minimizing Eq. (1). Although several studies have attempted
+machine learning on the basis of this framework (Nitsche, 1982; van der Meulen, 1989;
+Anantharaman, 1997), their numerical procedures were complicated, and the adjustment of
+a large-scale vector w seemed to present practical difficulties.
+Marsland (1985) presented a notable extension wherein a continuous function is used
+so that conventional optimization techniques can be exploited. Here, a continuous function
+of difference is substituted for the non-continuous step function in Eq. (1). An interesting
+529
+
+fiHoki & Kaneko
+
+modified function is
+w) =
+J2P (w
+
+X X
+
+[max {0, e(p.m, w )  e(p.dp , w )}]2 .
+
+(2)
+
+pP mM0p
+
+The meaning of the function value is different from that in Eq. (1); i.e., the function does
+not count the number of moves that have an evaluation value greater than or equal to that
+w ) helps to reduce the function
+of the desired move. However, the gradient vector w J2P (w
+value numerically. Marsland also introduced inequality constraints in order to keep the
+evaluation in the right range. However, the literature does not provide any experimental
+results on practical chess programs.
+A second notable extension was proposed early in the development of chess machines
+Deep Thought (Nowatzyk, 2000; Hsu et al., 1990). Here, the positions being compared are
+not p.m, but rather wp.m , that is, one of the leaves of the principal variations (PVs), possibly
+several plies from p.m. This extension carries out a least-square fitting of the evaluation
+w ) does. Instead, it biases
+values. Therefore, it does not have the max function that J2P (w
+p.dp
+the value of e(w , w ) before it is used in each least-square fitting, if the evaluation value
+p .d
+p .m
+of the desired move dp , e(w p , w ) is lower than that of another move m, e(w
+, w ).
+A third notable extension is the comparison training proposed by Tesauro (2001).
+Tesauro modified the objective function to
+X X
+p .d
+P
+p .m
+w) =
+Jct
+(w
+Tct (e(w p , w )  e(w
+, w )),
+pP mM0p
+
+Tct (x) = [(R(x))  1]2 ,
+
+(3)
+
+where  is the standard sigmoid function, and R is a heuristic rescaling factor for positive
+differences, i.e., R(x) = x when x  0, and R(x) = cx for a constant c > 1 otherwise. Note
+that R(x) is still a continuous function. The important property of this modified objective
+function is that the value and the derivative are zero in the limit as the difference x goes
+to positive infinity, and they are respectively one and zero in the limit as the difference
+x goes to negative infinity. Therefore, Tct (x) in Eq. (3) is a continuous approximation of
+H(x) in Eq. (1). Note that this property is not explicitly stated by Tesauro, but it is
+notably distinct from the other work. The number of feature weights adjusted with his
+method was less than two hundred. Tesauro also mentioned an application for small-bit
+integers, which was used to adjust some of the weights in Deep Blue. However, he neither
+clarified its procedure nor mentioned whether the weights were automatically adjusted in
+that experiment.
+Table 1 summarizes the related work. Each of the existing methods possesses at least
+one of three important properties for optimization, i.e., continuity, minimax searches, and
+assured local minimum. However, none of them have all three properties. Also, some
+of the existing methods (Nowatzyk, 2000; Hsu et al., 1990; Tesauro, 2001) do not try to
+decrease the functions through iteration as much as possible. We will revisit these issues in
+Section 2.3. On the other hand, our method, MMTO, has scalability in high-dimensional
+learning. Moreover, we empirically show that a decrease in the objective function value
+leads to an increase in playing strength. The existing methods have not been shown to have
+this property.
+530
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+Method
+(Nitsche, 1982)
+(Marsland, 1985)
+(van der Meulen, 1989)
+(Hsu et al., 1990)
+(Anantharaman, 1997)
+Comparison training
+MMTO
+
+Continuity
+
+Search
+
+Assured local minimum
+
+No
+
+No
+No
+No
+
+No
+No
+No
+No
+
+Yes
+No
+
+Yes
+
+Yes
+Yes
+Yes
+Yes
+
+No
+
+Yes
+Yes
+
+Yes
+No
+
+Yes
+
+Table 1: Summary of learning methods using the desired moves in training positions to
+adjust the feature weights in the evaluation functions. The first column is the name
+of the method or piece of literature. The second column describes the continuity
+of the objective functions with respect to the feature weights. Yes means that
+continuity depends on the kind of search method used. The third column indicates
+whether the objective functions use minimax searches with depths more than 1,
+instead of comparisons of legal moves at the root position. The fourth column
+shows whether the hyper parameters of the objective functions can assure a local
+minimum can be found.
+
+2.2 Other Methods of Learning Evaluation Functions
+Many researchers have utilized information sources other than the desired moves. For
+example, some studies on Othello dating from the 1990s compare the desired moves with
+other moves (Fawcett, 1993). However, the most practical and famous machine learning
+method that has yielded strong programs is based on regression of the desired value by
+using 1.5 million features (Buro, 1995, 2002). In Othello, different evaluation functions are
+used for game stages determined on the basis of the number of discs in play. Thus, the
+desired values of the training positions are obtained through a complete endgame search
+as well as a heuristic search with evaluation functions learned in later game stages. This
+method has also been successfully applied to card games (Buro, Long, Furtak, & Sturtevant,
+2009), but not to chess variants. To the best of the authors knowledge, learning based on
+regression with win/loss-labeled data has not yielded decent evaluation functions in chess
+variants. Except for not using the desired moves, Buros method has properties that are
+similar to those listed in Table 1; his objective function has continuity as well as an assured
+local minimum, and his method is scalable. Gomboc, Buro, and Marsland (2005) proposed
+to learn from game records annotated by human experts; however, the feature weights that
+were adjusted in their experiments were only a small part of the full evaluation functions.
+Reinforcement learning (Sutton & Barto, 1998), especially temporal difference learning,
+of which a famous success is Backgammon (Tesauro, 2002), is considered to be promising
+way to avoid the difficulty in finding the desired values for regression. This approach has
+been applied to chess and has been shown to improve the strength of programs (Baxter
+et al., 2000; Levinson & Weber, 2001; Veness et al., 2009). The KnightCap program
+achieved a rating of about 2, 150 points at the Free Internet Chess Server (FICS1 ) and
+1. Free Internet Chess Server, http://www.freechess.org, last access: 2013
+
+531
+
+fiHoki & Kaneko
+
+Easy
+(a)
+
+Single minimum
+
+Dicult
+(b)
+
+(c)
+
+(d)
+
+Smooth Non-dieren able
+
+(e)
+
+Narrow trough Non-con nuous
+
+Figure 1: Example illustrating the difficulties facing any minimization procedure.
+2, 575 points at its highest peak at the Internet Chess Club (ICC) (Baxter et al., 2000).
+Another program achieved 2, 338 points at its highest peak at ICC (Veness et al., 2009).
+However, strong human players have ratings of more than 3, 000 points at ICC, and this
+difference means these programs have not reached the top level of chess programs; that
+is, evaluation functions tuned by reinforcement learning have not yet reached the level
+of the best-handcrafted evaluation functions in chess. Moreover, the number of feature
+weights to be adjusted is on the order of thousands. In checkers, evaluation functions
+trained by temporal difference learning are reportedly comparable to the best handcrafted
+efforts (Schaeffer, Hlynka, & Jussila, 2001). It has also been reported that a player stronger
+than expert human checker players was created by using neural networks trained with
+an evolutionary strategy (Chellapilla & Fogel, 1999). Here, no features beyond the piece
+differentials were given to the neural network a priori.
+Many machine learning techniques (Baxter et al., 2000; Veness et al., 2009) have been
+applied to shogi. However, despite efforts by many programmers and researchers, the adjustment of the full weight vector in the evaluation function remains a challenging goal.
+The studies published so far have adjusted only piece values or a small part of the feature
+weights in the evaluation functions (Beal & Smith, 2001; Ugajin & Kotani, 2010).
+2.3 Learning and Numerical Optimization
+Some learning methods reviewed in Section 2.1 have objective functions to decrease; the
+learning process can be extended into a numerical optimization using these functions. The
+performance of numerical optimization is sensitive to the surface of the objective function.
+Figure 1 shows the properties of particular sorts of functions and their difficulties regarding
+numerical minimization. The easiest one among them is the convex function (a); if a local
+minimum exists, then it is a global minimum. Function (b) has multiple local minima; however, it can still be thought of as an easy problem, because various minimization algorithms
+using gradients and Hessian matrices are effective on it. It would be desirable to design a
+learning method using, say, linear or logistic regression, which uses one of these two types
+of objective function (Buro, 2002).
+In contrast, non-differentiable functions such as (c) and (e) are often more difficult to
+minimize than differentiable ones. This is because a quadratic model, such as the Hessian
+approximation of the conjugated gradient method (Bertsekas & Bertsekas, 2008), is not
+always appropriate for these functions. Function (d) is also a difficult target, because an
+important local minimum is hidden inside a deep narrow trough, and it is quite difficult to
+find it by using numerical iteration methods. The most difficult example is minimization of
+532
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+the non-continuous function (e); even primitive iterative methods such as gradient decent
+are not capable of finding its minimum. The extreme case would be a function for which
+an analytical formula for the gradient is unavailable. In that case, a learning method would
+not be able to use partial derivatives, and the minima would have to be obtained using
+derivative-free methods, e.g., sampling methods (Bjornsson & Marsland, 2002; Coulom,
+2012).
+Theorems in Appendix A show that the minimax value is continuous but not always
+partially differentiable. Thus, the existing methods that incorporate a minimax search
+(Hsu et al., 1990; Tesauro, 2001) and MMTO listed in Table 1 are type (c). Moreover,
+certain forward pruning techniques may cause discontinuities. Therefore, even these learning
+methods can be type (e). To overcome this difficulty, MMTO has a well-modeled objective
+function and updates the feature weights in a careful manner.
+
+3. Minimax Tree Optimization
+Minimax Tree Optimization (MMTO) is an extension of comparison training to reach the
+first intuitive goal embodied in Eq. (1). The purpose of this extension is to overcome the
+practical difficulties and stabilize the mathematical optimization procedure with a largescale feature weight vector w . Given a set of training positions P and the desired move dp
+for each position p, MMTO optimizes the weight vector w so that the minimax search with
+w better agrees with the desired moves.
+The weight vector w is improved through iteration of sub-procedures (see Figure 2).
+For each iteration t, the first step consists of tree searches to identify one of the leaves of
+PVs w (t) for all legal moves in the training positions P. Because PV leaf w (t) depends
+on the feature weights w (t) in an evaluation function, a new PV will be obtained when
+w (t) is updated (We discuss this issue in Section 3.5). The second step is the calculation
+of the approximate partial derivatives, which depends on both PV and the weight vector.
+The last step is the update of the weight vector. For numerical stability, the difference
+w (t + 1)  w (t)| must be kept small so that it will not be distorted by drastic changes in
+|w
+the partial derivatives. Section 3.4 shows that a grid-adjacent update ensures this.
+3.1 Objective Function to be Minimized
+The objective function is
+P
+w ) = J(P, w ) + JC (w
+w ) + JR (w
+w ),
+JMmto
+(w
+
+(4)
+
+where the first term J(P, w ) on the right side is the main part. The other terms JC and
+JR are constraint and regularization terms, respectively, which are defined in Section 3.2.
+The first term is
+X X
+J(P, w ) =
+T (s(p.dp , w )  s(p.m, w )) ,
+(5)
+pP mM0p
+
+where s(p, w ) is the minimax value identified by the tree search for position p. T (x) is
+1/(1 + exp(ax)), which is a horizontally mirrored sigmoid function. The slope of T (x) is
+controlled by a constant parameter a > 0. In the large a limit, T (x) becomes the Heaviside
+533
+
+fiHoki & Kaneko
+
+
+
+fi
+m
+wp.(t)
+
+1. Perform a game-tree search to identify PV leaves
+for all child positions
+p.m of position p in training set P, where w (t) is the weight vector at the
+t-th iteration and w (0) is the initial guess.
+2. Calculate a partial-derivative approximation of the well-modeled objective
+p .m
+w
+function defined in Section 3.1 by using both w
+(t) and (t). The objective
+function employs a differentiable approximation of H(x) (see Section 3.1),
+as well as a constraint and regularization term (see Section 3.2).
+
+
+
+3. Obtain a new weight vector w (t+1) from w (t) by using a grid-adjacent update
+guided by the partial derivatives computed in step 2 (see Section 3.4). Go
+back to step 1, or terminate the optimization when the objective function
+value converges (see Section 4).
+
+
+
+Figure 2: Minimax Tree Optimization: Iteration of searches and update using partial
+derivatives
+
+step function H(x). Thus, the main differences from the first intuitive objective function
+P (w
+w ) in Eq. (1) are the use of T (x) for a smooth approximation of H(x) and the use of
+JH
+w ) in
+the search result s(p, w ) instead of the raw evaluation e(p, w ). The difference from J2P (w
+P
+w
+w
+Eq. (2) and Jct (w ) in Eq. (3) is that J(P, ) is simpler and closer to the first intuitive one
+w ) or JR (w
+w ) in Eq (4).
+in Eq. (1). Moreover, none of the existing studies incorporate JC (w
+The minimax value s(p, w ) equals the raw evaluation value e(wp , w ), where e(p, w ) is the
+evaluation of position p and wp is one of the PV leaves identified by the tree search rooted
+at p with a weight vector w . In most cases, the derivatives of s(p, w ) equal the derivatives
+of e(wp , w ). For these reasons, the PV leaves are identified in step 1 in Figure 2.
+3.2 Constraint and Regularization Terms
+In the computer programs of chess variants, the evaluation values are typically represented
+by integers. Signed 16-bit integers are especially preferred because the corresponding transposition tables will be memory efficient. Thus, we will restrict the range of the absolute
+value of the evaluation function e(p, w ). Moreover, because the search results do not change
+w with a constant factor  > 0, this restriction
+when one uses a scaled weight vector w
+stabilizes the numerical optimization procedure if the value of  is uncertain.
+w ) = 0 g(w
+w 0 ) in Eq. (4), where
+For this restriction, we introduce a constraint term JC (w
+0
+w ) = 0 is an equality constraint, and 0 is a Lagrange multiplier.
+is a subset of w , g(w
+w ) (see
+In addition to the constraint term, we also introduce a regularization term JR (w
+w ) = 1 |w
+w 00 |, where 1 > 0 is a
+the last term in Eq. (4)). We use l1 -regularization JR (w
+constant variable, and w 00 is a subset of w . l1 -regularization is widely used to deal with highdimensional parameters, whereas l2 -regularization is used to avoid over-fitting (Tibshirani,
+1996).
+
+w0
+
+534
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+P (w
+w ) exists
+The constraint and regularization terms ensure that a local minimum of JMmto
+in a finite range of w . On the other hand, depending on P and the distribution of dp , this
+P (w
+w ) in Eq. (2), or for Jct
+w ) in Eq. (3).
+property is not always true for J(P, w ) itself, for J2P (w
+The constraint and l1 -regularization terms have similar functionalities; i.e., both restrict
+the range of the absolute value of the evaluation function e(p, w ). However, their distinctions are important in practice because l1 -regularization makes the weight vector w 00 sparse
+whereas the constraint term does not. Thus, the regularization term is suitable for minor
+features that are rarely seen, whereas the constraint term is suitable for major features
+that appear often in the training set. Moreover, both terms are useful for controlling the
+strength of the restriction. Because major feature values usually change more often than
+minor feature values, the magnitudes of the partial derivatives with respect to major feature
+weights are usually greater than those with respect to minor feature weights. We can adjust
+the strength of l1 -regularization term so that it is weaker than the constraint term.
+For example, our experiments used the constraint term for the piece values because their
+feature values, i.e., the number of pieces owned by black/white, change in most single games
+of shogi. The many other weights were penalized by l1 -regularization. Each weight was
+w 0 , w 00 ). Because the
+controlled by either the constraint or l1 -regularization term, i.e., w = (w
+partial derivatives with respect to the major and minor feature weights differed by several
+orders of magnitude, it was difficult to stabilize the optimization procedure by means of a
+single hyper parameter 1 .
+
+3.3 Partial Derivative Approximation
+In each iteration, feature weights are updated on the basis of the partial derivatives of the
+P (w
+w ) defined by Eq. (4). The partial derivative, if it exists, is
+objective function JMmto
+ P
+
+
+
+w) =
+w) +
+w ).
+JMmto (w
+J(P, w ) +
+JC (w
+JR (w
+wi
+wi
+wi
+wi
+
+(6)
+
+
+w ) on the right side is treated in an intuitive manner; sgn(wi )1 for
+The last term w
+JR (w
+i
+00
+wi  w , and 0 otherwise. Function sgn(x) is 1 for x > 0, 0 for x = 0, and 1 for x < 0.
+
+w ) is 0 for wi 
+JC (w
+/ w 0 . The case of wi  w 0
+The partial derivative of the constraint term w
+i
+is discussed in Section 3.5.
+The partial derivative of J(P, w ) does not always exist, because the minimax value
+s(p, w ) is not always differentiable. Instead, we can use an approximation,
+
+
+J(P, w ) =
+wi
+
+
+ X X
+T (s(p.dp , w )  s(p.m, w ))
+wi
+0
+
+(7)
+
+
+
+ X X
+p .d
+T e(w p , w )  e(wp.m , w )
+wi
+0
+
+(8)
+
+pP mMp
+
+pP mMp
+
+=
+
+X X
+
+p.d
+
+T 0 (e(w p , w )  e(wp.m , w )) 
+
+pP mM0p
+
+
+  p .d p
+e(w , w )  e(wp.m , w ) ,
+wi
+
+where T 0 (x) = ddx T (x). The approximation of Eq. (7) by Eq. (8) makes the computation
+tractable, because we identify the PV leaves in step 1 in Figure 2. As stated in Appendix A,
+535
+
+fiHoki & Kaneko
+
+minimax value s(p, w ) found by the  search is continuous, and therefore, the function
+J(P, w ) is also continuous. Moreover, the approximate value is equivalent to the partial
+derivative when a unique PV exists for each position. Appendix A also discusses the con
+ditions under which w
+s(p, w ) exists. Note that we have found that the errors caused by
+i
+this approximation are sufficiently small for the shogi application (Kaneko & Hoki, 2012).
+Previous studies (Baxter et al., 2000; Tesauro, 2001) use this approximation as well.
+3.4 Grid-Adjacent Update
+For numerical stability, the grid-adjacent update in step 3 (see Figure 2) is used to get
+w (t + 1) from w (t). Consider a simple n-dimensional grid in which the distance between two
+adjacent points is h. Suppose that h is an integer, e.g., h = 1. In the grid-adjacent update,
+the feature vector w (t) is always one of the points of the grid, and the i-th component
+wi (t + 1) is adjacent to wi (t):
+wi (t + 1) = wi (t)  h sgn(
+
+P (w
+w (t))
+JMmto
+).
+wi
+
+Thus, |wi (t+1)wi (t)| = |wi | = h or 0 for all i. This update should decrease the objective
+P (w
+P (w
+w ) because w
+w  w JMmto
+w )  0 and the errors in the approximation (see
+function JMmto
+Eq. (8)) are negligible. Moreover, h must be small enough so that the update does not
+p
+p
+change the PV, i.e., w
+(t) = w (t+1) for the majority of positions p searched in step 1.
+Although MMTO focuses on optimization of weight vectors represented by integers, it
+should be noted that the gradient descent update is not suitable even when one uses floatingpoint feature weights. Our preliminary experiments indicate that the partial derivatives of
+J(P, w ) with respect to major and minor feature weights differ by more than seven orders
+w that is proportional to the gradient vector may
+of magnitude. Thus, an update vector w
+not be appropriate for updating the minor feature weights with a small step. Thus, the step
+size of each component in a weight vector should be fixed as in the grid-adjacent update,
+or it might be able to be controlled in other ways (see, e.g., Duchi, Hazan, & Singer, 2011).
+3.5 Combination of Techniques and Practical Issues
+MMTO is a combination of the above-described techniques. This subsection discusses the
+practical issues of this combination and its alternatives; some relate to external constraints
+on learning (e.g., how many weeks we can wait for results), and some depend on the properties of the domain to which MMTO is applied.
+3.5.1 Lagrange Multiplier in Grid-Adjacent Update
+For numerical stability, MMTO explores a restricted parameter space where the constraint
+w ) = 0. To do this, the Lagrange multiplier 0 in JC (w
+w ) is set to the
+is satisfied, i.e., JC (w
+w)
+J(P,w
+0
+median of the partial derivatives { wi | wi  w } in order to maintain the constraint
+w 0 ) = 0 in each iteration. As a result, wi0 is h for n feature weights, h for n feature
+g(w
+weights, and 0 in one feature weight, where the number of feature weights in w 0 is 2n + 1.
+w ) is constant in all iterations.
+On the other hand, 1 in the regularization term JR (w
+536
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+3.5.2 Search Depth
+The game tree searches in step 1 in Figure 2 are the most time-consuming step in MMTO.
+Tesauro (2001) has shown that the use of a quiescence search yields better evaluation
+functions. Thus, it is expected that deeper searches in MMTO will yield better evaluation
+functions. On the other hand, we must handle a large amount of training positions, and the
+search time tends to grow exponentially when we increase the search depth. Therefore, most
+of our experiments use a 1-ply standard search together with a quiescence search. Here, the
+quiescence search is called at every frontier node of the standard search. We observed that
+evaluation functions learned with shallow searches are still effective for playing games with
+deep searches (see Section 4.4). Similar results were reported by Tesauro.
+3.5.3 Reuse of PV for Efficiency of Learning
+Because step 1 in Figure 2 is the most time-consuming part, it is worth considering omitting
+it by assuming wp (t) = wp (t1) with a certain frequency. In our experiments, steps 2 and 3
+were repeated 32 times without running step 1. We counted the number of iterations in the
+run of step 1. That is, each iteration ran a single step 1 and 32 pairs of steps 2 and 3. The
+number 32 would be domain dependent and should be set small enough so that the update
+does not change the PV for most positions.
+3.5.4 Pruning of Trees
+Pruning techniques can dramatically reduce the number of searched nodes and hence speed
+up learning. Fortunately,  pruning does not introduce any discontinuities in the objective
+function. On the other hand, other pruning methods, including futility pruning (Schaeffer,
+1986), may introduce discontinuities (see Appendix A.4). Therefore, the robustness of the
+whole learning procedure should be examined when such pruning techniques are used. As
+far as the authors experience goes, the objective function with futility pruning seems to be
+continuous (see Section 4.5).
+3.5.5 Convergence and Performance Measurement
+The termination criteria is usually difficult to determine in iterative computations. In the
+case of learning the shogi evaluation function, the convergence of the objective function in
+MMTO seems to be a significant criteria, because the rate of agreement with the test set
+and the Elo rating of the learned evaluation function also converge when it converges. Note
+that the rate of agreement should be measured on a separate test set from the training set
+in order to detect overfitting (see Section 4.3).
+3.5.6 Duplication in Positions and Alternative Moves
+Game records usually have duplications in the positions and desired moves in the opening
+phase. Although the ideal distributions of these positions and desired moves are unknown,
+we decided to remove the duplications from the training and test sets for simplicity. That
+is, we use each pair of hposition, movei at most once in each iteration. These duplications
+are detected by Zobrist hashing (1990). Note that two or more different moves may be
+suggested for the same position in the training and test sets, and the objective function
+537
+
+fiHoki & Kaneko
+
+becomes smaller if the tree search rooted at the position matches one of these moves. As
+a result, conflicting goals such as move a should be better than move b and vice versa
+are independently augmented to the objective function and cancel each other when both
+moves can be played in the same position. In our experience, this adaptation seems to work
+reasonably well in shogi, but the best solution may depend on the target game.
+
+4. Experiments
+We evaluated the effectiveness of MMTO in experiments in which the number of feature
+weights in the evaluation function was varied from thirteen to about forty million. We
+found that MMTO works better than comparison training and its intuitive modifications
+in terms of the rate of agreement, speed of convergence, and game-playing strength. We
+w ) and regularization term JR (w
+w ) help to inalso observed that the constraint term JC (w
+crease the performance of the evaluation functions in terms of the rate of agreement with
+the test set. To see numerical convergence, we investigated the surfaces of the objective
+function in MMTO with a limited number of feature weights and experimentally found that
+MMTO finds local minima in a reasonable range of feature weights. Finally, we carried out
+preliminary experiments on chess as well as experiments on data quality dependence.
+4.1 Setup: Evaluation Functions, Features, and Game Records
+Most of the experiments described in this section used Bonanza, whose source code is
+available online (Hoki & Muramatsu, 2012). The performance of Bonanza in major tournaments is discussed in Section 4.6. Bonanza uses techniques such as MMTO, PVS (Pearl,
+1980; Marsland & Campbell, 1982; Reinefeld, 1983), a capture search at frontier nodes as
+a quiescence search, transposition tables (Zobrist, 1990; Russell & Norvig, 2002), static exchange evaluation (Reul, 2010), killer and history heuristics (Akl & Newborn, 1977; Schaeffer, 1989), null move pruning (Adelson-Velskiy, Arlazarov, & Donskoy, 1975; Heinz, 1999),
+futility pruning (Schaeffer, 1986; Heinz, 1998), and late move reductions (Romstad, 2010).
+It also uses an opening-book database from which we randomly chose the opening lines
+of self-play experiments. The game records in the training and test sets were exclusively
+chosen from games played in famous tournaments2 . There were 48, 566 game records in
+total. More than 30, 000 of the games were played by professional players using standard
+time controls, i.e., from one to ten hours for a side with a byoyomi period (once the time
+2. The abbreviated tournament name, number of games we used, and date range of the games are: Juni,
+12827, 19462010; Kisei, 3286, 19622010; Ryuo, 3279, 19872010; Osho, 2286, 19502010; Oui, 2017,
+19592010; Ouza, 1849, 19522010; NHK-cup, 1745, 19512010; Ginga, 1735, 19912010; Kio, 1620,
+19732010; Shinjino, 1332, 19692010; Zen-nihon-proshogi, 1160, 19822001; Hayazashi-shogi-senshuken,
+945, 19722003; Judan, 764, 19621987; Meisho, 752, 19731989; Joryu-meijin, 608, 19742010; Meijin,
+551, 19352010; All-star-kachinuki, 545, 19782003; Rating-senshuken, 476, 19872007; Asahi-open,
+429, 20012007; Heisei-saikyo, 412, 19922007; Teno, 351, 19841992; Joryu-osho, 351, 19792010;
+Kurashiki-touka, 314, 19932010; Nihon-series, 304, 19812010; 3-dan-league, 283, 19632009; Ladiesopen, 255, 19872007; Joryu-oui, 253, 19902010; Shoureikai, 217, 19412008; Gakusei-osho, 212, 1972
+2006; Hayazashi-shinei, 206, 19822002; Gakusei-ouza, 191, 20012006; Asahi-amashogi, 187, 19802009;
+Wakajishi, 183, 19531991; Kudan, 182, 19471961; Gakusei-meijin, 177, 19722006; Shogi-Renmei-cup,
+172, 19671984; Tatsujin, 160, 19932010; Kinsho-cup, 156, 20022005; Amateur-meijin, 146, 19482009;
+Kashima-cup, 119, 19962006; Grand-champion, 111, 19812008; Saikyosya-kettei, 101, 19541973; Miscellaneous, 5317, 16072010.
+
+538
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+evaluation function
+13
+X
+ A
+
+A
+e
+fi (p)  fiA (p) wiA
+i=1 
+X
+ B
+B
+B
+eB
+fkj
+(p)  fkj
+(p) wkj
+eC
+eD
+
+k,j
+X
+
+0 ,l
+k,k
+X
+
+dimension
+13
+60, 876
+
+ C
+C
+C
+fkk
+0 l (p)  fkk 0 l (p) wkk 0 l
+
+2, 425, 950
+
+ D
+ D
+D
+fkjj 0 (p)  fkjj
+0 (p) wkjj 0
+
+44, 222, 454
+
+k,jj 0
+
+Table 2: Dimensions of evaluation functions. Each evaluation function is a linear combination of weighted features. eA evaluates the material balance, and the others
+evaluate a variety of positional scores by using extended piece-square tables.
+
+had expired, a player had to move within sixty seconds). Some tournaments employed rapid
+time controls such as 30 seconds per move and had top-level amateur players as participants.
+Table 2 shows the four basic evaluation functions, where eA is for material balance and
+the others are for positional scores. Our experiments used the sum of these functions, i.e.,
+eA , eAB = eA + eB , eABC = eAB + eC , and eABCD = eABC + eD . All evaluation functions are
+anti-symmetric with respect to the exchange of black and white: e(p, w ) =  e(p, w ). Here,
+p is a complete reversal of the black and white sides at position p; that is, black plays for
+white and white plays for black3 . After this reversal, the pieces owned by black and white in
+p are regarded as white and black pieces in p, respectively. Also, all evaluation functions are
+symmetric with respect to right-and-left mirroring of a position: e(p, w ) = e(p, w ), where p
+is the mirror image of p along file e.
+The function eA (p, w A ) was used to evaluate the material balance. There are 13 types
+of pieces in shogi (Iida et al., 2002). Each feature fiA (p) represents the number of the i-th
+type owned by black in position p, and wiA is the relative value of the i-th type of piece.
+The partial derivative of the evaluation function with respect to wiA is  eA (p, w A )/wiA =
+fiA (p)  fiA (p).
+The function eB (p, w B ) is a linear combination of weighted two-piece-square features.
+These are natural extensions of one-piece-square features that were employed in recent
+machine learning studies of chess evaluations (Baxter et al., 2000; Tesauro, 2001; Veness
+et al., 2009). These two-piece-square features were used to evaluate all conditions of the
+B (p) is an indicator function that returns one if
+king and another piece. Each feature fkj
+both of the conditions k and j exist in position p. Otherwise, it returns zero. Condition
+k represents the location of the black king (there are 81 squares), and j represents the
+type, owner (black or white), and location of the other piece. There were 1, 476 different
+conditions for j after some of the minor conditions were merged. Thus, the total number of
+the kingpiece conditions was 81  1, 476 = 119, 556 before the mirror symmetric conditions
+were merged.
+3. Following shogi notation, black and white refer to the players who plays first and second, respectively.
+
+539
+
+fiHoki & Kaneko
+
+Similarly, the functions eC (p, w C ) and eD (p, w D ) were used to evaluate the kingking
+C (p)
+piece features and kingpiecepiece features, respectively. The indicator function fkk
+0l
+represents the location of the two kings (k, k 0 ) and the condition (type and location) of a
+D (p) represents the location of black king k and
+black piece l. The indicator function fkjj
+0
+the conditions of the other two black or white pieces (j, j 0 ).
+Game tree searches are required to identify PV leaf positions for MMTO and to obtain
+best moves to measure the rate of agreement. For these purposes, a nominal depth 1
+search was used together with the quiescence search. To normalize the objective function
+values, the objective function values were divided by the total number of move pairs, Z P =
+P
+0
+pP |Mp |. The constraint function was set to
+A
+
+w )=
+g(w
+
+13
+X
+
+!
+wiA
+
+ 6, 500.
+
+(9)
+
+i=1
+
+Also, in accordance with the magnitude of the constraint, a in the horizontally mirrored
+sigmoid function T (x) = 1/(1 + exp(ax)) was set to 0.0273 so that T (x) would vary signifiw ) = 0.00625  (|w
+wB| +
+cantly if x changed by a hundred. The regularization term was JR (w
+C
+D
+w | + |w
+w |). An intuitive explanation of the penalty strength is that the absolute value
+|w
+of wi can be increased to 160 if doing so improves the relationship between the evaluation
+values of a desired move and another legal move. The sums in eB , eC , and eD were computed
+using 32-bit integers, and they were divided by 25 in order to fit the evaluation value into
+a 16-bit integer. Step h in the grid-adjacent update was set to the smallest integer value 1.
+4.2 Learning the Piece Values
+First, the feature weights w = w A of the evaluation function eA were adjusted by MMTO
+or by comparison training, starting from the same initial value wiA = 500 for all i. Tesauro
+(2001) used floating-point feature weights and the conventional gradient descent method.
+That is, the weight vector w was updated by
+P
+w ),
+w (t) = w (t)  rw Jct
+(w
+
+(10)
+
+where r is a constant training rate hand-tuned to 0.5. The components in w used in the tree
+search were rounded to the nearest integer values. The rescaling factor R in Eq. (3) was set
+p .d
+to 0.0025 in accordance with the range of the difference | e(w p , w )  e(wp.m , w )| from 50 to
+5, 000. Because this experiment had only 13 piece values to be adjusted in w A , only 1, 000
+game records were used to compose the training set P. The set had 101,898 desired moves
+and Z P = 7, 936, 180 move pairs after removing duplications and handicapped games.
+One problem observed in the comparison training was slow learning: as shown in Figure 3, phase I of the iterative procedure (from iteration 1 to 10) is mainly for adjusting
+the pawn value, because the partial differential value of Eq. (3) for pawns is the largest
+in this phase. After a good pawn value is found, phase II (from iteration 10 to 100) is
+mainly for adjusting the promoted rook and promoted bishop values. These values should
+be the highest and second highest for reasonable game play. The long period of time taken
+w ) in Eq. (3) scales poorly. This is a general problem in
+by phase II indicates that JctP (w
+gradient descent methods with multiple degrees of freedom (Nocedal & Wright, 2006), and
+540
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+pro_rook
+
+2500
+
+Phase II
+
+Phase I
+
+Phase III
+pro_bishop
+
+Piece weight
+
+2000
+gold
+bishop
+rook
+pro_pawn
+pro_knight
+silver
+pro_silver
+pro_lance
+knight
+lance
+
+1500
+
+1000
+
+500
+
+pawn
+0
+
+2
+
+1
+
+3
+
+4 5 6
+
+2
+
+3
+
+4 5 6
+
+10
+
+2
+
+3
+
+4 5 6
+
+100
+
+1000
+
+Iteration
+
+Figure 3: Results of comparison training of the piece weights in shogi. The horizontal axis
+plots the number of iterations on a logarithmic scale.
+
+to cope with it, the learning rate r cannot be greater than 0.5 in accordance with the largest
+partial derivative in these experiments.
+The second problem was about convergence: in phase III (after iteration 100) of Figure 3,
+all piece values keep increasing without changing the ratio of piece values, even though the
+relative ratios of the piece values have room for improvement. This problem is inherent
+to the objective function of comparison training, because Eq. (3) has no explicit term
+to avoid it. In an extreme case where the training data satisfy the inequality condition
+p .d
+e(w p , w )  e(wp.m , w ) for all moves m in any position p, all piece values diverge to infinity
+w ) is minimized. In fact, it was found that the training data in this
+when the value JctP (w
+experiment satisfied the condition for 94% of the pairs of the best and another legal move.
+Moreover, in the other extreme case, where the training does not satisfy the inequality
+condition for any move m in any position p in Eq. (3), all piece values shrink to zero.
+MMTO deals with these problems by making grid-adjacent updates and keeping the
+w ). The weighted vector w A converged
+magnitudes constant through its constraint term JC (w
+in 40 iterations (see Figure 4); the value of the promoted rook was 945 and that of the
+pawn was 122. Note that the number of iterations was counted as the number of step (1)s
+throughout the experiments.
+4.3 Scalability in Learning Practical Evaluation Functions
+After learning the piece values, we adjusted the weight vectors for positional scores. This
+time, a large number of training records were used to cope with high-dimensional weight
+vectors. The main training set P had 4, 467, 116 desired moves and Z P = 368, 313, 024
+541
+
+fiHoki & Kaneko
+
+pro_rook
+pro_bishop
+rook
+bishop
+gold
+pro_knight
+silver
+pro_pawn
+pro_lance
+pro_silver
+knight
+lance
+pawn
+
+Piece weight
+
+800
+
+600
+
+400
+
+200
+2
+
+1
+
+3
+
+4
+
+5 6 7 8
+
+2
+
+10
+Iteration
+
+3
+
+4
+
+5 6 7 8
+
+100
+
+Figure 4: Results of MMTO for the piece weights.
+move pairs after removing duplications and handicap games from the 47, 566 game records.
+The test set had 103, 105 desired moves after removing duplications and handicap games
+from another 1, 000 game records. The feature weights for eAB were adjusted with MMTO
+and comparison training and its intuitive modifications. The same initial feature weights
+w A (0), w B (0)) were used in all three methods; w A (0) was optimized by MMTO from the
+(w
+previous experiment, and w B (0) = 0. After that, to show scalability, the feature weights for
+eABC and eABCD were optimized by MMTO in this order. To adjust the feature weights for
+eABC , the optimized feature weights of eAB were used for the initial feature weights w A (0)
+and w B (0), and 0 was used for w C (0). Similarly, in eABCD , the optimized feature weights
+in eABC were used for the initial feature weights w A (0), w B (0), and w C (0), and 0 was used
+for w D (0).
+Comparison training with eABC and eABCD was not tested because learning eAB yielded
+only small improvements. The rate r in Eq. (10) was hand tuned to 0.031. As an example
+of the intuitive modifications to stabilize the iterative procedure, a constant-step update
+was also tested for learning eAB . In this case, the training rate r0 (t) was substituted for r
+and
+P
+w (t))|,
+r0 (t) = rc /|w (t) Jct
+(w
+where this constant-step modification conservatively updated w by using a constant step rc
+that was hand tuned to 1, 000. Each value of r and rc was the best of five trials. Another
+intuitive modification was the reuse of PV, as explained in Section 3.5, where the same PVs
+were used 32 times and the rate r in Eq. (10) was 0.01. The rescaling factor R in Eq. (3)
+was set to 0.0025, because this value was satisfactory in the previous experiment shown in
+Figure 3. Although the three methods are different, their iterations consumed almost the
+same amount of time. This is because the most time-consuming step of these experiments
+was the game tree search to identify the PV leaf positions.
+The rate of agreement with the test set is shown in Figure 5. Here, agreement means that
+the legal move that obtained the highest value in the tree search is the desired move. The
+542
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+0
+
+b2_c2_h6
+b2_c2_b4
+
+35
+
+-20
+d2_b2_f3
+-40
+
+b2_c2_b3
+d2_f3_c4
+
+-60
+
+Positional weight
+
+Agreement (%)
+
+30
+
+25
+
+ABCD
+
+MMTO (e
+)
+ABC
+MMTO (e )
+AB
+MMTO (e )
+AB
+CT (e , reuse of PV)
+AB
+CT (e , constant step)
+AB
+CT (e )
+
+20
+
+15
+
+2
+
+1
+
+3
+
+4
+
+5 6 7 8
+
+2
+
+10
+
+3
+
+4
+
+5 6 7 8
+
+b2_c2_a3
+d2_f3_b3
+
+-80
+
+b2_b1_c2
+-100
+
+b2_c2_a2
+
+-120
+
+-140
+b2_d1_c2
+
+2
+
+100
+
+Iteration
+
+0
+
+50
+
+100
+150
+Iteration
+
+200
+
+Figure 5: (Left panel) Improvement in rate of agreement with the test set for MMTO
+and comparison training (CT). (Right panel) Improvement in feature weights for
+positional features in eD . Feature weight b2 c2 b4 indicates the black king is at
+b2 and two gold generals are at c2 and b4. Similarly, feature weights b2 c2 h6,
+b2 c2 b3, b2 c2 a3, b2 b1 c2, b2 c2 a2, and b2 d1 c2 indicate two gold generals
+with the king at b2. Feature weight d2 b2 f3 indicates the black king is at d2
+and the opponents two gold generals are at b2 and f3. Similarly, feature weights
+d2 f3 b3 and d2 f3 c4 indicate the opponents two gold generals with the king at
+d2. Here, each value has been divided by 25 .
+
+rate is calculated by excluding positions in which there is only one legal move, or positions
+in which there is an easy checkmate sequence that can be identified in the shallow-depth
+search. Tied values are not counted, either.
+The performances of MMTO, comparison training, and its variations were compared in
+the case of learning eAB . We can see from the figure that the agreement rates of comparison
+training and constant-step modification are unstable and substantially lower than that of
+MMTO. We can also see that the reuse-of-PV modification increases stability because it
+reduces the step length from 0.031 to 0.01 and reduces the computation time of learning by
+almost 32 times because it reduces the number of time-consuming PV updates.
+MMTO with the full evaluation function eABCD had the highest rate (37%). The largescale optimization of the weight vector wD increased the level of agreement in 200 iterations.
+543
+
+fiHoki & Kaneko
+
+without constraint
+with constraint
+
+Pawn value
+
+140
+120
+100
+2
+
+1
+
+3 4 5 6
+
+2
+
+10
+Iteration
+
+3 4 5 6
+
+2
+
+100
+
+Figure 6: Effect of the constraint term in MMTO (eAB ).
+This computation took about a week using an Intel X5690 workstation. The agreement ratio
+with the test set converged in 100 iterations. However, the feature weights did not converge.
+w ) in Eq. (9) improves the stability of MMTO in
+Figure 6 shows how the constraint JC (w
+response to pawn-value changes during the eAB learning. We can see that the value keeps
+w ) is turned off and that it converges in 100 iterations with the
+on increasing when JC (w
+constraint turned on. One of the feature weights overflowed in the comparison training of
+eABC , and this is another reason why the results of eABC are not shown for comparison
+w ) has little effect on the learning of eAB , the
+training. As the regularization term JR (w
+improvement in the agreement rates of MMTO is mainly due to the use of the constraint
+w ) and grid-adjacent updates.
+JC (w
+w ) is important for optimizing larger weight vectors. FigThe regularization term JR (w
+w ) in Eq. (4) improves the weight vector in the enlarged evaluation
+ure 7 shows how JR (w
+function eABCD . Without a regularization term, the objective function value and the rate
+of agreement with the training set increase with the number of iterations. However, there
+is also a linear increment in the absolute value of the weight vectors, and it distorts the
+rate of agreement with the test set after the 50-th iteration. After the 200-th iteration,
+only 0.2% of the components in w are zero. On the other hand, 96.3% of the components
+in w are zero with the regularization term. These results indicate that MMTO without the
+regularization suffers from overfitting of the training set when a large-scale weight vector
+is used. A similar effect of regularization also occurs when MMTO is used in the eABC
+learning, though the effect is smaller than that of eABCD .
+4.4 Improvements in Strength
+To analyze the relationship between the agreement rate and the strength, we had the programs learned by MMTO and by comparison training (Figure 5) play games against a
+reference shogi program many times. The reference program was a version of GPS Shogi
+released in 2008 (Kaneko, 2009). It is an open source program and was a finalist in past
+world computer shogi championships. It has a completely different evaluation function in
+which the majority of the parameters have been hand tuned. This version of GPS Shogi
+serves as a reference program on a popular game server for shogi programs4 . The matches
+were as follows: the reference program (4  105 nodes/move) vs. all four learned programs,
+4. http://wdoor.c.u-tokyo.ac.jp/shogi/, last access: 2013 (in Japanese).
+
+544
+
+fiObjective function
+
+Large-Scale Optimization for Evaluation Functions with Minimax Search
+
+0.06
+0.05
+0.04
+0.03
+0.02
+
+Agreement (%)
+
+60
+
+with l1-regularization
+without l1-regularization
+
+55
+50
+
+with training set
+
+45
+
+with test set
+
+40
+
+D
+
+10
+
+B
+
+| |+| |+| |
+
+10
+
+C
+
+35
+11
+10
+
+10
+
+9
+
+2
+
+1
+
+3
+
+4 5 6
+
+2
+
+10
+
+3
+
+4 5 6
+
+2
+
+100
+
+Iteration
+
+Figure 7: Effect of the regularization term in MMTO (eABCD ).
+the reference program (2105 nodes/move) vs. the two learned programs with the evaluation
+function eA and eAB , and the reference program (8  105 nodes/move) vs. the two learned
+programs with the evaluation functions eABC and eABCD . 500 games were played in each
+match. The weight vectors obtained after 1, 2, 4, 8, 16, 32, 48, 64, 80, 96, 112, 128, and 144
+iterations were tested for each learning configuration. Thus, a total of 8  13  500 = 52, 000
+games were played. The learned programs searched 4  105 nodes per move. All programs
+ran on a single thread and searched similar numbers of nodes in a second.
+We measured the playing strength in terms of the Elo rating, which is a popular way
+to represent relative strength in two-player games. The winning probability between two
+players is estimated as 1/(1 + 10d/400 ), where d is the difference between their ratings. For
+example, if the rating of player A is higher than that of player B by 150, the winning
+percentage of player A is about 70%. Here, the ratings were determined by using maximum
+likelihood estimation on all the games.
+Figure 8 shows the Elo rating of each player. We can see that MMTO with eAB significantly outperformed comparison training with the same initial feature weights. When
+MMTO used eAB , the winning percentage against the reference (400k/move) stably increased from 11.2% (1, 800 Elo points) to 59.4% (2, 210 Elo points). In contrast, comparison
+545
+
+fiElo Rating
+
+Hoki & Kaneko
+
+2500
+2400
+2300
+2200
+2100
+2000
+1900
+1800
+1700
+1600
+1500
+
+MMTO (ABCD)
+MMTO (ABC)
+MMTO (AB)
+Comparison training (AB)
+Reference (800k)
+Reference (400k)
+Reference (200k)
+
+1
+
+10
+Iteration
+
+100
+
+Figure 8: Improvements in strength (Elo rating) achieved by MMTO and comparison training.
+
+Opponent
+Player 1
+Player 2
+
+Depth 2
+94  2%
+77  3%
+
+Depth 3
+89  3%
+75  3%
+
+Depth 4
+82  3%
+77  3%
+
+Depth 5
+85  3%
+82  3%
+
+Depth 6
+78  3%
+81  3%
+
+Depth 7
+81  3%
+85  3%
+
+Depth 8
+78  3%
+84  3%
+
+Table 3: Winning percentages of program learned with game tree search having various
+depths. Opponent player 1 is the same program but the search depth is reduced
+by 1, and opponent player 2 is also the same program but it uses the weight vector
+before the learning.
+
+training won at most 19.5% (1, 910 Elo points) of its games. The results shown in Figs. 5
+and 8 indicate that MMTO outperforms comparison training.
+The large number of features also contributed to the playing strength of the programs
+learned by MMTO. Although eABC showed a small improvement in terms of the agreement
+rate and Elo rating, eABCD consistently yielded significant improvements in these two criteria. Thus, we concluded that MMTO scales well to forty million features. Note that the
+computational cost of eABCD was reasonably small for practical game play. This is because
+the number of features that appear in a position is only 2, 800 or less even when the total
+number of features is about forty million. Also, the summations in Table 2 can be maintained in an incremental manner when the program makes or unmakes a move. This sort
+of feature design is similar to that of a famous Othello program (Buro, 2002). As a result,
+Bonanza using eABCD searched about 3  106 nodes/sec on an Intel Xeon X5680 with 12
+threads. The speed itself is slower than that of many chess programs, but about average
+for strong shogi programs. In addition, we found that Bonanza using eABCD trained by
+MMTO played better than or was comparable to any of the top shogi programs in actual
+tournaments. The details are discussed in Section 4.6.
+Two additional fixed-depth self-play experiments were conducted to see if evaluation
+functions trained by using shallow searches (depth 1 with quiescence search) are effective on
+deep searches. Table 3 shows the winning percentages of the learned program with various
+546
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+search depths of game play. The learned program had the eABCD evaluation function yielded
+after the 200-th iteration (Figure 5). The winning percentages against the same program
+(player 1) with the search depth reduced by 1 were around 80%. Thus, we see that the
+deeper the learned program searched, the stronger the program was. Tesauro (2001) also
+reported similar results by using comparison training. In addition, the winning percentage
+was about 80% against a program (player 2) that searched to the same depth but used eABC
+after the 200-th iteration. Thus, the use of eABCD trained by 200 iterations was effective
+even when the program searched deeper. Here, the winning percentages were computed for
+a thousand games (Seventy-six games or less ending in draws or exceeding 300 moves were
+not counted). Fifty megabytes of memory were assigned to the transposition table of each
+program. The uncertainties indicated as 3 was estimated by conducting a two-sided test
+at a significance level of 5% on the one-thousand games.
+4.5 Numerical Stability and Convergence
+We investigated the continuity and partial differentiability of the objective function and
+convergence of the feature weights in an empirical manner. While forward pruning techniques in game tree searches can speed up MMTO in practical applications, such methods
+do not always maintain continuous search values, as is shown in Appendix A.4. Moreover,
+the objective function contains a large number of search values. This means it is difficult
+to estimate its properties in a theoretical manner.
+To make the empirical investigation manageable, we used only the smallest evaluation
+function eA that deals with thirteen shogi piece values. Moreover, we reduced the number
+of game records to 1, 000; the game records had 98, 224 desired moves and Z P = 7, 900, 993
+move pairs after removing duplications and handicapped games.
+4.5.1 Surface of the Objective Function
+We investigated the function surface of the main part of the objective function J(P, w A )
+of MMTO in Eq. (4) by generating contour maps from millions of sampling vectors w .
+Note that a contour line (isovalue surface) is a curve along which the functions take the
+same value. The contour lines have certain properties: the gradient of the function is
+perpendicular to the lines, and the magnitude of the gradient is large when two lines are
+close together. In addition, a closed-loop contour line indicates the location of the local
+minimum or maximum.
+Two of the thirteen piece values in the weight vector w A were sampled in order to draw
+the contour maps of two-dimensional functions at an interval of 5 for each piece value.
+The remaining eleven pieces were assigned reasonable values; 118 (pawn), 273 (lance), 318
+(knight), 477 (silver general), 562 (gold general), 620 (bishop), 734 (rook), 485 (promoted
+pawn), 387 (promoted lance), 445 (promoted knight), 343 (promoted silver), 781 (promoted
+w A ) was ignored so that w A
+bishop), and 957 (promoted rook). The constraint term JC (w
+w ) was turned off for piece values.
+could be freely changed and the regularization term JR (w
+A nominal depth 1 search, together with the quiescence search, was used.
+We analyzed two pairs: hgold, bishopi, and hpawn, promoted lancei. Figure 9 shows
+an enlargement of the contour map of J(P, wgold , wbishop ). The contour interval is 5  104 .
+The map was computed with the ranges of [200, 1100] for the bishop and [100, 930] for
+547
+
+fiHoki & Kaneko
+
+(3) bishop=pro_bishop
+
+(4) bishop=dragon
+(5) gold=bishop
+
+(2) bishop=rook
+
+(1) bishop=silver
+
+Gold general weight
+
+(6) gold=pro_bishop
+
+(8) gold=rook
+700
+600
+
+x x
+
+500
+400
+400
+
+Objective function
+
+(7) gold=pro_rook
+
+800
+
+0.164
+
+(9) gold=silver
+500
+
+(1) (5)
+
+600 700 800
+Bishop weight
+
+(2)
+
+(9)
+
+0.162
+0.160
+
+900
+
+(5) (6)
+(8)
+
+(7)
+
+(3) (4)
+
+0.158
+400 500 600 700 800
+Bishop weight
+
+500 600 700 800 900
+Gold general weight
+
+Figure 9: (Upper panel) Enlarged contour map of J(P, wgold , wbishop ). The dashed lines
+indicate the critical boundaries at which the two-dimensional function is not
+partially differentiable. The two minima are indicated by x. (Bottom panel)
+Cross sections of the contour map. The left one shows the intersection of the
+map with the line wgold = 560, and the other shows that of wbishop = 620.
+
+the gold general. Note that the function simply increases and there are no interesting
+structures outside of the enlarged map. Figure 10 shows an enlargement of the contour
+map of J(P, wpawn , wpro lance ). The contour interval is 1  103 . The map was computed
+with the ranges of [10, 500] for a pawn and [200, 700] for a promoted lance.
+We can see from these maps that there are local minima within reasonable ranges
+and no sudden changes in the function values. Although the function depends on a large
+number of empirical search values, s(p, w ), it is approximately continuous and amenable to
+optimization on the basis of gradients approximated by MMTO.
+On the other hand, the maps illustrate three difficulties. The first difficulty is the clear
+edges of the contour lines. They indicate that the function is not partially differentiable at
+the points on these edges. The dashed lines in these maps are critical boundaries at which
+the profit and loss ratio of material exchanges inverts itself. For example, a silver is usually
+548
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+(1) pro_lance=lance (2) pro_lance=knight (3) pro_lance=silver
+(4) pawn=silver
+
+Pawn weight
+
+400
+(5) pawn=knight
+300
+
+(6) pawn=lance
+(7) lance promotion=pawn
+
+200
+X
+
+100
+
+200
+
+300
+
+400
+
+X
+
+500
+
+600
+
+700
+
+Objective function
+
+Promoted lance weight
+0.1584
+0.1583
+(2) (7) (3)
+0.1582
+0.1581 (1)
+0.1580
+0.1579
+200 300 400 500 600 700
+Promoted lance weight
+
+0.20
+0.19
+0.18
+0.17
+0.16
+
+(7) (6) (5)
+(4)
+
+100 200 300 400 500
+Pawn weight
+
+Figure 10: (Upper panel) Enlarged contour map of J(P, wpawn , wpro lance ). The dashed
+lines indicate critical boundaries at which the two-dimensional function is not
+partially differentiable. The two minima are indicated by x. (Bottom panel)
+Cross sections of the contour map. The left one shows the intersection of the
+map with the line of wpawn = 125, and the other shows that of wpro lance = 450.
+
+less valuable than a bishop, but capturing a silver becomes more profitable than capturing a
+bishop when the bishop value is smaller than 477. This boundary is labeled bishop=silver
+in Figure 9. As discussed in Appendix A, the function is not always partially differentiable at
+these critical boundaries, where multiple moves share the same best value. Note that there
+can be more boundaries in theory, e.g., a bishop=promoted knight boundary. Whether a
+boundary is visible or not depends on the training set and evaluation features. In addition,
+the boundaries become winding curves when a non-linear evaluation function is used instead
+of a linear weighted sum.
+The second difficulty, the scaling problem, is illustrated in Figure 10. In this map, we
+can see that the scales of the two piece values differ by two orders of magnitude. That
+is, a pawn-value variation of five hundred changes the function value by 0.04, whereas a
+promoted-lance-value variation of five hundred changes the function value by only 4  104 .
+Because of the difference in scaling, the surface along a promoted lance is almost flat. This
+property explains why the pawn value is optimized earlier than those of the other pieces in
+comparison training, as shown in Figure 3. This property of ill-scaling is disadvantageous
+when it comes to optimizing the promoted-lance value using a naive gradient decent method.
+549
+
+fiHoki & Kaneko
+
+Methods based on second-order partial derivatives or approximations of the Hessian matrix
+can resolve this problem; however, they behave poorly at non-partially differentiable points
+on many boundaries. These two difficulties point to why the grid-adjacent update in MMTO
+is effective.
+The third difficulty is that there are multiple local minima in the two maps. This
+means the results of MMTO depend on the initial values and there is a chance of ending
+up with a local rather than global minimum. We will investigate this problem in the next
+subsection 4.5.2.
+4.5.2 Empirical Convergence and Local-Minima Properties
+In the previous subsection, we examined two-dimensional cross sections of the function
+J(P, w A ). In this subsection, we loosen the restriction from two to thirteen dimensions,
+which is sufficiently large to express all piece values in shogi. The aim of this experiment
+is to catch a glimpse of the global map and numerical convergences for arbitrary initial
+guesses about the values of all of the pieces.
+For this purpose, a Monte Carlo sampling of the initial guess, w A (0), was carried out to
+enumerate the local minima and analyze the optimized vectors. We ran 444 MMTO with
+randomized initial values. Here, a uniformly distributed integer in the range of [0, 32767]
+was assigned to each vector component, and the resulting vector was scaled to satisfy the
+w A ) = 0.
+equality condition g(w
+Figure 11 shows the cosine similarity and objective-function value of a hundred of the 444
+runs. Here, the cosine similarity of a weight vector is measured relative to the best vector
+whose objective function is the smallest among those of 444 vectors after 100 iterations.
+In the majority of the runs, we can see that function values and weight vectors converged
+numerically in 50 iterations. Here, we regard the iteration procedure to have converged
+when the function values and similarities oscillate and show neither steady increase nor
+decrease from the 50-th to 100-th iteration. Although convergence is almost assured for
+MMTO with thirteen piece values, it would be difficult to achieve if more feature weights
+were to be optimized. For example, Figure 5 shows there was no convergence after twothousand iterations using eABCD . Because 200 iterations took about a week on an Intel
+X5690 workstation, we could not afford to investigate the convergence of eABCD with the
+current hardware. However, 200 iterations nonetheless achieved a significant improvement
+in strength, as shown in Figure 8.
+We can also see that these trials of MMTO ended up with multiple local minima.
+Although a multiplicity of minima is generally undesirable in an optimization, there were
+other, more favorable properties. The first property is that each run of MMTO changed
+the weight-vector components by a sufficient amount. That is, the cosine similarity of the
+444 optimized vectors was localized in the range of [0.925, 1], while that of the random
+initial vectors were widely spread (see the top panel of Figure 12). The second property is
+that there was a weak correlation between the cosine similarities of the initial and optimized
+vectors. This means that starting from a better initial vector in terms of the cosine similarity
+should be beneficial (see the top panel of Figure 12). However, starting from a better initial
+vector in terms of the objective function value is not beneficial (see the middle panel of
+Figure 12). The third is that the distribution of local minima formed structures (see the
+550
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+0.95
+0.90
+0.85
+0.80
+0.98
+
+Similarity
+
+Cosine similarity of weight vector
+
+1.00
+
+0.75
+0.70
+
+0.97
+0.96
+0.95
+
+Objective function
+
+0.65
+
+Objective function
+
+0.30
+
+0.170
+0.165
+
+0.25
+0.160
+60 80
+Iteration
+
+0.20
+
+2
+
+1
+
+3
+
+4
+
+5 6 7 89
+
+10
+Iteration
+
+2
+
+3
+
+4
+
+5 6 7 89
+
+100
+
+Figure 11: A hundred runs of MMTO for a weight vector w A consisting of thirteen piece
+values. The initial vectors were set using pseudo-random numbers. The inset
+is an enlargement showing the appearance of the numerical convergences. The
+top panel shows the cosine similarities relative to the best weight vector. The
+bottom panel shows the values of the objective function.
+
+bottom panel of Figure 12). That is, the lower the local minimum is, the more similar it
+becomes to the best vector. Moreover, the number of local minima decreases as the weight
+vector gets farther away from the best.
+We also investigated the dependence of the performance on the nominal search depth
+of step (1) shown in Figure 2. Similar results in terms of convergence and the distribution
+of local minima were obtained using a deeper search with a nominal depth of 2. Because
+MMTO with a depth of 2 consumes more time than MMTO with a depth of 1, the number
+551
+
+fiInitial objective function
+
+Cosine similarity of initial vector
+
+Hoki & Kaneko
+
+1.0
+0.9
+0.8
+0.7
+0.6
+0.35
+
+corr = 0.27
+
+0.30
+
+0.25
+
+0.20
+corr = -0.06
+
+Optimized objective function
+
+0.180
+0.175
+0.170
+0.165
+0.160
+corr = -0.55
+0.94
+
+0.96
+
+0.98
+
+1.00
+
+Cosine similarity of optimized vector
+
+Figure 12: Scatter plots for 444 trials of thirteen-dimensional weight vectors. The vector
+expresses thirteen piece values. The cosine similarity of the vector is measured
+relative to the best vector. The initial vector consists of uniform pseudo-random
+numbers, and the optimized one is the 100-th vector of the MMTO iterations
+starting from the initial one. The inset shows the correlation coefficient of each
+scatter plot.
+
+of random initial vectors was reduced to 78, and the number of iterations was reduced
+to sixty for the sake of speed. In the majority of runs, the function values and weight
+vectors converged in 50 iterations. Figure 13 shows the strength (Elo rating) and objective552
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+100
+depth 1 (corr = -0.60)
+depth 2 (corr = -0.86)
+
+Elo rating
+
+50
+0
+-50
+-100
+-150
+0.150
+
+0.155
+
+0.160
+
+0.165
+
+0.170
+
+0.175
+
+0.180
+
+Objective function
+
+Figure 13: Scatter plots for thirteen-dimensional weight vectors. The 444 vectors indicated
+by crosses were learned with the nominal depth 1 search of step (1), and the 78
+vectors indicated by squares were learned with a depth 2 search.
+
+function value of the 78 runs with depth 2 (squares) and 444 runs with depth 1 (crosses).
+Here, the Elo ratings were identified by using maximum likelihood estimation on 894, 244
+random-pairing games (5  104 nodes/move). The Elo rating with depth 1 was 17 on
+average and that with depth 2 was 41 on average. Also, the correlation coefficient between
+the Elo rating and objective function value with depth 2 was 0.86 and that with depth
+1 was 0.60. Moreover, we compared the performance of two best vectors that gave the
+smallest objective function values. Here, we computed the winning probability between the
+best results of depth 1 and 2. Each player was allowed to use one second for each move,
+and one core of an Intel Xeon X5680 and fifty megabytes of memory were assigned to the
+transposition table. After excluding two drawn games and two games exceeding a thousand
+moves, we obtained a 43.6% winning rate against the program using the best results of
+depth 2. These results indicate that MMTO is better with depth 2 than with depth 1.
+4.6 Performance of MMTO under Tournament Conditions
+MMTO was invented by the developer of Bonanza and made it one of the best programs
+in shogi. Moreover, the ideas behind earlier versions of MMTO published in Japanese
+(Hoki, 2006) have been adopted by many developers and have dramatically changed shogi
+programs.
+One of the authors started developing Bonanza in 2004, published program files on
+the web in 2005, and published source codes on the web in 2009 (Hoki, 2013). This paper
+gives detailed descriptions of the evaluation-function learning, whereas the literature (Hoki
+& Muramatsu, 2012) gives detailed descriptions of the game-tree pruning of Bonanza. In
+addition to the learning method MMTO, Bonanza uses the evaluation function eABCD
+shown in Table 2. The earlier versions until 2009 used a subset of eABCD with a modified
+553
+
+fiHoki & Kaneko
+
+1
+2
+3
+4
+5
+
+2006 May
+Bonanza
+YSS
+KCC Shogi
+TACOS
+Gekisashi
+
+2007 May
+YSS
+Tanase Shogi
+Gekisashi
+Bonanza
+Bingo Shogi
+
+2008 May
+Gekisashi
+Tanase Shogi
+Bonanza
+YSS
+Bingo Shogi
+
+2009 May
+GPS Shogi
+Otsuki Shogi
+Monju
+KCC Shogi
+Bonanza
+
+1
+2
+3
+4
+5
+
+2010 May
+Gekisashi
+Shueso
+GPS Shogi
+Bonkras
+Bonanza Feliz
+
+2011 May
+Bonkras
+Bonanza
+Shueso
+Gekisashi
+ponanza
+
+2012 May
+GPS Shogi
+Puella 
+Tsutsukana
+ponanza
+Shueso
+
+2013 May
+Bonanza
+ponanza
+GPS Shogi
+Gekisashi
+NineDayFever
+
+Table 4: Program names and results of the recent World Computer Shogi Championship.
+ MMTO,  an earlier version or a variant of MMTO, or  a learning method
+influenced by MMTO is used.
+
+l2-regularization (Hoki, 2006). Subsequent versions fully evaluate eABCD learned with l1regularization.
+Table 4 shows the results of the World Computer Shogi Championships. Since 2006,
+the performance of Bonanza has been examined in several computer shogi tournaments,
+where each participant connects to a server program and plays shogi under a time control
+of 25 minutes a side. Bonanza received the first prize twice, second prize once, and third
+prize once. Moreover, players entitled Bonanza Feliz and Monju used the same evaluation functions as obtained by MMTO. Thus, we claim that when Bonanza uses MMTO, it
+plays better than or is comparable to any of the top programs in shogi, including commercial ones. This method clearly plays at the level of handcrafted shogi programs. Moreover,
+descriptions of the learning shogi evaluation functions and the earlier version of MMTO
+were published by Hoki (2006) in Japanese and were quickly recognized as significant advances. In fact, no shogi program with conventional handcrafted evaluation functions has
+broken into the top five in during the last five years of tournaments. One interesting case is
+the results of GPS Shogi (Kaneko, 2009), the winner of the 2009 and 2012 tournaments,
+and source codes are available online (Tanaka and Kaneko, 2013). From 2003 to 2008, this
+program uses a handcrafted evaluation function but in 2009 it used a variant of MMTO
+and its results dramatically improved. The variants of MMTO used in each program differ
+in accordance with the content and policy of each program. For example, Tanase Shogi,
+the runner-up program in 2008, used a learning method based on MMTO and handcrafted
+evaluation functions. Bonkras, ponanza, Puella , and NineDayFever also used variants of MMTO. These excellent results make it clear that MMTO outperforms conventional
+programs that use handcrafted evaluation functions and has played extremely well in recent
+shogi tournaments.
+554
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+It should be noted that some versions of Bonanza add a small amount of randomness
+to the grid-adjacent updates. However, we omitted any discussion of using randomness in
+this paper because it is not clear whether the added randomness improved the quality of the
+evaluation function or not. The source codes of various versions of Bonanza are available
+online (Hoki, 2013) and the source code of MMTO are in two files, learn1.c and learn2.c.
+4.7 Preliminary Experiments on Chess
+So far, we have discussed the performance of MMTO in shogi. We expect that MMTO
+would be effective in other two-player perfect information games provided that certain
+conditions are met: (1) a sufficient number of game records are available, (2) minimax
+searches guided by heuristic evaluations are effective, and (3) the analytic partial derivatives
+of the evaluation function with respect to the variables are available. For example, MMTO
+would not yield interesting results were it to be applied to a game that has been solved by
+other means (e.g., van den Herik, Uiterwijk, & van Rijswijck, 2002). Also, it would not yield
+interesting results in the game of Go because Monte-Carlo tree searches are more effective
+than minimax searches guided by a heuristic evaluation function (Kocsis & Szepesvari, 2006;
+Gelly & Silver, 2011; Browne, Powley, Whitehouse, Lucas, Cowling, Rohlfshagen, Tavener,
+Perez, Samothrakis, & Colton, 2012; Gelly, Kocsis, Schoenauer Sebag, Silver, Szepesvari, &
+Teytaud, 2012). Moreover, a simpler learning method (e.g., a regression method in Othello,
+Buro, 2002) would be preferable to MMTO, if it is sufficiently effective.
+We conducted preliminary experiments on chess to catch a glimpse of the applicability
+of MMTO to other games. Note that there already are evaluation functions in chess that
+can outplay grandmasters, whereas there are none in shogi. Thus, it might be difficult to
+improve well-crafted chess evaluation functions. For this experiment, we chose an opensource program (Crafty) as a fair implementation of a chess program (Hyatt, 2013).
+The original evaluation function had been tightly tuned and is not a simple multivariable
+function. Thus, for the sake of simplicity, we did not modify it in any way except to add
+a new linear combination of weighted two-pieces-square features. The features were used
+to evaluate all conditions of the king and another piece, such as in eB in Section 4.1. The
+mirror symmetric property described in Section 4.1 was not applied and features in which
+a pawn exists at the eighth rank were not counted. As a results, the total number of added
+weights w B was 39, 312. Because a chess position possesses only thirty or fewer two-piecessquare features, the additional computational time due to the above modification became
+almost negligible with the help of a pawn hash table and the lazy evaluation technique that
+had come with the original.
+The training and test sets were composed by using game records at the Free Internet
+Chess Server (FICS). These games were played using the standard time control of the server
+by two players with ratings of 2, 600 or more. The training set P had 1, 267, 032 desired
+moves and Z P = 33, 619, 904 move pairs after removing duplications from the 13, 440 game
+records, whereas the test set P had 101, 982 desired moves and Z P = 2, 755, 217 move pairs
+after removing duplications from the 1, 000 game records.
+Figure 14 shows the rate of agreement with the test set and the number of correct answers
+of chess problems through iteration. Here,  in the sigmoid function was set to 0.00341, the
+w B ) = 0.156|w
+w B |.
+equality constraint was not used, and the regularization term was JR (w
+555
+
+fiHoki & Kaneko
+
+Agreement (%)
+
+35.2
+
+1270
+
+34.8
+
+1260
+1250
+
+Agreement
+Number of correct answers
+
+34.4
+2
+
+3
+
+4
+
+5
+
+6
+
+7 8 9
+
+1
+
+2
+
+3
+
+4
+
+5
+
+10
+
+6
+
+1240
+
+7 8 9
+
+100
+
+Number of correct answers
+
+1280
+
+Iteration
+
+Figure 14: Improvement in rate of agreement with the test set (solid line) and the number of
+correct answers of 2, 180 problems (dashed line) in chess. The two-piece-square
+weights w B were adjusted using MMTO.
+
+Rating
+Win
+
+10101279
+33  3%
+
+12801489
+35  3%
+
+14901769
+39  4%
+
+17702049
+43  4%
+
+2050
+42  4%
+
+Table 5: Dependence of the strength (winning percentages) of learned programs on the
+quality (ratings of players) of the training set. The uncertainty indicated as 3
+was estimated by conducting a two-sided test at a significance level of 5% on 1, 000
+games.
+
+A total of 2, 180 chess problems from the Encyclopedia of Chess Middlegames (the second
+section of the 879 problems), Win at Chess (300 problems), and Winning Chess Sacrifices
+(1, 001 problems) were used (Krogius, Livsic, Parma, & Taimanov, 1980; Reinfeld, 2001,
+1969). The learned program searched 5  104 nodes per problem and eight megabytes of
+memory were assigned to the transposition table. We see that the agreement rate as well as
+the number of correct answers tends to improve as the number of iterations grows, though
+the differences are moderate. It means that MMTO found room for improvement in a
+well-implemented chess program. These results indicate that MMTO can be a useful way
+to learn heuristic evaluation functions in chess, especially when one can design evaluation
+features suitable for learning.
+4.8 Data Quality Dependence
+To assess the importance of the quality of the game records, we conducted additional experiments using game records of players with various levels of experience in shogi. Here,
+eABCD was learned by using the results of eABC in Figure 5 as the initial value. The results
+are summarized in Table 5. Each training set was composed from the records of 47, 566
+rapid time control (30 seconds per move) games played by amateurs on a popular Internet
+shogi site, Shogi Club 245 . The first line in the table shows the ratings of the amateur
+players. The second line shows the winning percentages of the learned evaluation function
+5. Shogi Club 24, http://www.shogidojo.com, last access: 2013.
+
+556
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+against the evaluation function trained with grandmaster-game records. Here, each evaluation function was learned in 200 iterations. The winning percentages were computed by
+averaging the results of a thousand games (About 15 drawn games and games exceeding
+300 moves were not counted). Each player was allowed to use one second on one core of
+an Intel Xeon X5680 for each move, and fifty megabytes of memory were assigned to the
+transposition table. Table 5 shows the significance of the quality of the training set; the use
+of game records of stronger players made the program stronger.
+
+5. Conclusion
+We presented a method, Minimax Tree Optimization (MMTO), that uses game records to
+adjust a full set of feature weights of the evaluation function in a two-player game. The
+learning of MMTO has been designed so that the search results match the desired moves,
+e.g., the recorded moves of grandmaster games. MMTO consists of two procedures: (1)
+a shallow heuristic search for all training positions using the current feature weights and
+(2) an update guided by an approximation of the gradient of the objective function. A
+new combination of a simple smooth approximation of the step function and grid-adjacent
+updates with standard techniques, i.e., gradient guided optimization, constraints, and regularization, contributed to the scalability and stability of MMTO and led to it showing
+substantial improvements over existing methods.
+The performance of MMTO was demonstrated in experiments on shogi, a variant of chess
+that has a larger number of legal moves. MMTO clearly outperformed the existing methods.
+In addition, the experimental results on the rate of agreement and playing strength indicate
+that MMTO can adjust forty million parameters. Possible future work would be automated
+adjustment of the step length and a theoretical convergence analysis.
+
+Acknowledgments
+We are grateful to Dr. Masakazu Muramatsu for his support of this work.
+
+Appendix A. Notes on the Continuity and Partial Differentiability of the
+Minimax Value
+We saw in Section 4.5 that the objective function of MMTO has a piecewise smooth surface.
+In this Appendix, we theoretically discuss the continuity and partial differentiability of the
+w ) with respect to w  RN , where w is the vector of parameters in the
+minimax value vp (w
+evaluation function e(p, w ) and p is the position. The continuity of the minimax value
+ensures the continuity of the main part of objective function of MMTO defined in Eq. (5).
+The partial differentiability analysis gives conditions under which the approximation inside
+MMTO described in Section 3.3 is valid. We first analyze a single minimax tree, assuming
+that the tree is known and fixed. Then, we extend our discussion to game-tree-search
+methods that possibly explore different trees for different w .
+Definition 1. The evaluation function e(, ) is a (P, RN ) 7 R function, where P is the set
+of all positions in a target game, R is the set of real numbers, and RN is an N -dimensional
+557
+
+fiHoki & Kaneko
+
+Euclidean space. The evaluation function e(p, w ) is continuous with respect to the parameters w for any position p  P and for any w  RN . Moreover, the evaluation function
+e(p, w ) is partially differentiable with respect to any component of w at any w  RN .
+The continuity and partial differentiability of the evaluation function are feasible assumptions. Note that an evaluation based on an ordinary piece-square table has these
+properties, and all recent machine learning of evaluation functions have them (Baxter et al.,
+2000; Veness et al., 2009; Buro, 2002).
+Definition 2. The theoretical game graph G is a finite, directed acyclic, connected graph
+representing all possible transitions of states in the target game, where a node (resp. edge)
+represents a position (resp. move). The set of nodes in G corresponds to P; V (G) = P. A
+minimax graph T is a finite connected sub-graph of G. By convention, we use the term
+minimax tree for the minimax graph even when it is not a tree. We denote the set of minimax
+trees in G by T. A node is called a maximizing (resp. minimizing) node if the corresponding
+position is the maximizing (resp. minimizing) player to move. The destination of an edge is
+a maximizing (resp. minimizing) node if and only if the source of the edge is a minimizing
+(resp. maximizing) node. We can clearly assume any node n to be a single position p, and
+we will denote the evaluation function as e(n, w ).
+Let Lr,T be the set of leaf nodes of the entire sub-tree Tr of T and Tr is rooted at node r.
+We will omit tree T and use Lr if it is obvious. We denote the set of immediate successors
+(or children) at node n in tree T by Cn,T or by Cn . Note that Cn =  if n is a leaf. In the
+standard notation, a node (or vertex) in a graph T is denoted by n  V (T ). However, in
+this Appendix, we will omit V (.) and write n  T because it is obvious.
+w ) is a value associated with each node n in a minimax
+Definition 3. A minimax value vn,T (w
+tree T  T and it is defined recursively by a tree structure and by a static evaluation function
+e(n, w ), as follows:
+
+if n is a leaf,
+ e(n, w )
+w ) if n is a non-leaf maximizing node,
+w) =
+maxcCn,T vc (w
+vn,T (w
+(11)
+
+w
+mincCn,T vc (w ) if n is a non-leaf minimizing node.
+w ) if it is obvious. For two minimax values a and b of a
+We will omit tree T and use vn (w
+maximizing (resp. minimizing) node, we say a is better than b if a > b (resp. b < a).
+A.1 Continuity of Minimax Value
+The continuity of the minimax value follows from the continuity of the evaluation function.
+w ) is continuous with respect to w for any minimax
+Theorem 4. The minimax value vn,T (w
+w ) = vn,T (w
+w 0 ), or equivalently, for
+tree T  T and for any w  RN . That is, limw w
+w 0 vn,T (w
+w  w 0 | <  logically implies
+any w 0  RN and for any  > 0, there exists  > 0 such that |w
+0
+w )  vn,T (w
+w )| < .
+|vn,T (w
+The following assertion about the ordinary properties of the basic functions max and
+min and is common sense in analysis. It is rather difficult, however, to find a suitable
+reference containing it. We therefore give a proof that will be useful in the subsequent
+discussion.
+558
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+x), ..., fk (x
+x) be a continuous function
+Proposition 5. Let k be a natural number and each f1 (x
+x)) is a continuous function on RN . Similarly, mini (fi (x
+x)) is a
+RN 7 R. Then, maxi (fi (x
+N
+continuous function on R .
+x) is continuous, for any x 0  RN and for any  > 0, there exists
+Proof. Because each fi (x
+x  x0 | < i implies |fi (x
+x)  fi (x
+x0 )| < . Hence, if we choose  = mini i ,
+i > 0 such that |x
+0
+0
+x  x | <  implies |fi (x
+x)  fi (x
+x )| <  for any i = 1, . . . , k; that is,
+then |x
+x0 )   < fi (x
+x) < fi (x
+x0 ) + ,
+fi (x
+
+for any i = 1, . . . , k.
+
+Note that ai < bi for any i = 1, . . . , k obviously implies maxi ai < maxi bi . Thus, from the
+above inequalities we obtain
+x0 )   < max fi (x
+x) < max fi (x
+x0 ) + ,
+max fi (x
+i
+
+i
+
+i
+
+that is,
+
+x)  max fi (x
+x0 )| < .
+| max fi (x
+i
+
+i
+
+x). The proof is similar for mini fi (x
+x).
+This implies the continuity of maxi fi (x
+Let r be the root of a given tree T . Now, we prove Theorem 4 on the basis of
+mathematical induction from the leaf nodes Lr,T to root r. That is, at any leaf node
+n  Lr,T , the minimax value is continuous because of the continuity of the evaluation
+w ) = e(n, w ). For an internal node n, we assume that continuity holds for
+function; vn,T (w
+any child c in Cn,T . This induction hypothesis and Proposition 5 ensure the continuity of
+w ).
+vn,T (w
+A.2 Stability of Principal Variations
+In the above subsection, we showed the continuity of minimax values through the continuity
+of min and max functions. Here, we show that the best moves and principal variations are
+stable when the changes in the leaves are small enough. We analyze the stability in order
+to discuss partial differentiability.
++
+w ), hereafter called the best children, denotes the set of
+(w
+Definition 6. The symbol Cn,T
+such children at node n in tree T that have the same minimax value as that of n:
++
+w ) = {c  Cn,T |vc (w
+w ) = vn (w
+w )}.
+(w
+Cn,T
++
+
+w ). Here, A \ B denotes
+w ); that is, Cn,T \ Cn,T
+(w
+(w
+We denote the rest of the children as Cn,T
+the set difference, i.e., {e|e  A  e 
+/ B}.
+
+A child is considered to be the best choice in its parent node if the minimax value of the
+child is the same as that of the parent node. When no two children share the same value,
+w ) contains only one child. Otherwise, the number of nodes in Cn+ (w
+w ) can be greater
+Cn+ (w
+than one.
+Definition 7. Let r be the root of a tree T  T. The principal variation (abbreviated PV
+w ) of tree T is the sub-tree of T obtained as the closure of the best children
+for short) T  (w
+from the root:
+w ) = {r},
+T 0 (w
++
+i
+w ) = {c  Cn,T
+w ) | n  T i1 (w
+w )} for i > 0,
+T (w
+(w
+w) =
+T  (w
+
+
+[
+
+w ).
+T i (w
+
+i=0
+
+559
+
+fiHoki & Kaneko
+
+n0 2
+
+}
+!
+n1 2 n2 2 n3-1
+
+! 
+
+n4 7 n5 2 n6-1
+
+Figure 15: Example of a minimax tree (graph) with a transposition at n5
++
++
+
+w ) = Cn,T
+w ) and Cn,T
+w ) =  for any n  T  (w
+w ). Also, we denote leaves
+Note that Cn,T
+(w
+ (w
+ (w
+
+
+
+w ) by L (w
+w ), that is, T (w
+w )  Lr,T .
+in T (w
+
+Example 8. Figure 15 shows a small minimax tree T that has two best children at root n0 ;
+the maximizing and minimizing nodes are denoted by boxes and circles, respectively. Here,
+Cn+0 = {n1 , n2 } and Cn+1 = {n5 }. The principal variation T  of this tree is {n0 , n1 , n2 , n5 }.
+Lemma 9. For any internal node n in any tree T  T and for any w 0  RN , there exists
+w 1  w 0 | < n , the set of the best
+a positive number n such that for any w 1 satisfying |w
+1
+0
+children at node n for w is a subset of the one for w :
++
++
+w 0 ), for any w 1 s.t. |w
+w 1  w 0 | < n .
+w 1 )  Cn,T
+(w
+(w
+Cn,T
+
+w 0 ) is empty, the assertion is trivial.
+Proof. When all child values are the same, i.e., Cn (w
+Otherwise, let 0 be the minimum absolute difference between the best value and any of the
+w 0 )  vc (w
+w 0 )| > 0. The continuity of the minimax
+other values, i.e., 0 = mincCn (w
+w 0 ) |vn (w
+w 1  w 0 | < n , we have
+values ensures the existence of n such that for any w 1 satisfying |w
+1
+0
+1
+0
+w )  vc (w
+w )| < 0 /2 and also |vn (w
+w )  vn (w
+w )| < 0 /2. From the definition of
+maxcCn |vc (w
+
+0
+w ) satisfies
+n and triangle inequalities, any c  Cn,T (w
+w 0 )  vn (w
+w 0 )|
+0  |vc (w
+w 0 )  vc (w
+w 1 )| + |vc (w
+w 1 )  vn (w
+w 0 )|
+ |vc (w
+w 0 )  vc (w
+w 1 )| + |vc (w
+w 1 )  vn (w
+w 1 )| + |vn (w
+w 1 )  vn (w
+w 0 )|
+ |vc (w
+
+
+w 1 )  vn (w
+w 1 )| + 0 + 0
+< |vc (w
+2
+2
+1
+1
+w )  vn (w
+w )| + 0 .
+= |vc (w
+w 1 )  vn (w
+w 1 )| > 0  0 = 0, namely, vc (w
+w 1 ) 6= vn (w
+w 1 ). This implies by definition
+Thus, |vc (w
++
+w 1 ).
+(irrespective of whether n is a max or min node) that c 6 Cn,T
+(w
+Definition 10. The tree stability T of a tree T is the minimum value of n among all the
+nodes n  T , where n is a positive number satisfying Lemma 9. Note that the minimum
+value T > 0 exists because T is finite.
+Example 11. In reference to Figure 15, suppose that each leaf value changes by at most 0.1.
+w 1 )  vn (w
+w 0 )|  0.1 for each internal node n of heights 1, 2,
+Then, it will be proven that |vn (w
+and 3 in order: it is obvious for n4 , n5 , and n6 , and it can be proven for n1 , n2 and n3 , and
+finally for n0 . We can see that neither n4 nor n6 can become a new best node as a result of
+this change.
+560
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+O
+p
+
+vn
+
+
+u
+0
+
+
+
+
+
+w1)
+vn (w
+
+w0)
+(w
+j
+
+w1)
+vc (w
+(c  Cn+ )
+/ h
+w 1 ) (c 
+vc (w
+/ Cn+ )
+q
+
+
+
+w 1 ) at maximizing-node n, where w 1 changes along the i-th comFigure 16: Sketch of vn (w
+0
+w 1 ) at n equals vc (w
+w 1 ) at one of the old best
+ponent wi + h from w 0 . Here, vn (w
++
+0
+w ).
+children c  Cn (w
+
+A.3 Partial Differentiability
+We show that the partial differentiability, as well as the partial derivative, of the minimax
+value at a node in tree T depends only on its principal variations. We denote the right and
+left partial derivatives of a function RN 7 R at point x 0 as
+f 0
+x ) =
+(x
+x+
+i
+
+f (x01 , . . . , x0i + h, . . . , x0N )  f (x01 , . . . , x0N )
+,
+h+0
+h
+
+(12)
+
+f 0
+x ) =
+(x
+x
+i
+
+f (x01 , . . . , x0i + h, . . . , x0N )  f (x01 , . . . , x0N )
+.
+h0
+h
+
+(13)
+
+lim
+lim
+
+Let us pay attention to the single parameter xi that changes by h under these limit opf
+0
+erations. Hereafter, the other parameters held constant will often be omitted as x
++ (x ),
+where x is the one-dimensional parameter of interest. We use the symbol  because of its
+analogy to the partial derivative in order not to forget that the other parameters have been
+omitted.
+w ) of tree T  T and for any
+Theorem 12. For any node n in the principal variation T  (w
+w ) at which the partial derivative of the evaluation
+w  RN , there exists such a leaf la  L (w
+
+w ): vn+ (w
+w ) = w
+function equals the right partial derivative of vn (w
+e(la , w ). Similarly, there
+i
+w
+i
+
+w ) at which the partial derivative of the evaluation function equals
+exists such a leaf lb  L (w
+
+w ), vn (w
+w ) = w
+the left partial derivative of vn (w
+e(lb , w ).
+i
+w
+i
+
+The proof of the theorem, given at the end of this subsection, is based on the stability
+0 ) and |w
+w 1  w 0 | = |h| are
+of the best moves. We assume that w 1 = (w10 , . . . , wi0 + h, . . . , wN
+sufficiently small in Appendix A.3. Consequently, we have |h| < T , and for any node n in
+tree T and for any w 0  RN ,
+
+1
+(n:leaf)
+
+ e(n, w )
+1 ) (n:maximizing node)
+1
+w
+max
+v
+(w
++
+0
+c
+w )=
+w )
+vn (w
+cCn,T (w
+
+ min +
+w 1 ) (n:minimizing node).
+w 0 ) vc (w
+cC
+(w
+n,T
+
+561
+
+(14)
+
+fiHoki & Kaneko
+
+w 1 ) changing with h, where n is a maxExample 13. Figure 16 sketches an example of vn (w
+w 0 ) when h = 0. Each value
+imizing node. There are three best children with value vn (w
+continuously (not always linearly) changes with h. While the best child depends on the sign
+w 0 ) when h is less than T . This is because the minimax
+of h, it is always one of c  Cn+ (w
+w 0 ) are sufficiently less (by at least 0 ) than vn (w
+w 0 ) at
+values of the other children c  Cn (w
+h = 0.
+w ) are given by
+The next goal is to show that the right and left partial derivatives of vn (w
+w ), respectively. The
+the right and left partial derivatives at one of the best children Cn+ (w
+following propositions describe the ordinary properties of the right and left limits and the
+basic functions max and min. Similar arguments can be found in a comprehensive textbook
+of calculus. We will give a detailed proof here, however, because it is rather difficult to find
+the precisely same assertion in a textbook.
+Proposition 14. Let k be a natural number and any of f1 (x), ..., fk (x) be a continuous
+function R 7 R. Suppose that these functions have the same value at point x0 , i.e.,
+fi
+0
+maxi fi (x0 ) = mini fi (x0 ), and all of them have a right partial derivative x
++ (x ). Then,
+0
+the right partial derivative of the minimum or maximum of fi (x) at point x exists and is
+equal to the minimum or maximum of the right partial derivatives of fi (x0 ), respectively.
+ maxi fi 0
+fi
+ mini fi 0
+fi
+(x ) = max + (x0 ),
+(x ) = min + (x0 ).
++
++
+i x
+i x
+x
+x
+Proof. Let o(h) be Landaus symbol, and let us use it to denote residual terms converging
+0
+0
+to 0 faster than h, i.e., limh+0 o(h)
+h = 0. Recall that fi (x ) = f1 (x ) for any i = 1, . . . , k.
+For positive h, we have
+
+
+fi 0
+0
+max fi (x + h)  max fi (x ) = max fi (x ) + h + (x ) + o(h)  max fi (x0 )
+i
+i
+i
+i
+x
+
+
+fi
+= max f1 (x0 ) + h + (x0 ) + o(h)  f1 (x0 )
+i
+x
+
+
+fi 0
+= h max + (x ) + o(h)
+i x
+0
+
+0
+
+From Eq. (12), the function maxi fi (x) at point x0 has a right partial derivative maxi
+The same argument applies to the right partial derivative of mini fi (x).
+
+fi
+(x0 ).
+x+
+
+Proposition 15. Suppose that functions have the same value at point x0 and all of these
+fi
+0
+functions have a left derivative x
+ (x ). Then, the left partial derivative of the minimum
+or maximum of fi (x) at point x0 is equal to the maximum or minimum of the left partial
+derivatives of fi (x0 ):
+ maxi fi 0
+fi
+ mini fi 0
+fi
+(x ) = min  (x0 ),
+(x ) = max  (x0 ).
+
+
+i x
+i x
+x
+x
+562
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+Proof. Using similar algebra as in the proof of Proposition 14, we find for negative h,
+
+
+fi 0
+0
+0
+max fi (x + h)  max fi (x ) = h min  (x ) + o(h).
+i
+i
+i x
+fi
+0
+From Eq. (13), the function maxi fi (x) at point x0 has the left partial derivative mini x
+ (x ).
+Note that min and max are switched in the algebra above because of the negativity of h.
+The same argument applies to the left partial derivative of mini fi (x).
+
+Lemma 16. Let gi+ (n, w ) =
+
+vn
+w)
+(w
+wi+
+
+(resp. gi (n, w ) =
+
+vn
+w )) be the right (resp.
+(w
+wi
+w  RN and for any internal
+
+left)
+
+w ). For any
+partial derivative of the minimax value vn (w
+node
+w ) of tree T  T, there exist right and left partial derivatives
+n in principal variation T  (w
+w ) with respect to any i = 1, . . . , N . The right and left partial
+gi+ (n, w ) and gi (n, w ) of vn (w
+derivatives are:
+
++
+ maxcC + (w
+w ) gi (c, w ) (n: maximizing node)
+n,T 
++
+gi (n, w ) =
++
+ mincC +  (w
+w ) gi (c, w ) (n: minimizing node)
+n,T
+
+
+ mincC + (w
+w ) gi (c, w ) (n: maximizing node)
+n,T 
+
+gi (n, w ) =
+
+(n: minimizing node).
+ maxcC +  (w
+w ) gi (c, w )
+n,T
+
+Proof. We prove these equalities on the basis of mathematical induction from the leaf nodes
+w ), by the definition of the evaluation function, the
+Lr,T to the root r. For each leaf n in L (w
+w ) is clearly continuous and partially differentiable with respect to any
+minimax value vn (w
+component in w  RN . For any internal node n, we assume, as an induction hypothesis,
+that the right partial derivative gi+ (c, w ) and left partial derivative gi (c, w ) exist for any
+w 1 )  Cn+ (w
+w 0 ) for any |h| < T and Eq. (14). From the
+child c  Cn,T . Recall that Cn+ (w
+induction hypothesis with Proposition 14, we have
+ maxcCn+ (w
+w ) vc
+wi+
+
+ mincCn+ (w
+vc
+vc
+w ) vc
+w ),
+w ) = min
+w ).
+(w
+(w
++
++
++ (w
++
++
+w
+w
+w
+w)
+w)
+cCn (w
+cCn (w
+i
+i
+i
+
+w ) = max
+(w
+
+Similarly, from Proposition 15, we have
+ maxcCn+ (w
+w ) vc
+wi
+
+ mincCn+ (w
+vc
+vc
+w ) vc
+w ),
+w ) = max
+w ).
+(w
+(w
+
+
+ (w
++
++
+w
+w
+w
+w)
+w)
+cCn (w
+cCn (w
+i
+i
+i
+
+w ) = min
+(w
+
+w ), it is obvious that gi+ (n, w ) =
+Now, we prove Theorem 12. For any leaf n  L (w
+
+w ), Lemma 16 ensures that the left
+= w
+e(n, w ). For any internal node n  T  (w
+i
+and right partial derivatives gi+ (n, w ) and gi (n, w ) are given by one of the best children.
+w ) such that
+Thus, for root r, there always exist leaves la and lb  L (w
+gi (n, w )
+
+gi+ (r, w ) =
+
+
+wi
+
+gi (r, w ) =
+
+e(la , w ),
+563
+
+
+wi
+
+e(lb , w ).
+
+(15)
+
+fiHoki & Kaneko
+
+
+g + (n, w 0 ) = 0
+g  (n, w 0 ) = 1
+
+wi
+
+e(a, w 0 ) = 1
+e(a, w 0 ) = 0
+
+n
+
+
+ 
+
+a 
+
+g + (r, w 0 ) = g  (r, w 0 ) = 0
+w0) = 0
+vr (w
+
+r
+
+ c
+ &b
+
+
+wi
+
+e(c, w 0 ) = 0
+e(c, w 0 ) = 0
+
+
+wi
+
+e(b, w 0 ) = 0
+e(b, w 0 ) = 0
+
+w ) exists at w 0 , it is not equal to the partial
+Figure 17: Although the partial derivative of vr (w
+
+0
+derivative at a PV leaf wi e(a, w ).
+
+w ) with
+Remark 17. By definition, if gi+ (n, w 0 ) = gi (n, w 0 ), the partial derivative of vn (w
+0
+
+0
+w ) satisfying
+respect to wi exists at the point w and there is a leaf l  L (w
+
+
+w0) =
+vn (w
+e(l, w 0 ).
+wi
+wi
+
+(16)
+
+w ) with respect
+Remark 18. For any i = 1, . . . , N , the partial derivative of minimax value vn (w
+
+0
+0
+
+w 0 ).
+to wi exists at w and equals wi e(l, w ), if l is the unique element of L (w
+w ) has a partial derivative
+Remark 19. There exists a tree Tr for which the minimax value vn (w
+0
+w 0 )| > 1) and
+with respect to wi at w , even when the leaves l in PV are not unique (|L (w
+
+0
+give different partial derivatives wi e(l, w ). An example is sketched in Figure 17, where
+the partial derivative is 1 for a and 0 for b and c.
+A.4 Game-Tree Search and Pruning Techniques
+Consider a game tree search S be a function that takes the root position r and the evaluationw ) with minimax values
+function parameters w as inputs, and yields a minimax tree TrS (w
+S (w
+w
+w
+vn,Tr (w
+(w
+)
+for
+all
+n
+
+T
+).
+We
+call
+a
+game-tree
+search
+S
+static,
+provided that it yields
+w)
+r
+S
+S
+0
+w )) = V (Tr (w
+w )), for any root r. Then,
+a constant tree with respect to w , i.e., V (Tr (w
+w ) yielded by such a static game-tree
+theorems 4 and 12 apply to the minimax value vr,TrS (w
+search. For example, a fixed-depth minimax search or a minimax search considering limited
+types of moves (e.g., capture and promotion) is a static game-tree search. A minimax search
+with stand pat used in the quiescence search (Beal, 1990) is static, too. Note that stand
+pat at node n is equivalent to a virtual move adding an evaluation function e(n, w ) as a
+w ) in Eq. (11), even when n is not a leaf node.
+candidate of the node value vn (w
+When pruning techniques are incorporated, part of the tree is pruned and not explored.
+0
+w )  TrS (w
+w ) yielded by
+Consider a static search S, that with a pruning S 0 , and tree TrS (w
+0
+S . We call a pruning conservative, provided that it yields the same minimax value at
+w ) = vr,T S0 (w
+w ). Theorem 4 applies to the minimax
+any root r for any w  RN : vr,TrS (w
+w ) (w
+r
+w
+value at the root r, vr,T S0 (w
+(w
+),
+yielded
+by
+such
+a
+static
+game-tree search with conservative
+w)
+r
+pruning. Standard  pruning (Knuth & Moore, 1975) is a conservative pruning. However,
+many pruning techniques, e.g., static exchange evaluation (Reul, 2010), (extended) futility
+pruning (Heinz, 1998), null move pruning (Adelson-Velskiy et al., 1975), and late move
+reductions (Romstad, 2010), can prune a sub-tree without having to prove that the sub564
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+tree is irrelevant to the minimax value at the root. Thus, these pruning techniques are
+generally not conservative.
+A.5 Summary
+The minimax value of the root of the tree explored by a game-tree search with wellconfigured pruning techniques is continuous. This result suggests the continuity of the
+objective function of MMTO in Eq. (4), as was empirically observed in Section 4.5. As for
+partial differentiability, Theorem 12 suggest that it is feasible to consider the leaves of the
+principal variations in a search tree. When there is only one principal variation, as stated in
+Remark 18, the use of the partial derivative at the unique leaf introduced in Section 3.3 is
+correct. Otherwise, i.e., when there are multiple principal variations, the partial derivative
+may not exist or be different from the partial derivative at one of the leaves, as stated in
+Remark 19. Although the frequency of such cases depends on the target game and on the
+evaluation features, it is almost negligible in the experiments discussed in our previous work
+(Kaneko & Hoki, 2012).
+
+References
+Adelson-Velskiy, G. M., Arlazarov, V. L., & Donskoy, M. V. (1975). Some methods of
+controlling the tree search in chess programs. Artificial Intelligence, 6 (4), 361  371.
+Akl, S. G., & Newborn, M. M. (1977). The principal continuation and the killer heuristic.
+In Proceedings of the 1977 Annual Conference, ACM 77, pp. 466473, New York, NY,
+USA. ACM.
+Anantharaman, T. (1997). Evaluation tuning for computer chess: Linear discriminant methods. ICCA Journal, 20 (4), 224242.
+Baxter, J., Tridgell, A., & Weaver, L. (2000). Learning to play chess using temporaldifferences. Machine Learning, 40 (3), 242263.
+Beal, D. F. (1990). A generalised quiescence search algorithm. Artificial Intelligence, 43,
+8598.
+Beal, D. F., & Smith, M. C. (2001). Temporal difference learning applied to game playing
+and the results of application to shogi. Theoretical Computer Science, 252 (1-2), 105
+119.
+Bertsekas, D. P., & Bertsekas, D. P. (2008). Nonlinear Programming (2nd edition). Athena
+Scientific.
+Bjornsson, Y., & Marsland, T. A. (2002). Learning control of search extensions. In Caulfield,
+H. J., Chen, S.-H., Cheng, H.-D., Duro, R. J., Honavar, V., Kerre, E. E., Lu, M.,
+Romay, M. G., Shih, T. K., Ventura, D., Wang, P. P., & Yang, Y. (Eds.), JCIS, pp.
+446449. JCIS / Association for Intelligent Machinery, Inc.
+Browne, C., Powley, E., Whitehouse, D., Lucas, S., Cowling, P., Rohlfshagen, P., Tavener,
+S., Perez, D., Samothrakis, S., & Colton, S. (2012). A survey of monte carlo tree
+search methods. Computational Intelligence and AI in Games, IEEE Transactions
+on, 4 (1), 143.
+565
+
+fiHoki & Kaneko
+
+Buro, M. (2002). Improving heuristic mini-max search by supervised learning. Artificial
+Intelligence, 134 (12), 8599.
+Buro, M., Long, J. R., Furtak, T., & Sturtevant, N. R. (2009). Improving state evaluation,
+inference, and search in trick-based card games. In IJCAI, pp. 14071413.
+Buro, M. (1995). Statistical feature combination for the evaluation of game positions.
+Journal of Artificial Intelligence Research, 3, 373382.
+Campbell, M., Hoane, Jr., A. J., & Hsu, F.-h. (2002). Deep Blue. Artificial Intelligence,
+134 (12), 5783.
+Chellapilla, K., & Fogel, D. (1999). Evolving neural networks to play checkers without
+relying on expert knowledge. Neural Networks, IEEE Transactions on, 10 (6), 1382
+1391.
+Coulom, R. (2007). Computing Elo Ratings of move patterns in the game of go. ICGA
+Journal, 30 (4), 198208.
+Coulom, R. (2012). Clop: Confident local optimization for noisy black-box parameter tuning.
+In Herik, H., & Plaat, A. (Eds.), Advances in Computer Games 13, No. 7168 in LNCS,
+pp. 146157. Springer-Verlag.
+Duchi, J., Hazan, E., & Singer, Y. (2011). Adaptive subgradient methods for online learning
+and stochastic optimization. Journal of Machine Learning Research, 12, 21212159.
+Fawcett, T. E. (1993). Feature Discovery for Problem Solving Systems. Ph.D. thesis, Department of Computer Science, University of Massachusetts, Amherst.
+Furnkranz, J. (2001). Machine learning in games: a survey. In Machines that learn to play
+games, pp. 1159. Nova Science Publishers, Commack, NY, USA.
+Gelly, S., Kocsis, L., Schoenauer M., Sebag, M., Silver, D., Szepesvari, C., & Teytaud, O.
+(2012). The grand challenge of computer go: Monte carlo tree search and extensions.
+Commun. ACM, 55 (3), 106113.
+Gelly, S., & Silver, D. (2011). Monte-carlo tree search and rapid action value estimation in
+computer go. Artificial Intelligence, 175 (11), 18561875.
+Gomboc, D., Buro, M., & Marsland, T. A. (2005). Tuning evaluation functions by maximizing concordance. Theoretical Computer Science, 349 (2), 202229.
+Heinz, E. A. (1998). Extended futility pruning. ICCA Journal, 21 (2), 7583.
+Heinz, E. A. (1999). Adaptive null-move pruning. ICCA Journal, 22 (3), 123132.
+Hoki, K. Bonanza  the computer shogi program.. http://www.geocities.jp/bonanza_
+shogi/ Last access: 2013. In Japanese.
+Hoki, K. (2006). Optimal control of minimax search results to learn positional evaluation. In
+The 11th Game Programming Workshop (GPW2006), pp. 7883, Kanagawa, Japan.
+In Japanese.
+Hoki, K., & Kaneko, T. (2012). The global landscape of objective functions for the optimization of shogi piece values with game-tree search. In van den Herik, H. J., &
+Plaat, A. (Eds.), Advances in Computer Games 13, No. 7168 in LNCS, pp. 184195.
+Springer-Verlag.
+566
+
+fiLarge-Scale Optimization for Evaluation Functions with Minimax Search
+
+Hoki, K., & Muramatsu, M. (2012). Efficiency of three forward-pruning techniques in shogi:
+Futility pruning, null-move pruning, and late move reduction (LMR). Entertainment
+Computing, 3 (3), 5157.
+Hsu, F.-h., Anantharaman, T. S., Campbell, M. S., & Nowatzyk, A. (1990). Deep Thought.
+In Marsland, T. A., & Schaeffer, J. (Eds.), Computers, Chess, and Cognition, pp.
+5578. Springer-Verlag.
+Iida, H., Sakuta, M., & Rollason, J. (2002). Computer shogi. Artificial Intelligence, 134 (1
+2), 121144.
+Kaneko, T. (2009). Recent improvements on computer shogi and GPS-Shogi. IPSJ Magazine, 50 (9), 878886. In Japanese.
+Kaneko, T., & Hoki, K. (2012). Analysis of evaluation-function learning by comparison of
+sibling nodes. In van den Herik, H. J., & Plaat, A. (Eds.), Advances in Computer
+Games 13, No. 7168 in LNCS, pp. 158169. Springer-Verlag.
+Knuth, D. E., & Moore, R. W. (1975). An analysis of alpha-beta pruning. Artificial
+Intelligence, 6 (4), 293326.
+Kocsis, L., & Szepesvari, C. (2006). Bandit based monte-carlo planning. In Machine Learning: ECML 2006, Vol. 4212, pp. 282293. Springer.
+Krogius, N., Livsic, A., Parma, B., & Taimanov, M. (1980). Encyclopedia of Chess Middlegames: Combinations. Chess Informant.
+Levinson, R., & Weber, R. (2001). Chess neighborhoods, function combination, and reinforcement learning. In Marsland, T. A., & Frank, I. (Eds.), Computer and Games,
+No. 2063 in LNCS, pp. 133150. Springer-Verlag.
+Marsland, T. A. (1985). Evaluation function factors. ICCA Journal, 8 (2), 4757.
+Marsland, T. A., & Campbell, M. (1982). Parallel search of strongly ordered game trees.
+ACM Computing Surveys, 14 (4), 533551.
+Nitsche, T. (1982). A learning chess program. In Advances in Computer Chess 3, pp.
+113120. Pergamon Press.
+Nocedal, J., & Wright, S. (2006). Numerical Optimization. Springer-Verlag.
+Nowatzyk, A. (2000). http://tim-mann.org/DT_eval_tune.txt.
+Pearl, J. (1980). Scout: A simple game-searching algorithm with proven optimal properties.
+In In Proceedings of the First Annual National Conference on Artificial Intelligence,
+pp. 143145.
+Reinefeld, A. (1983). An improvement to the scout tree search algorithm. ICCA Journal,
+6 (4), 414.
+Reinfeld, F. (1969). 1001 Winning Chess Sacrifices and Combinations. Wilshire Book
+Company.
+Reinfeld, F. (2001). Win at Chess (Dover Books on Chess). Dover Publications.
+Reul, F. (2010). Static exchange evaluation with -approach. ICGA Journal, 33 (1), 317.
+567
+
+fiHoki & Kaneko
+
+Romstad, T. An Introduction to Late Move Reductions. http://www.glaurungchess.com/
+lmr.html, Last access: 2010.
+Russell, S. J., & Norvig, P. (2002). Artificial Intelligence: A Modern Approach (2nd Edition).
+Prentice Hall.
+Schaeffer, J. (1986). Experiments in search and knowledge. Ph.D. Thesis, Department of
+Computing Science, University of Waterloo, Canada.
+Schaeffer, J. (1989). The history heuristic and alpha-beta search enhancements in practice.
+IEEE Transactions on Pattern Analysis and Machine Intelligence, PAMI-11 (1), 1203
+1212.
+Schaeffer, J., Hlynka, M., & Jussila, V. (2001). Temporal difference learning applied to
+a high-performance game-playing program. In IJCAI01: Proceedings of the 17th
+international joint conference on Artificial intelligence, pp. 529534, San Francisco,
+CA, USA. Morgan Kaufmann Publishers Inc.
+Silver, D., & Tesauro, G. (2009). Monte-carlo simulation balancing. In ICML 09: Proceedings of the 26th Annual International Conference on Machine Learning, pp. 945952.
+ACM.
+Sutton, R. S., & Barto, A. G. (1998). Reinforcement Learning: An Introduction (Adaptive
+Computation and Machine Learning). The MIT Press.
+Tanaka, T., & Kaneko, T. GPS Shogi.. http://gps.tanaka.ecc.u-tokyo.ac.jp/
+gpsshogi/ Last access: 2013. In Japanese.
+Tesauro, G. (2001). Comparison training of chess evaluation functions. In Machines that
+Learn to Play Games, pp. 117130. Nova Science Publishers.
+Tesauro, G. (2002). Programming backgammon using self-teaching neural nets. Artificial
+Intelligence, 134 (12), 181199.
+Tibshirani, R. (1996). Regression shrinkage and selection via the lasso. J. Royal. Statist.
+Soc B, 58 (1), 267288.
+Tsuruoka, Y., Yokoyama, D., & Chikayama, T. (2002). Game-tree search algorithm based
+on realization probability. ICGA Journal, 25 (3), 145152.
+Ugajin, T., & Kotani, Y. (2010). Learning evaluation function based on tree strap in shogi.
+In The 15th Game Programming Workshop, pp. 114118. In Japanese.
+van den Herik, H. J., Uiterwijk, J. W. H. M., & van Rijswijck, J. (2002). Games solved:
+now and in the future. Artif. Intell., 134 (1-2), 277311.
+van der Meulen, M. (1989). Weight assessment in evaluation functions. In Beal, D. (Ed.),
+Advances in. Computer Chess 5, pp. 8189.
+Veness, J., Silver, D., Uther, W., & Blair, A. (2009). Bootstrapping from game tree search.
+In Advances in Neural Information Processing Systems 22, pp. 19371945.
+Zobrist, A. L. (1990). A new hashing method with application for game playing. ICCA
+Journal, 13 (2), 6973.
+
+568
+
+fi

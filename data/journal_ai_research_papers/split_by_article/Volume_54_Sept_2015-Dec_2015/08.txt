@@ -1,0 +1,4169 @@
+Journal of Artificial Intelligence Research 54 (2015) 309-367
+
+Submitted 03/15; published 11/15
+
+PAGOdA: Pay-As-You-Go Ontology Query Answering
+Using a Datalog Reasoner
+Yujiao Zhou
+Bernardo Cuenca Grau
+Yavor Nenov
+Mark Kaminski
+Ian Horrocks
+
+yujiao.zhou@cs.ox.ac.uk
+bernardo.cuenca.grau@cs.ox.ac.uk
+yavor.nenov@cs.ox.ac.uk
+mark.kaminski@cs.ox.ac.uk
+ian.horrocks@cs.ox.ac.uk
+
+Department of Computer Science, University of Oxford
+Parks Road, Oxford OX1 3QD, United Kingdom
+
+Abstract
+Answering conjunctive queries over ontology-enriched datasets is a core reasoning task
+for many applications. Query answering is, however, computationally very expensive, which
+has led to the development of query answering procedures that sacrifice either expressive
+power of the ontology language, or the completeness of query answers in order to improve
+scalability. In this paper, we describe a hybrid approach to query answering over OWL 2
+ontologies that combines a datalog reasoner with a fully-fledged OWL 2 reasoner in order
+to provide scalable pay-as-you-go performance. The key feature of our approach is that
+it delegates the bulk of the computation to the datalog reasoner and resorts to expensive
+OWL 2 reasoning only as necessary to fully answer the query. Furthermore, although our
+main goal is to efficiently answer queries over OWL 2 ontologies and data, our technical
+results are very general and our approach is applicable to first-order knowledge representation languages that can be captured by rules allowing for existential quantification and
+disjunction in the head; our only assumption is the availability of a datalog reasoner and a
+fully-fledged reasoner for the language of interest, both of which are used as black boxes.
+We have implemented our techniques in the PAGOdA system, which combines the datalog
+reasoner RDFox and the OWL 2 reasoner HermiT. Our extensive evaluation shows that
+PAGOdA succeeds in providing scalable pay-as-you-go query answering for a wide range
+of OWL 2 ontologies, datasets and queries.
+
+1. Introduction
+Ontologies are increasingly used as rich conceptual schemas in a wide range of application
+domains (Staab & Studer, 2004). One of the most widely used ontology languages is OWL, a
+description logic based language that was standardised by the World Wide Web Consortium
+(W3C) in 2004 and revised (as OWL 2) in 2009 (Baader, Calvanese, McGuinness, Nardi,
+& Patel-Schneider, 2003; Horrocks, Patel-Schneider, & van Harmelen, 2003; Cuenca Grau,
+Horrocks, Motik, Parsia, Patel-Schneider, & Sattler, 2008). An OWL ontology consists of a
+set of axioms, which correspond to first-order sentences containing only unary and binary
+predicates (called classes and properties in OWL), with the structure of axioms/sentences
+being restricted to ensure the decidability of basic reasoning problems.
+In some applications, the main focus is on the conceptual model itself, with class subsumption being a key reasoning problem. In an increasing number of applications, however,
+the main focus is on using the conceptual model to access data, often in the form of an RDF
+c 2015 AI Access Foundation. All rights reserved.
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+graph (Manola & Miller, 2004). In such data-centric applications a key reasoning problem is
+to answer conjunctive queries (CQs)sentences constructed from function-free atoms using
+conjunction and existential quantification only (Abiteboul, Hull, & Vianu, 1995)which
+constitute the core component of standard query languages such as SQL and SPARQL
+(W3C SPARQL Working Group, 2013).
+Conjunctive query answering over ontology-enriched datasets is, however, of high worstcase complexity (Glimm, Lutz, Horrocks, & Sattler, 2008; Eiter, Ortiz, & Simkus, 2012),
+even when measured only with respect to the size of the data (so called data complexity).
+Although heavily optimised, existing systems for query answering with respect to (RDF)
+data and an unrestricted OWL 2 ontology can process only small to medium size datasets
+(Sirin, Parsia, Cuenca Grau, Kalyanpur, & Katz, 2007; Moller, Neuenstadt, Ozcep, &
+Wandelt, 2013; Wandelt, Moller, & Wessel, 2010; Kollia & Glimm, 2013). This has led
+to the development of query answering procedures that sacrifice expressive power of the
+ontology language or the completeness of query answers in order to improve scalability.
+In the former case (sacrificing expressive power), query answering procedures have been
+developed for various fragments of OWL 2 for which conjunctive query answering is tractable
+with respect to data complexity, and three such fragments were standardised as so-called
+profiles in OWL 2 (Motik, Cuenca Grau, Horrocks, Wu, Fokoue, & Lutz, 2012). The OWL 2
+QL and OWL 2 EL profiles are based on the DL-Lite (Calvanese, De Giacomo, Lembo,
+Lenzerini, & Rosati, 2007) and EL (Baader, Brandt, & Lutz, 2005) families of description
+logics; the OWL 2 RL profile corresponds to a fragment of the rule-based language datalog
+(Grosof, Horrocks, Volz, & Decker, 2003; Dantsin, Eiter, Gottlob, & Voronkov, 2001).
+Conjunctive query answering systems for such profiles have been shown to be highly scalable
+in practice (Bishop, Kiryakov, Ognyano, Peikov, Tashev, & Velkov, 2011; Wu, Eadon, Das,
+Chong, Kolovski, Annamalai, & Srinivasan, 2008; Motik, Nenov, Piro, Horrocks, & Olteanu,
+2014; Erling & Mikhailov, 2009; Rodriguez-Muro & Calvanese, 2012; Lutz, Seylan, Toman,
+& Wolter, 2013; Stefanoni, Motik, & Horrocks, 2013). The more favourable computational
+properties of these fragments make them a natural choice for data-intensive applications,
+but they also come at the expense of a loss in expressive power, and many ontologies used
+in applications are not captured by any of the profiles.
+In the latter case (sacrificing completeness), query answering procedures have been
+developed that exploit scalable reasoning techniques, but at the expense of computing only
+approximate query answers (Thomas, Pan, & Ren, 2010; Tserendorj, Rudolph, Krotzsch,
+& Hitzler, 2008; Wandelt et al., 2010; Bishop et al., 2011). In most cases, the computed
+answers are sound (only correct answer tuples are identified) but incomplete (some correct
+answer tuples may not be identified). One way to realise such a procedure is to weaken
+the ontology until it falls within one of the OWL 2 profiles, and then to use a scalable
+procedure for the relevant fragment. The required weakening can be trivially achieved
+simply by discarding (parts of) out-of-profile axioms, but more sophisticated techniques may
+try to reduce or even minimise information loss (Console, Mora, Rosati, Santarelli, & Savo,
+2014). Such an approach is clearly sound (if an answer tuple is entailed by the weakened
+ontology, then it is entailed by the original ontology), but incomplete in general, and for
+ontologies outside the relevant profile, the answer returned by such systems can therefore
+be understood as providing a lower-bound on the correct answer; however, such procedures
+
+310
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+cannot in general provide any complementary upper bound or even any indication as to
+how complete the computed answer is (Cuenca Grau, Motik, Stoilos, & Horrocks, 2012).
+In this paper, we describe a novel hybrid approach to query answering that combines a
+scalable datalog (or OWL 2 RL) reasoner with a fully-fledged OWL 2 reasoner to provide
+scalable performance while still guaranteeing sound and complete answers in all cases. Our
+procedure uses the datalog reasoner to efficiently compute both lower bound (sound but
+possibly incomplete) and upper bound (complete but possibly unsound) answers to the input query. If lower and upper bound answers coincide, they obviously provide a sound and
+complete answer. Otherwise, relevant subsets of the ontology and data are computed that
+are guaranteed to be sufficient to test the correctness of tuples in the gap between the
+lower and upper bounds. These subsets are computed using only the datalog reasoner, and
+they are typically much smaller than the input ontology and data. Finally, the fully-fledged
+reasoner is used to check gap tuples w.r.t. the relevant subset. As this can still be computationally expensive, the load on the fully-fledged reasoner is further reduced by exploiting
+summarisation techniques inspired by the SHER system to quickly identify spurious gap
+tuples (Dolby, Fokoue, Kalyanpur, Kershenbaum, Schonberg, Srinivas, & Ma, 2007; Dolby,
+Fokoue, Kalyanpur, Schonberg, & Srinivas, 2009), and by analysing dependencies between
+remaining gap tuples to reduce the number of checks that need to be performed.
+The key feature of our approach is its pay-as-you-go behaviour: the bulk of the computational workload is delegated to the datalog reasoner, and the extent to which the
+fully-fledged reasoner is needed does not depend solely on the ontology, but on interactions
+between the ontology, the dataset and the query. Thus, even when using a very expressive
+ontology, queries can often be fully answered using only the datalog reasoner, and even
+when the fully-fledged reasoner is required, relevant subset extraction, summarisation and
+dependency analysis greatly reduce the number and size of reasoning problems. Moreover,
+our approach has the additional advantage that lower bound answer tuples can be quickly
+returned, even in cases where completion of the answer requires more time consuming computations. Finally, although our main goal is to efficiently answer queries over OWL 2
+ontologies and datasets, our technical results are very general and our approach is not
+restricted to ontology languages based on description logics. More precisely, given a KR
+language L that can be captured by first-order rules allowing for existential quantification
+and disjunction in the head, and over which we want to answer conjunctive queries, our
+only assumption is the availability of a fully-fledged reasoner for L and a datalog reasoner,
+both of which are used as a black box.
+We have implemented our techniques in the PAGOdA system1 using RDFox as a datalog
+reasoner (Motik et al., 2014) and HermiT as a fully-fledged OWL 2 reasoner (Glimm,
+Horrocks, Motik, Stoilos, & Wang, 2014),2 and conducted an extensive evaluation using a
+wide range of realistic and benchmark datasets and queries. This evaluation suggests that
+our techniques are eective at providing scalable pay-as-you-go query answering: in our tests
+of more than 4,000 queries over 8 ontologies, none of which is contained within any of the
+OWL profiles, more than 99% of queries were fully answered without resorting to the fullyfledged reasoner. Moreover, even when the fully-fledged reasoner was used, relevant subset
+1. http://www.cs.ox.ac.uk/isg/tools/PAGOdA/
+2. Although our techniques are proved correct for general conjunctive queries, in practice we are limited by
+the current query capabilities of OWL 2 reasoners.
+
+311
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+extraction, summarisation and dependency analysis greatly reduced the number and size of
+reasoning problems: in our tests, the size of the dataset was typically reduced by an order
+of magnitude, and often by several orders of magnitude, and it seldom required more than a
+single test to resolve the status of all gap tuples. Taken together, our experiments show that
+PAGOdA can provide an efficient conjunctive query answering service in scenarios requiring
+both expressive ontologies and datasets containing hundreds of millions of facts, something
+that is far beyond the capabilities of pre-existing state-of-the-art ontology reasoners.
+The remainder of the paper is organised as follows. In Section 2 we introduce key
+concepts and definitions. In Section 3 we present a high-level overview of our approach.
+In Section 4 we describe how lower bound answers are computed and prove that they are
+sound, and in Section 5 we describe how upper bound answers are computed and prove
+that they are complete. In Section 6 we present our technique for reducing the size of
+the ontology and dataset to be processed by the fully-fledged reasoner and prove that it
+preserves completeness. In Section 7 we present our summarisation and dependency analysis
+optimisations and prove that they too preserve completeness. In Section 8 we describe the
+implementation of our techniques in the PAGOdA system and discuss some additional
+optimisations. Finally, after positioning our work within the state-of-the-art in Section 9,
+we present our extensive evaluation in Section 10, and draw our conclusions in Section 11.
+
+2. Preliminaries
+In this section we briefly introduce rule-based first-order languages and description logics
+(DLs)a family of knowledge representation formalisms underpinning the OWL and OWL 2
+ontology languages (Baader et al., 2003).
+We use standard notions from first-order logic such as constant, predicate, function,
+term, substitution, atom, formula, and sentence. We also adopt standard definitions of
+(Herbrand) interpretation and model, as well as of (un)satisfiability and entailment (written
+|=) of sets of first-order sentences. We denote with ? the nullary predicate that is false in
+all interpretations. Formulas may also contain the special equality predicate . We assume
+that each first-order knowledge base F over a function-free signature that uses  axiomatises
+its semantics in the usual way; that is, F must contain the following first-order sentences,
+where (EQ1) and (EQ4) are instantiated for each n-ary predicate P in F and each 1  i  n:
+8x1 , . . . , xn (P (x1 , . . . , xi , . . . , xn ) ! xi  xi )
+
+(EQ1)
+
+8x, y(x  y ! y  x)
+
+8x, y, z(x  y ^ y  z ! x  z)
+
+8x1 , . . . , xn , y(P (x1 , . . . , xi , . . . , xn ) ^ xi  y ! P (x1 , . . . , xi
+
+(EQ2)
+(EQ3)
+1 , y, xi+1 , . . . , xn ))
+
+(EQ4)
+
+Finally, we will also exploit the following notion of homomorphism applicable to sets
+of atoms, formulas and substitutions. Given sets of ground atoms S and T , we define
+a homomorphism from S to T as a mapping  from ground terms to ground terms s.t.
+ (c) = c for any constant c in S, and P (t1 , . . . , tn  ) 2 T for each atom P (t1 , . . . , tn ) 2 S.
+The application of a homomorphism can be naturally extended to ground atoms, ground
+formulas and ground substitutions, e.g. for an atom  = P (t1 , . . . , tn ),  = P (t1 , . . . , tn  )
+and for a ground substitution ,  is the substitution {x 7! x  | x 2 dom( )}.
+312
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+2.1 Rule-Based Knowledge Representation
+Rule languages are well-known knowledge representation formalisms which are strongly connected with ontology languages (Dantsin et al., 2001; Cal, Gottlob, Lukasiewicz, Marnette,
+& Pieris, 2010; Bry, Eisinger, Eiter, Furche, Gottlob, Ley, Linse, Pichler, & Wei, 2007).
+We define a fact as a function-free ground atom and a dataset as a finite set of facts. A
+rule r is a function-free first-order sentence of the form
+8~x, ~y (
+where each
+
+x, ~y )
+i (~
+
+x, ~y )
+1 (~
+
+^  ^
+
+x, ~y )
+n (~
+
+!
+
+m
+_
+
+i=1
+
+9~zi 'i (~x, ~zi ))
+
+(1)
+
+is an atom dierent from ? with free variables in ~x [ ~y , and either
+
+ m = 1 and '1 (~x, ~z1 ) = ?, or
+ m 1, and for each 1  i  m the formula 'i (~x, ~zj ) is a conjunction of atoms dierent
+from ? with free variables in ~x [ ~zj .
+The conjunction
+of atoms 1 (~x, ~y ) ^    ^ n (~x, ~y ) is the body of r, denoted by body(r). The
+W
+formula m
+9~
+z
+'
+x, ~zi ) is the head of r, denoted by head(r). We assume that rules are
+i i (~
+i=1
+safe; that is, every variable in ~x is mentioned in body(r). For brevity, universal quantifiers
+are omitted in rules.
+Rules of this form are very general and are able to capture most first-order rule languages
+for knowledge representation, including datalog (Abiteboul et al., 1995), existential rules
+and datalog (Cal et al., 2010), as well as datalog,_ (Alviano, Faber, Leone, & Manna,
+2012b; Bourhis, Morak, & Pieris, 2013).
+We say that a rule r is
+ disjunctive datalog if head(r) contains no existential quantifiers or conjunction;
+ existential if m = 1; and
+ datalog if it is disjunctive datalog and m = 1.
+A knowledge base K = K [ DK consists of a finite set of rules K and a dataset DK where
+each predicate in DK is assumed to occur in K .
+In order to simplify the presentation of our technical results, we sometimes restrict
+ourselves to knowledge bases in a particular normal form, which we specify next. We say
+that a rule r is normalised if it is of one of the following forms, where m
+1 and each
+x, ~zi ) is a single atom dierent from ?:
+i (~
+x, ~y )
+1 (~
+x, ~y )
+1 (~
+x, ~y )
+1 (~
+
+^  ^
+
+x, ~y )
+n (~
+
+^  ^
+
+x, ~y )
+n (~
+
+^  ^
+
+x, ~y )
+n (~
+
+!?
+
+(2)
+
+! 9~z1 1 (~x, ~z1 )
+!
+
+x)
+1 (~
+
+_  _
+
+(3)
+x)
+m (~
+
+(4)
+
+A knowledge base K [ DK is normalised if all rules in K are normalised. The restriction
+to normalised knowledge bases is w.l.o.g. since every set of rules  of the form (1) can be
+transformed in polynomial time into a set of normalised rules norm() that is a conservative
+extension of  as given next. For each rule r 2  and each 1  i  m, let ~xi be the tuple of
+313
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+free variables in the subformulas 9~zi 'i (~x, ~zi ) of head(r), we then have ~xi  ~x. Furthermore,
+let E'i be fresh predicates of arity |~xi | and let C'i be fresh predicates of arity |~xi | + |~zi |
+uniquely associated to r and i. Then, norm() consists of the following rules:3
+
+x, ~y )
+1 (~
+
+^  ^
+
+x, ~y )
+n (~
+
+!
+
+m
+_
+
+E'i (~xi ),
+
+(5)
+
+i=1
+
+E'i (~xi ) ! 9~zi C'i (~xi , ~zi ) for each 1  i  m,
+C'i (~xi , ~zi ) !
+
+for each 1  i  m and each atom
+
+'i (~x, ~zi ) ! E'i (~xi ) for each 1  i  m,
+
+'i (~x, ~zi ) ! C'i (~xi , ~zi ) for each 1  i  m.
+
+(6)
+in 'i (~x, ~zi ),
+
+(7)
+(8)
+(9)
+
+We frequently use Skolemisation to interpret rules in Herbrand interpretations. For each
+rule r of the form (1) and each existentially quantified variable zij , let fijr be a function
+symbol globally unique for r and zij of arity ~x. Furthermore, let sk be the substitution
+such that sk (zij ) = fijr (~x) for each zij 2 ~zi . The Skolemisation sk(r) of r is the following
+first-order sentence, which by slight abuse of notation we refer to as a Skolemised rule:
+x, ~y )
+1 (~
+
+^  ^
+
+x, ~y )
+n (~
+
+!
+
+m
+_
+
+'i (~x, ~zi )sk
+
+i=1
+
+The Skolemisation sk() of a set of rules  is obtained by Skolemising each individual rule
+in . We extend the definitions of head and body of rules to Skolemised rules naturally. It
+is well-known that Skolemisation is an entailment-preserving transformation.
+2.2 Description Logics and Ontology Languages
+We next present a brief overview of the DLs underpinning the W3C standard ontology
+language OWL 2 (Horrocks, Kutz, & Sattler, 2006; Cuenca Grau et al., 2008). Typically, the
+predicates in DL signatures are restricted to be unary or binary; the former are called atomic
+concepts, whereas the latter are typically referred to as atomic roles. DLs typically provide
+two special concepts ? (the bottom concept) and > (the top concept), which are mapped
+by every interpretation to the empty set and the interpretation domain, respectively.
+Every OWL 2 DL ontology can be normalised as a set of axioms of the form given
+on the left-hand-side of Table 1 (Motik, Shearer, & Horrocks, 2009).4 Thus, w.l.o.g., we
+define an OWL 2 DL ontology as a finite set of axioms of the form (O1)(O13) in Table 1.
+Every OWL 2 DL ontology must satisfy certain additional requirements in order to ensure
+decidability of reasoning (Horrocks et al., 2006). These restrictions, however, are immaterial
+to our technical results.
+Each normalised axiom corresponds to a single rule, as given on the right-hand-side of
+Table 1. Concept ? is translated as the special nullary predicate ?, whereas > is translated
+3. Although rules (5)(7) are sufficient to express  in normal form, we also introduce rules (8)(9) in order
+to facilitate the computation of upper bound query answers (see Sections 5.2 and 5.3).
+4. For convenience, we omit axioms of the form A v n R.B as they can be simulated by A v 9R.Bi ,
+Bi v B and Bi u Bj v ? for 1  i < j  n where each Bi is a fresh concept.
+
+314
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+Axioms
+dn
+Ai v F
+?
+di=1
+n
+m
+A
+v
+i=1 i
+j=1 Bj
+9R.A v B
+A v Self(R)
+Self(R) v A
+R vS
+R vS
+R S vT
+RuS v?
+A v 9R.B
+A v  m R.B
+A v {a}
+> v 8R.A
+
+Rules
+Vn
+Ai (x) ! W
+?
+Vi=1
+n
+m
+A
+(x)
+!
+i=1 i
+j=1 Bj (x)
+R(x, y) ^ A(y) ! B(x)
+A(x) ! R(x, x)
+R(x, x) ! A(x)
+R(x, y) ! S(x, y)
+R(x, y) ! S(y, x)
+R(x, z) ^ S(z, y) ! T (x, y)
+R(x, y) ^ S(x, y) ! ?
+A(x) ! 9y(R(x, y) ^ B(y))
+V
+W
+A(x) ^ m+1
+i=1 [R(x, yi ) ^ B(yi )] !
+1i<jm+1 yi  yj
+A(x) ! x  a
+R(x, y) ! A(y)
+
+(O1)
+(O2)
+(O3)
+(O4)
+(O5)
+(O6)
+(O7)
+(O8)
+(O9)
+(O10)
+(O11)
+(O12)
+(O13)
+
+Table 1: Normalised DL axioms and their translation into rules where n, m > 0, A and B
+are atomic concepts or >, and R, S, T are atomic roles.
+as an ordinary unary predicate, the meaning of which is axiomatised. Let  be the function
+that maps an OWL 2 axiom  to its corresponding rule as in Table 1, and let O be an
+ontology. Then, (O) is the smallest knowledge base containing:
+ () for each  2 O;
+ a rule A(x) ! >(x) for each atomic concept A in O; and
+ rules R(x, y) ! >(x) and R(x, y) ! >(y) for each atomic role R in O.
+Note that since (O) is a knowledge base, it must contain the axioms of equality for its
+signature whenever  is required to translate an axiom in O.
+In recent years, there has been a growing interest in ontology languages with favourable
+computational properties, which has led to the standardisation of the RL, QL, and EL
+profiles of OWL 2 (Motik et al., 2012). We say that an ontology is Horn if m = 1 in all
+axioms (O2) and (O11). Additionally, we say that a Horn ontology is
+ RL if it does not contain axioms (O4), (O5), or (O10).
+ QL if it does not contain axioms (O4), (O5), (O8), (O9), (O11), and (O12); furthermore, all axioms (O1) and (O2) satisfy n  2 and all axioms (O3) satisfy A = >.
+ EL if it does not contain axioms (O7), (O9) or (O11). Additionally, we say that an
+EL ontology is ELHOr? if it does not contain axioms (O4), (O5) and (O8).
+2.3 Conjunctive Queries
+A conjunctive query (CQ) is a formula q(~x) of the form 9~y '(~x, ~y ), where '(~x, ~y ) is a
+conjunction of function-free atoms. A query is Boolean if |~x| = 0, and it is atomic if '(~x, ~y )
+315
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+consists of a single atom and |~y | = 0. For simplicity, we sometimes omit the free variables
+and write q instead of q(~x).
+Let K be a knowledge base. A tuple ~a of constants is a possible answer to q(~x) w.r.t. K
+if it is of the same arity as ~x and each constant in ~a occurs in K. Furthermore, we say that a
+possible answer ~a is a certain answer if K |= q(~a); the set of such certain answers is denoted
+by cert(q, K). Note that, if '(~x, ~y ) is Boolean, the set of certain answers is either empty
+or it consists of a tuple of length zero. We treat unsatisfiability as a Boolean query where
+'(~x, ~y ) is the nullary falsehood symbol ?; this query holds w.r.t. K i K is unsatisfiable.
+CQs can be alternatively represented using datalog rules. To this end, each query q(~x)
+is uniquely associated with a predicate Pq of arity |~x| (where we take P? = ?) and a set
+Rq of rules defined as follows:
+
+;
+q=?
+Rq =
+(10)
+{'(~x, ~y ) ! Pq (~x)} otherwise
+Then, ~a 2 cert(q, K) i K [ Rq |= Pq (~a). In this way, certain answers can be characterised
+by means of entailment of single facts.
+Answering CQs w.r.t. knowledge bases can be computationally very hard, and decidability for knowledge bases stemming from OWL 2 DL ontologies remains open. Decidability
+can be obtained by ensuring that the ontology stays within one of the standardised profiles
+of OWL 2. This restriction also ensures tractability with respect to data complexity, which
+makes the profiles a natural choice of ontology language for data-intensive applications.
+The standard language SPARQL 1.1 (W3C SPARQL Working Group, 2013) allows users
+to formulate CQs over OWL 2 ontologies; however, to ensure decidability and reduce the
+complexity of query answering, CQs are interpreted in SPARQL 1.1 under ground semantics.
+We say that a possible answer ~a to q(~x) = 9~y '(~x, ~y ) is a ground answer w.r.t. a satisfiable
+knowledge base K if there exists a tuple ~e of constants in K such that K |= '(~a, ~e). Clearly,
+every ground answer is a certain answer but not vice versa. We denote with ground(q, K)
+the set of ground answers to q w.r.t. K.
+Many reasoning systems currently support SPARQL 1.1 and hence compute ground(q, K)
+when given a CQ q and an OWL 2 DL ontology K as input. Additionally, most systems are
+able to compute all certain answers if q is suitably restricted. More precisely, we say that q is
+internalisable if Kq = K [ Rq corresponds to an OWL 2 DL knowledge base. Internalisation
+amounts to transforming the query into an ontology axiom and it is typically referred to as
+rolling-up in the DL literature (Horrocks & Tessaris, 2000).
+In this paper, we focus on the general problem of computing all certain answers of a CQ
+w.r.t. a knowledge base K, and all our theoretical results are generally applicable regardless
+of the rule-based language in which K is expressed.
+2.4 Hyperresolution
+Reasoning over knowledge bases can be realised by means of the hyperresolution calculus
+(Robinson & Voronkov, 2001), which we briefly discuss next. In our treatment of hyperresolution we consider standard basic notions in theorem proving such as (ground) clause
+and most general unifier (MGU). Furthermore, we treat disjunctions of ground atoms as
+sets and hence we do not allow for duplicated atoms in a disjunction. We assume that ?
+316
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+does not occur in clauses and denote with  the empty clause. The Skolemisation sk(r)
+of a normalised rule r is logically equivalent to the clause containing each atom dierent
+from ? in head(sk(r)) and the negation of each atom in body(sk(r)), so we sometimes abuse
+notation and use sk(r) to refer to a Skolemised rule or its corresponding clause.
+Let C =  1 _    _  n _ 1 _    _ m be a clause, where each i and j are atoms
+(possibly containing functional terms). Furthermore for each 1  i  n, let i = i _ i be
+a positive ground clause. Finally, let be a MGU of all pairs i , i , 1  i  n. Then, the
+positive ground clause 1 _    _ m _ 1 _    _ n is a hyperresolvent of C and 1 , . . . , n .
+The inference is called a hyperresolution step, where the clause C is the main premise.
+Let K = K [ DK be a normalised knowledge base and let C be a positive ground clause.
+A derivation of C from K is a pair  = (T, ) where T is a tree, is a labeling function
+that maps each node in T to a ground clause, and for each v in T :
+(1)
+
+(v) = C if v is the root;
+
+(2)
+
+(v) 2 DK if v is a leaf; and
+
+(3) if v has children w1 , . . . , wn , then (v) is a hyperresolvent of sk(r) and (w1 ), . . . , (wn )
+for a rule r 2 K .
+The support of , written support(), is the set of facts and rules participating in hyperresolution steps in . We write K ` C to denote that there is a hyperresolution derivation of
+C from K. Hyperresolution is sound and complete: K is unsatisfiable if and only if K ` ;
+furthermore, if K is satisfiable then K `  i K |=  for any ground atom .
+2.5 The Skolem Chase
+Answering CQs over a knowledge base K = K [ DK where K consists only of existential
+rules can be realised using the chase technique (Abiteboul et al., 1995; Cal, Gottlob, &
+Kifer, 2013). In this paper, we use the Skolem chase variant (Marnette, 2009; Cuenca Grau,
+Horrocks, Krotzsch, Kupke, Magka, Motik, & Wang, 2013).
+The Skolem chase sequence of K is the sequence of sets of ground atoms {B i }i 0 , where
+0
+B = DK , and B i+1 is inductively defined as follows:
+B i+1 = B i [ {head(sk(r)) | r 2 K ,
+
+a substitution, and B i |= body(r) }.
+S
+The Skolem chase of K, written as ChaseK , is defined as i 0 B i .
+The key property of the Skolem chase is that it computes a universal Herbrand model
+of K, which can be used as a database for answering CQs. Formally, K is satisfiable i
+?2
+/ ChaseK ; furthermore, if K is satisfiable, then ChaseK is homomorphically embeddable
+into every Herbrand model of K (seen as a set of atoms). It follows that for K satisfiable
+and q a Boolean CQ we have K |= q i ChaseK |= q.
+Note that ChaseK might contain infinitely many atoms. If K is datalog, however,
+ChaseK is guaranteed to be finite and it contains precisely all facts logically entailed by K.
+In this case, we often refer to ChaseK as the materialisation of K.
+
+317
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+3. Overview
+In this section we provide a high-level overview of our approach to conjunctive query answering. We assume the availability of two reasoners:
+ a datalog reasoner that is sound and complete for answering conjunctive queries over
+datalog knowledge bases; and
+ a fully-fledged reasoner that is sound and complete for answering a given class of
+conjunctive queries Q (which includes the unsatisfiability query) w.r.t. knowledge
+bases in a given ontology language L.
+We will describe our approach in its most general form, where we make no assumptions
+about the two reasoners, treating them as black-box query answering procedures.
+The kind of queries and knowledge bases that can be dealt with using this approach
+ultimately depends on the capabilities of the fully-fledged reasoner. For instance, OWL
+2 DL reasoners can typically process arbitrary OWL 2 DL knowledge bases; however, the
+query language is limited to internalisable queries. In turn, the scalability of our approach
+ultimately depends on how much of the reasoning workload can be delegated to the datalog
+reasoner; our goal is to delegate the bulk of the computation to the datalog reasoner and
+to restrict the (expensive) use of the fully-fledged reasoner to the bare minimum.
+Here, and in the rest of this paper, we fix an arbitrary normalised knowledge base
+K = K [ DK . Given an arbitrary query q (which may be the special unsatisfiability query)
+containing only symbols from K, the core of our approach relies on exploiting the datalog
+reasoner for accomplishing the following tasks:
+ Lower and Upper Bound Computation, where we exploit the datalog reasoner
+to compute both a lower bound Lq and an upper bound U q to the certain answers
+to q w.r.t. K. If these bounds match (i.e. Lq = U q ), then the query has been fully
+answered by the datalog reasoner; otherwise, the dierence Gq = U q \ Lq provides
+a set of gap answers that need to be verified using the fully-fledged reasoner. The
+relevant techniques for computing these bounds are described in Sections 4 and 5.
+ Knowledge Base Subset Computation, where we exploit the datalog reasoner to
+compute a (hopefully small) subset Kq of K that is sufficient to check if answers in Gq
+are in cert(q, K); that is, ~a 2 cert(q, K) i ~a 2 cert(q, Kq ) for each ~a 2 Gq . The details
+on how to compute such Kq are given in Section 6.
+We then proceed according to the following steps when given a query q:
+Step 1. Check satisfiability of K.
+(a) Compute bounds L? and U ? for the unsatisfiability query ?. If L? 6= ;, then
+terminate and report that K is unsatisfiable. If U ? = ;, then proceed to Step 2
+(K is satisfiable).
+(b) Compute the subset K? of K.
+
+(c) Use the fully-fledged reasoner to check the satisfiability of K? . To minimise the
+computational workload of the fully-fledged reasoner, we proceed as follows:
+318
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+i. Construct a summary of K? (See Section 7), and use the fully-fledged reasoner to check if it is satisfiable; if it is, proceed to Step 2 (K is satisfiable).
+ii. Use the fully-fledged reasoner to check the satisfiability of K? ; if it is unsatisfiable, then terminate and report that K is unsatisfiable. Otherwise,
+proceed to Step 2 (K is satisfiable).
+Step 2. Compute bounds Lq and U q . If Gq = ;, then terminate and return Lq . Otherwise,
+proceed to Step 3.
+Step 3. Compute the subset Kq of K.
+Step 4. For each ~a 2 Gq , use the fully-fledged reasoner to check whether Kq |= q(~a). To
+minimise the computational workload, this step is carried out as follows:
+(a) Construct a summary Kq  of Kq (see Section 7). For each ~a 2 Gq , use the
+fully-fledged reasoner to check whether ~a is a certain answer to q w.r.t. the
+summary Kq , and remove ~a from Gq if it is not the case.
+(b) Compute a dependency relation between the remaining answers in Gq s.t. if ~b
+depends on ~a and ~a is a spurious answer, then so is ~b. (See Section 7).
+(c) Remove any remaining spurious answers from Gq , where an answer is spurious
+if it is not entailed by Kq or if it depends on a spurious answer; use the fullyfledged reasoner to check relevant entailments, arranging checks by heuristics
+w.r.t. the dependency relation.
+Step 5. Return Lq [ Gq .
+In the following sections, we describe these steps formally. We will also introduce a
+number of improvements and optimisations, some of which rely on the additional assumption
+that the datalog reasoner is materialisation-basedthat is, for a datalog knowledge base K0
+and query q 0 , it computes query answers cert(q 0 , K0 ) by first computing the materialisation
+ChaseK0 and then evaluating q 0 over the resulting materialisation. This is a reasonable
+assumption in practice since most datalog reasoners in Semantic Web applications (e.g.,
+OWLim, RDFox, Oracles native inference engine) are materialisation-based. In such cases,
+we further assume that we have direct access to the materialisation. Our PAGOdA system
+combines HermiT with the materialisation-based reasoner RDFox, and hence is able to
+exploit all of the improvements and optimisations described below; the realisation of our
+approach in PAGOdA is discussed in detail in Section 8.
+We will illustrate all our techniques using a running example consisting of the knowledge
+base Kex = Kex [ DKex and the query qex (x) given in Table 2. Note that rules (R6) and
+(R8) in Kex are not normalised; however, they can be easily brought into normal form by
+introducing fresh binary predicates eatsH and eatsL as follows:
+MeatEater(x) ! 9y eatsH (x, y) (R6a)
+
+eats(x, y) ^ Herbivore(y) ! eatsH (x, y)
+eatsH (x, y) ! eats(x, y)
+
+eatsH (x, y) ! Herbivore(y)
+
+(R6b)
+(R6c)
+
+(R6d)
+
+319
+
+Folivore(x) ! 9y eatsL (x, y) (R8a)
+
+eats(x, y) ^ Leaf(y) ! eatsL (x, y)
+eatsL (x, y) ! eats(x, y)
+eatsL (x, y) ! Leaf(y)
+
+(R8b)
+
+(R8c)
+(R8d)
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+Mammal(tiger)
+
+(D1)
+
+Mammal(wolf )
+
+(D6)
+
+Mammal(howler)
+
+(D11)
+
+Mammal(lion)
+
+(D2)
+
+MeatEater(wolf )
+
+(D7)
+
+MeatEater(python)
+eats(python, rabbit)
+
+(D3)
+(D4)
+
+eats(wolf , sheep)
+Herbivore(sheep)
+
+(D8)
+(D9)
+
+Folivore(howler)
+Mammal(a hare)
+
+(D12)
+(D13)
+
+Folivore(a hare)
+
+(D14)
+
+Herbivore(rabbit)
+
+(D5)
+
+eats(sheep, grass)
+
+(D10)
+
+eats(a hare, willow)
+
+(D15)
+
+Carnivore(x) ! Mammal(x)
+
+Herbivore(x) ! Mammal(x)
+
+Folivore(x) ^ MeatEater(x) ! ?
+
+Herbivore(x) ^ eats(x, y) ! Plant(y)
+
+(R1)
+(R2)
+(R3)
+(R4)
+
+Mammal(x) ! Herbivore(x) _ MeatEater(x)
+
+(R5)
+
+Mammal(x) ! 9y eats(x, y)
+
+(R7)
+
+MeatEater(x) ! 9y[eats(x, y) ^ Herbivore(y)]
+Folivore(x) ! 9y[eats(x, y) ^ Leaf(y)]
+Leaf(x) ! Plant(x)
+
+(R6)
+(R8)
+(R9)
+
+qex (x) = 9y[eats(x, y) ^ Plant(y)]
+
+Table 2: Running example knowledge base Kex and query qex (x). The set Kex consists of
+rules (R1)(R9), the dataset DKex consists of the facts (D1)(D15).
+Our core techniques described in Sections 4-6 are applicable to any knowledge base
+and query. In order to simplify the presentation of our definitions and technical results of
+those sections we fix, in addition to the knowledge base K = K [ DK , an arbitrary query
+q(~x) = 9~y '(~x, ~y ) (which may be the unsatisfiability query ?).
+
+4. Lower Bound Computation
+A straightforward way to compute lower bound answers using the datalog reasoner is to
+evaluate q w.r.t. the datalog subset of K consisting of all facts in DK and datalog rules in
+K . In the case of OWL 2 ontologies, this amounts to considering the subset of OWL 2
+RL axioms in the ontology. By the monotonicity property of first-order logic all certain
+answers w.r.t. such subset are also certain answers w.r.t. K. Furthermore, if the subset is
+unsatisfiable, then so is K.
+Example 4.1. The datalog subset of our example Kex consists of rules (R1)(R4) and
+(R9), together with all facts (D1)(D15). The materialisation of the datalog subset of
+Kex results in the following dataset: Dex [ {Mammal(rabbit), Mammal(sheep), Plant(grass)}
+When evaluating qex (x) against the materialisation we obtain sheep as an answer.
+}
+This basic lower bound can be rather imprecise in practice since rules featuring disjunction or existential quantification typically abound in OWL 2 DL ontologies. To improve
+
+320
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+this bound, we exploit techniques that allow us to deterministically derive (also via datalog
+reasoning) additional consequences from K that do not follow from its datalog subset.
+4.1 Dealing with Disjunctive Rules: Program Shifting
+To deal with disjunctive rules, we adopt a variant of shiftinga polynomial program transformation commonly used in Answer Set Programming (Eiter, Fink, Tompits, & Woltran,
+2004). We next illustrate the intuition behind this transformation with an example.
+Example 4.2. Let us consider the information in Kex about Arctic hares (a hare). From
+(R3) and (D14), one can deduce that a hare is not a MeatEater, and it further follows by
+rule (R5) and fact (D13) that a hare is a Herbivore. Since a hare eats willow, we can
+deduce Plant(willow) from (R4) and hence a hare is an answer to qex . Although (R5)
+is a disjunctive rule, this reasoning process is fully deterministic and can be captured in
+datalog. To this end, we introduce a predicate MeatEater which intuitively stands for the
+complement of MeatEater. We can then extend the datalog subset of Kex with rules encoding
+the intended meaning of the fresh predicate. In particular, (R3) and (R5) are two such rules,
+which are obtained from (R3) and (R5), respectively.
+Folivore(x) ! MeatEater(x)
+
+(R3)
+
+Mammal(x) ^ MeatEater(x) ! Herbivore(x)
+
+(R5)
+
+We can exploit these rules to derive MeatEater(a hare) and then Herbivore(a hare).
+
+}
+
+We now define the shifting transformation formally.
+Definition 4.3. Let r be a normalised disjunctive datalog rule. For each predicate P in r
+let P be a fresh predicate of the same arity. Furthermore, given an atom  = P (~t) let  be
+P (~t). The shifting of r, written shift(r), is the following set of rules:
+ if r of the form (2), then shift(r) = {r}[{ 1 ^  ^
+
+i 1 ^ i+1 ^  ^ n
+
+!
+
+i
+
+| 1  i  n};
+
+ if r of the form (4), then shift(r) consists of the following rules: (i) the rule (S1);
+(ii) all rules (S2) for each 1  j  m; and (iii) all rules (S3) for each 1  i  n s.t.
+each variable in i also occurs in some other atom in the rule.
+1
+1
+1
+
+^  ^
+^  ^
+^  ^
+
+n
+n
+
+^
+^
+
+i 1
+
+1
+1
+
+^
+
+^  ^
+^  ^
+i+1
+
+m
+
+!?
+
+j 1
+
+^  ^
+
+^
+n
+
+(S1)
+j+1
+
+^
+
+1
+
+^  ^
+
+^  ^
+
+m
+m
+
+!
+
+!
+
+j
+
+(S2)
+
+i
+
+(S3)
+
+Let  be a set of normalised disjunctive datalog rules. Then, the shifting of  is defined
+as the following set of datalog rules:
+[
+shift() =
+shift(r)
+}
+r2
+
+Note that shifting is a polynomial transformation. For r a disjunctive datalog rule with
+n atoms in the body and m atoms in the head, shift(r) contains at most m + n + 1 datalog
+rules. Furthermore, as shown in the following theorem, it is also sound.
+321
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+Theorem 4.4. Let DD
+be the subset of disjunctive datalog rules in K ; furthermore, let
+K
+K0 = shift(DD
+)
+[
+D
+.
+Then,
+cert(q, K0 )  cert(q, K).
+K
+K
+0
+Proof. Let ChaseK0 = {B i }L
+i=1 with L some non-negative integer (recall that K is a datalog
+knowledge base and hence its Skolem chase is finite). We show by induction that the
+following properties hold for each 0  i  L and each  2 B i :
+
+(a) if  = ?, then K is unsatisfiable;
+(b) if  = P (~a), then K |= P (~a); and
+(c) if  = P (~a), then K |= P (~a).
+Base case: Clearly, B 0 = DK and the properties trivially follow from the fact that DK  K.
+
+Inductive step: Assume that properties (a)(c) hold for every  2 B i . We show that they
+also hold for every  2 B i+1 \ B i . There must exist a rule r0 2 K0 and a substitution
+such that B i |= body(r0 ) and  = head(r0 ) . Since every atom in body(r0 ) is in B i , then
+properties (a)-(c) hold for all these atoms by the induction hypothesis. Furthermore, there
+must exist a rule r 2 K of the form 1 ^    ^ n ! 1 _    _ m such that r0 2 shift(r).
+(a) If  = ?, we distinguish two cases. (i) head(r) = ?, in which case r = r0 and by
+the induction hypothesis, K |= { 1 , . . . , n } and hence K |= ?; (ii) head(r) 6= ?,
+in which case r0 is of the form (S1) and 1 , . . . , n and 1 , . . . , m are in B i . By
+the induction hypothesis, K entails 1 , . . . , n and  1 , . . . ,  m . But then, rule r
+cannot be satisfied by any model of K and since r 2 K, we obtain that K is unsatisfiable.
+(b) If  = P (~a), then r0 is of the form (S2) and i = P (~a). Hence, B i contains all atoms
+and i+1 , . . . , m . By induction hypothesis, K entails
+1 ,..., n , 1 ,... i 1
+,
+.
+.
+.
+,
+,
+
+,
+.
+.
+.
+,
+
+a) it
+1
+n
+1
+i 1 , and  i+1 , . . . ,  m . Since r 2 K and i = P (~
+must be the case that K |= P (~a).
+(c) If  = P (~a), we have the following cases. (i) head(r) = ?, in which case by induction
+K |= { 1 , . . . , i 1 , i+1 , . . . , n }; but then, since 1 ^    ^ n ! ? is also a
+rule in K, we obtain that K |=  i , as required. (ii) head(r) 6= ?, in which case
+r0 is of the form (S3) and i = P (~a); then, B i contains all atoms 1 , . . . , i 1 ,
+and by the induction hypothesis K entails atoms
+i+1 , . . . , n , and 1 , . . . , m
+,
+.
+.
+.
+,
+,
+,
+.
+.
+.
+,
+and
+
+a).
+1
+i 1
+i+1
+n
+1 , . . . ,  m . Since r 2 K we obtain K |= P (~
+V
+If q = ?, the theorem follows from property (a). Otherwise, let q(~x) = 9~y ( ni=1 i (~x, ~y ))
+and let ~a be a possible answer such that K0 |= q(~a). Since K0 is datalog, there exists a tuple
+~e of constants in K0 and a non-negative integer L such that i (~a, ~e) 2 B L for each 0  i  n.
+But then, by (b) we have K |= i (~a, ~e), and hence K |= q(~a).
+Shifting only captures some of the consequences of the disjunctive datalog rules in K.
+Furthermore, note that there is no refinement of shifting that ensures preservation of all
+consequences; indeed, it is well-known that disjunctive datalog can express queries (e.g.,
+non-3-colorabilility) that cannot be captured by means of a datalog program (Afrati, Cosmadakis, & Yannakakis, 1995).
+322
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+Example 4.5. Consider the disjunctive datalog knowledge base consisting of the fact
+GreenSeaTurtle(turtle), the rules (R1), (R2) and
+GreenSeaTurtle(x) ! Herbivore(x) _ Carnivore(x).
+Clearly, Mammal(turtle) follows from the knowledge base. The shifting consists of fact
+GreenSeaTurtle(turtle) and the following rules, where predicates Carnivore, GreenSeaTurtle,
+Herbivore and Mammal have been abbreviated as, respectively, C, G, H and M:
+C(x) ^ M(x) ! ?
+
+C(x) ! M(x)
+
+M(x) ! C(x)
+
+G(x) ^ H(x) ^ C(x) ! ?
+
+G(x) ^ H(x) ! C(x)
+
+G(x) ^ C(x) ! H(x)
+
+H(x) ^ M(x) ! ?
+
+H(x) ! M(x)
+
+H(x) ^ C(x) ! G(x)
+
+M(x) ! H(x)
+
+}
+
+It can be checked that fact Mammal(turtle) does not follow from the shifting.
+4.2 Dealing with Existential Rules: The Combined Approach for OWL 2 EL
+
+Existentially quantified rules are ubiquitous in large-scale and complex ontologies, especially
+in life sciences applications. The EL profile of OWL 2 was specifically designed for such
+applications, and many large ontologies used in practice can be seen as consisting of a large
+EL backbone extended with a small number of axioms outside the profile.
+Given the prevalence of EL axioms in realistic ontologies, it is natural to consider the
+OWL 2 EL subset of K for computing lower bound answers. CQ answering for OWL
+2 EL is, however, PSpace-complete (Stefanoni, Motik, Krotzsch, & Rudolph, 2014) and
+no system currently supports CQ answering for the whole of OWL 2 EL. Complexity,
+however, drops to NP in the case of ELHOr? (Stefanoni et al., 2014). In our setting, the
+restriction to ELHOr? ontologies has the added practical benefit that we can exploit the socalled combined approach to delegate most of the computational work associated with CQ
+answering to a datalog reasoner (Stefanoni et al., 2013; Lutz, Toman, & Wolter, 2009)a
+technique currently supported by systems such as KARMA.5 Although datalog-based CQ
+answering techniques are also available for richer languages, such as the extension of ELHOr?
+with inverse roles (i.e., axioms (O7) in Table 1), the resulting datalog programs can be hard
+to compute and are of exponential size in the worst case (Perez-Urbina, Motik, & Horrocks,
+2010). This is in contrast to the combined approach to ELHOr? , where the relevant datalog
+programs can be straightforwardly constructed without the need for reasoning, and are of
+linear size (see Related Work section for further details).
+Thus, to compute query answers that depend on existentially quantified rules we consider
+r
+the subset EL
+K of ELHO ? rules in K, which can be syntactically characterised as follows.
+Definition 4.6. A rule is ELHOr? if it is of one of the following forms, where '(x) is either
+?, or of the form A(x), x  c, or 9yR(x, y):
+p
+^
+
+i=1
+
+Ai (x) ^
+
+q
+^
+
+j=1
+
+[Rj (x, yj ) ^
+
+lj
+^
+
+k=1
+
+5. http://www.cs.ox.ac.uk/isg/tools/KARMA/
+
+323
+
+Bjk (yj )] ! '(x),
+
+(EL1)
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+R1 (x, y) ! R2 (x, y),
+R(x, y) ! A(y).
+
+(EL2)
+(EL3)
+
+The combined approach that we exploit for CQ answering can be conceptualised as a
+three-step process.
+1. The first step is to compute the materialisation M of a datalog program obtained
+from EL
+K with respect to DK . If M contains ?, then the knowledge base is unsatisfiable. Otherwise M is a model of the knowledge base. This model, however, is not
+universal as it cannot be homomorphically embedded into every other model. Thus,
+the evaluation of CQs over M may lead to unsound answers.
+2. The second step is to evaluate the query q over M . This step is intractable in query
+size, but well-known database techniques can be exploited.
+3. In the third step, unsound answers obtained from the second step are discarded using
+a polynomial time filtration algorithm.
+We next specify the transformation from knowledge bases to datalog used in the first
+step, as this transformation will also be exploited later on in Section 5 for computing upper
+bound query answers. The computation of the datalog program from a knowledge base in
+Step 1 relies on a form of Skolemisation where existentially quantified variables are mapped
+to fresh constants (instead of functional terms).
+Definition 4.7. For each rule r of the form (1) and each existentially quantified variable
+zij , let crij be a constant globally unique for r and zij , and let c-sk be the substitution such
+that c-sk (zij ) = crij for each zij 2 ~zi . The c-Skolemisation c-sk(r) of r is given as follows:
+x, ~y )
+1 (~
+
+^  ^
+
+x, ~y )
+n (~
+
+!
+
+m
+_
+
+'i (~x, ~zi )c-sk .
+
+i=1
+
+Then, we define c-sk(K) = {c-sk(r) | r 2 K } [ DK .
+
+}
+
+Note that the application of c-Skolemisation to an ELHOr? rule always results in a
+datalog rule. Note also that, in contrast to standard Skolemisation, c-Skolemisation is not
+a satisfiability or entailment preserving transformation, and there may be query answers
+w.r.t. c-sk(K) that are unsound w.r.t. K. It can be shown, however, that c-Skolemisation is
+satisfiability-preserving over ELHOr? knowledge bases; thus, c-sk(EL
+K ) [ DK is satisfiable
+i EL
+[
+D
+is
+satisfiable
+(Stefanoni
+et
+al.,
+2013).
+We
+next
+sketch
+the
+filtration step, and
+K
+K
+refer the interested reader to the work of Stefanoni et al. for further details.
+The main source of spurious answers when evaluating the query over the materialisation
+obtained in Step 1 is the presence of forksconfluent chains of binary atoms involving
+Skolem constantsin the image of the query over the materialisation. This is due to the
+fact that ELHOr? has the so-called forest-model property, and such forks cannot manifest
+themselves in forest-shaped models. We will say that a constant c in EL
+K [DK is auxiliary if
+no dierent constant b exists such that c-sk(EL
+)
+[
+D
+|=
+c
+
+b;
+that
+is,
+auxiliary constants
+K
+K
+are those that have been introduced by c-Skolemisation and are not entailed to be equal
+324
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+to any constant present in the original ELHOr? knowledge base. Let  be the substitution
+mapping the free variables ~x in q to constants ~a from K such that M |= q . Then, relation 
+for q and ~a in the smallest reflexive-transitive binary relation over the terms in q satisfying
+the following fork rule
+(fork)
+
+s 0  t0
+st
+
+R(s, s0 ) and P (t, t0 ) occur in q, and
+ (s0 ) is an auxiliary constant.
+
+Clearly  is an equivalence relation, which can be computed in polynomial time in the size
+of q. For any term t in q, let [t] be the equivalence class of t w.r.t. , and let be a mapping
+from each term t in q to an arbitrary but fixed representative of [t]. The auxiliary graph of
+q and ~a is the directed graph G = hV, Ei such that
+ V contains a vertex (t) for each term t in q such that  (t) is auxiliary; and
+ E contains a directed edge h (s), (t)i for each atom of the form R(s, t) in q such that
+{ (s), (t)}  V .
+Now, we are ready to define filtration. We say that ~a is a spurious answer if either the
+auxiliary graph of q and  contains a cycle, or terms s and t occurring in q exist such that
+s  t but c-sk(EL
+a can be
+K ) [ DK 6|=  (s)   (t). Clearly, filtration for a candidate answer ~
+done in polynomial time in the size of q.
+We will assume the availability of a procedure soundAnswers that solves Steps 2 and 3;
+that is, given q and the model computed in Step 1, it returns all answers to q w.r.t. the
+input ELHOr? knowledge base. Consequently, given K and q, we can obtain a lower bound
+on the query answers as follows:
+r
+ extract the subset EL
+K of all ELHO ? rules in K;
+
+ compute the materialisation M of c-sk(EL
+K ) [ DK ; and
+ if q = ? then return unsatisfiable i ? 2 M ; otherwise, return soundAnswers(q, M ).
+Example 4.8. Consider again our running example. The ELHOr? subset of Kex consists
+of all facts (D1)(D15) together with all rules except for (R4) and (R5). From fact (D12)
+and rule (R8) we deduce that howler eats a leaf, which must be a plant by rule (R9). Hence
+howler is an answer to qex . This answer can be identified using the aforementioned steps.
+The c-Skolemisation of (R8a) leads to the datalog rule
+Folivore(x) ! eatsL (x, c3 )
+
+(R8aU)
+
+The materialisation of the datalog program consisting of all facts and rule (R8aU) contains
+the fact Plant(c3 ) and hence the tuple (howler, c3 ) matches qex to the materialisation. This
+match is deemed sound by the filtration procedure.
+}
+4.3 Aggregated Lower Bound
+The techniques in this section can be seamlessly combined to obtain a lower bound Lq which
+is hopefully close to the actual set of certain answers. Given K and q, we proceed as follows:
+325
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+DD is the subset of
+1. Construct the datalog knowledge base shift(DD
+K ) [ DK , where K
+L
+disjunctive datalog rules in K . Compute its materialisation M1 .
+L
+L
+2. Construct the datalog program c-sk(EL
+K ) [ M1 and compute its materialisation M2 .
+
+3. If q = ?, then Lq = cert(q, M2L ). Otherwise, Lq = soundAnswers(q, M2L ).
+Theorem 4.4 ensures that K |=  for any  2 M1L in the signature of K, and hence M1L
+can be used as the initial dataset for the second step. The properties of c-Skolemisation and
+filtration discussed in Section 4.2 then ensure that every answer in Lq is indeed a certain
+answer of q w.r.t. K. Furthermore, if ? 2 M2L , then K is indeed unsatisfiable. Finally, note
+that the materialisation M1L obtained in the first step is pipelined into the second step;
+as a result, Lq is a (sometimes strict) superset of the answers we would obtain by simply
+EL
+computing the answers to q w.r.t. shift(DD
+K ) [ DK and c-sk(K ) [ DK independently and
+then the union of the results.
+Example 4.9. For our running example Kex , the aggregated lower bound Lex consists of
+sheep (which follows from the datalog subset of Kex ), a hare (which follows from shift(Kex )),
+and howler (which follows from the ELHOr? fragment of Kex ).
+}
+
+5. Upper Bound Computation
+In many practical cases the lower bound Lq described in Section 4.3 constitutes a rather
+precise approximation of the actual set of certain answers. Furthermore, it can also be
+computed very efficiently by resorting only to the datalog reasoner. The lower bound
+computation, however, gives no indication as to the accuracy of its answers: without a
+corresponding upper bound, every other possible answer remains a candidate answer, which
+needs to be either confirmed or discarded.
+In this section, we describe our approach to efficiently computing an upper bound to
+the set of certain answers. If lower and upper bounds coincide, then we have fully answered
+the query; otherwise, the gap between lower and upper bounds not only provides a margin
+of error for the lower bound, but also narrows down the set of candidate answers whose
+verification may require more powerful computational techniques.
+5.1 Strengthening the Knowledge Base
+Our first step towards computing an upper bound will be to construct a (polynomial size)
+datalog knowledge base K0 such that if K is unsatisfiable, then K0 entails a nullary predicate
+?s , and cert(q, K)  cert(q, K0 ) otherwise. Roughly speaking, this K0 , which we refer to as
+the datalog strengthening of K, is obtained from K by
+1. replacing ? by a fresh nullary predicate ?s with no predefined meaning;
+2. splitting the disjuncts occurring in head position into dierent datalog rules; and
+3. Skolemising existentially quantified variables into constants as in Definition 4.7.
+It is convenient for subsequent definitions and proofs to explicitly define the splitting of
+K, written split(K), as the intermediate knowledge base resulting from Steps 1 and 2 above,
+326
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+which is both satisfiable and disjunction-free. The datalog strengthening of K is then defined
+as the result of further applying Step 3 by replacing each existentially quantified rule in
+split(K) with its c-Skolemisation.
+Definition 5.1. The splitting of a rule r of the form (1) is the following set of rules:
+ if head(r) = ?, then split(r) = { 1 ^    ^
+predicate with no predefined meaning; and
+ otherwise, split(r) = {
+
+! ?s }, where ?s is a fresh nullary
+
+! 9~zj 'j (~x, ~zj ) | 1  j  m }.
+S
+The splitting of K = K [ DK is defined as split(K) = r2K split(r) [ DK . Finally, the
+datalog strengthening of K is defined as str(K) = c-sk(split(K)).
+}
+1
+
+^  ^
+
+n
+
+n
+
+Example 5.2. Consider our example knowledge base Kex . The splitting of Kex is obtained
+by replacing rule (R5) with rules (R5Ua) and (R5Ub), and rule (R3) with (R3U).
+Mammal(x) ! Herbivore(x)
+
+Mammal(x) ! MeatEater(x)
+
+Folivore(x) ^ MeatEater(x) ! ?s
+
+(R5Ua)
+(R5Ub)
+(R3U)
+
+Finally, str(K) is obtained by further replacing the existentially quantified rules (R6a), (R7)
+with the following rules (R6aU), (R7U)
+MeatEater(x) ! eatsH (x, c1 )
+Mammal(x) ! eats(x, c2 )
+
+as well as rule (R8a) with rule (R8aU) given in Example 4.8.
+
+(R6aU)
+(R7U)
+}
+
+Note that if K does not contain rules with ? in the head, then str(K) logically entails
+K: splitting amounts to turning disjunctions in the head of rules into conjunctions, while
+c-Skolemisation restricts the possible values of existentially quantified variables to fixed
+constants. Thus, cert(q, str(K)) constitutes an upper bound to cert(q, K). This is, however,
+no longer the case if ? is replaced with an ordinary predicate ?s without a predefined
+meaning. The rationale behind this replacement is to provide a meaningful upper bound
+even in cases where splitting disjunctions and c-Skolemising existentially quantified variables
+would make the strengthened knowledge base unsatisfiable.
+0 = str(K ) of our example knowledge base.
+Example 5.3. Consider the strengthening Kex
+ex
+Since howler is a Mammal, we have by Rule (R5Ub) that it is also a MeatEater. But then,
+since Folivore(howler) is a fact in Kex we can derive ?s using Rule (R3U). Note that, had
+we not replaced the falsehood predicate ? with ?s , the strengthening of Kex would be
+unsatisfiable, in which case no meaningful upper bound could be obtained for any query. }
+
+We next show that str(K) can be exploited to compute a meaningful upper bound for
+any input query, despite the fact that ? is stripped of its built-in semantics in first-order
+logic. The following lemma establishes the key property of the splitting transformation in
+Definition 5.1: if a ground clause ' = 1 _    _ n is derivable from K via hyperresolution,
+then the Skolem chase of split(K) contains every atom i for 1  i  n.
+327
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+Lemma 5.4. Let  = (T, ) be a hyperresolution derivation from K and let H = split(K).
+Then, for every node v 2 T and ground atom  occurring in (v), we have that  2 ChaseH .
+Proof. We prove the claim by structural induction on .
+Base case: If v is a leaf in T , then (v) 2 DK . Since DK  H we have  2 ChaseH .
+
+Inductive step: Assume that the induction hypothesis holds for all children w1 , . . . , wn of
+a node v 2 T . There exists a rule r 2 K and a substitution , where sk(r) is of the form
+ 1 _    _  n _ with a disjunction of atoms, such that (v) =
+_ 1 _  _ n
+is the hyperresolvent of sk(r) and (wi ) = i _ i for each 1  i  n. By the induction
+hypothesis, all the disjuncts in each i are in ChaseH , so we only need to show the claim
+for each disjunct in
+. We distinguish the following cases depending on the form of the
+normalised rule r
+ If r is of the form (2),
+
+is empty. So the claim holds vacuously.
+
+ If r is of the form (3), then = 1 sk . By the induction hypothesis, each
+ChaseH , and since split(r) = r and hence r 2 H, we obtain 1 sk 2 ChaseH .
+
+i
+
+is in
+
+ If r is of the form (4), then = 1 _    _ m . By induction hypothesis, each i is in
+ChaseH , and for each 1  i  m, since the rule 1 ^    ^ n ! i is in H, we obtain
+that each atom i is also in ChaseH , as required.
+We can now exploit the completeness of hyperresolution to show that split(K) satisfies
+the required properties. Furthermore, the fact that str(K) |= split(K) immediately implies
+that str(K) satisfies those properties as well and hence it may be exploited to compute upper
+bound query answers.
+Theorem 5.5. The following properties hold for H = split(K) as well as for H = str(K):
+(i) cert(?, K)  cert(?s , H), i.e. if K is unsatisfiable, then H |= ?s ; and (ii) if K is
+satisfiable then cert(q, K)  cert(q, H).
+Proof. We first show that Properties (i) and (ii) hold for H = split(K). If K is unsatisfiable,
+then there is a hyperresolution derivation of the empty clause from K. Thus, there must
+exist a rule r of the form (2) in K and a substitution
+such that each atom i for
+1  i  n is also derivable from K. But then, by Lemma 5.4 we have that i 2 ChaseH .
+Since H contains the rule 1 ^    ^ n ! ?s we have ?s 2 ChaseH and H |= ?s , as required.
+Assume now that K is satisfiable. If cert(q, K) = ;, cert(q, K)  cert(q, H) holds trivially;
+otherwise let ~a be a certain answer to q w.r.t. K. So K |= q(~a) and hence K [ Rq |= Pq (~a).
+Since cert(?, K) = ;, we have q 6= ?. Using the completeness of hyperresolution and
+Lemma 5.4 we obtain that Pq (~a) is in the chase of K [ Rq . But then, the aforementioned
+splitting also entails Pq (~a) and since split(K [ Rq ) = H [ Rq we have ~a 2 cert(q, H), as
+required. Finally, Properties (i) and (ii) hold for str(K) as a direct consequence of the fact
+that str(K) |= split(K).
+Example 5.6. Figure 1 depicts the materialisation of str(Kex ), where edges for predicates
+introduced during the normalisation are ignored and all edges in the figure represent the
+binary predicate eats. Explicit facts in Kex are depicted in black; implicit facts are depicted
+328
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+c1
+
+tiger
+Mammal
+Herbivore
+MeatEater
+
+MeatEater
+Mammal
+Herbivore
+Plant
+
+lion
+Mammal
+Herbivore
+MeatEater
+
+c2
+
+python
+MeatEater
+
+Plant
+
+grass Plant
+
+wolf
+
+rabbit
+Herbivore
+Mammal
+MeatEater
+
+Mammal
+MeatEater
+Herbivore
+
+c3
+
+sheep
+Herbivore
+Mammal
+MeatEater
+Plant
+
+Leaf
+Plant
+
+willow Plant
+
+howler
+
+a hare
+
+Mammal
+Folivore
+Herbivore
+MeatEater
+
+Mammal
+Folivore
+Herbivore
+MeatEater
+
+Figure 1: Materialisation of Datalog strengthening of Kex
+using dierent colours to facilitate the subsequent illustration of further refinements of the
+materialisation that will allow us to tighten the upper bound. We obtain the following
+upper bound of cert(qex , Kex ) by evaluating qex against the materialisation:
+cert(qex , str(Kex )) = {tiger, lion, python, rabbit, wolf , sheep, howler, a hare, c1 }
+As already mentioned, str(Kex ) |= ?s ; however, the obtained upper bound is still meaningful
+since it does not contain all possible answers in Kex , such as grass or willow. Please note
+that c1 is a certain answer to qex w.r.t. str(Kex ); however, constant c1 is not in the signature
+of Kex and hence it is not a possible answer to qex w.r.t. K.
+}
+5.2 Tightening the Upper Bound: Existential Rules
+The upper bound obtained from str(K) can be rather coarse-grained in practice: as discussed
+in Example 5.6, python, tiger, lion and wolf are contained in the upper bound, where none
+of them is a certain answer to qex . In this section, we show how to refine the upper bound
+by restricting the application of c-Skolemisation to existential rules. Instead of computing
+the upper bound of q by constructing the strengthened knowledge base str(K) and then
+evaluating q over (the materialisation of) str(K), we proceed as follows.
+1. Apply to K a variant of the Skolem chase, which we refer to as the c-chase by first
+splitting the disjuncts occurring in head position into dierent rules and then applying
+Skolem chasing on split(K) with the following modifications: (i) similarly to the
+restricted chase (Cal et al., 2013), existential rules are applied only when the rule
+head is not already satisfied; and (ii) rather than Skolemising the head atom (using a
+functional term) whenever an existential rule is applied, we resort to c-Skolemisation
+instead. Due to the latter modification, the c-chase does not compute the least
+Herbrand Model of split(K), but rather just some model of split(K).
+2. Evaluate q over the result of the aforementioned chase, thus obtaining an upper bound
+to the certain answers of q w.r.t. split(K), and thus also w.r.t. K.
+The following example motivates the practical advantages of this approach.
+Example 5.7. Consider again the materialisation of str(Kex ) in Figure 1. As already
+mentioned, python is returned as an upper bound answer since qex matches the facts
+329
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+eats(python, c1 ) and Plant(c1 ) in the materialisation. The fact eats(python, c1 ) is obtained
+from eatsH (python, c1 ), which is included in the materialisation to satisfy the c-Skolemised
+rule (R6aU) in str(Kex ), and also the existentially quantified rule (R6a) in Kex . In the case
+of python, however, rule (R6a) in Kex is already satisfied by the fact eatsH (python, rabbit),
+which is derived from eats(python, rabbit) and Herbivore(rabbit) in the dataset, and rule
+(R6b). Please note that rule (R6b) is of the form (9) in the normalisation of (R6).
+Rule (R6b) ensures that if (R6) is satisfied for any substitution, then (R6a) is also satisfied for the same substitution. To obtain an upper bound it suffices to construct a model
+of Kex (rather than a model of str(Kex )); thus, we can prevent the application of rule (R6aU)
+on python during the chase, and dispense with eats(python, c1 ) in the materialisation. }
+We are now ready to define the c-chase formally.
+Definition 5.8. Let H = split(K), let dH be the subset of datalog rules in H , and
+eH = H \ dH . The c-chase sequence of K is the sequence of sets of ground atoms {B i }i 0 ,
+where B 0 = DH (i.e. B 0 = DK ), and B i+1 is inductively defined as given next. Let Sdi+1 and
+Sei+1 be defined as follows:
+Sdi+1 = {head(r) | r 2 dH ,
+
+Sei+1 = {head(c-sk(r)) | r 2 eH ,
+
+a substitution, B i |= body(r) and B i 6|= head(r)}
+a substitution, B i |= body(r) and B i 6|= head(r)}
+
+Then, B i+1 = B i [ Sdi+1 if Sdi+1
+6 ;, and B i+1 = B i [ Sei+1 otherwise. Finally, we define the
+S =
+c-chase of K as c-ChaseK = i 0 B i .
+}
+
+Note that the c-chase of K is a finite set since the only terms that can occur in it are
+constants from c-sk(split(K)).
+Example 5.9. The c-chase of Kex is depicted in Figure 2. This materialisation is a strict
+subset of that in Figure 1, where the orange-coloured binary facts are no longer derived.
+Consequently, python is no longer derived as an answer to qex .
+}
+The relevant properties of the c-chase are summarised in the following lemma.
+Theorem 5.10. The following properties hold: (i) cert(?, K)  cert(?s , c-ChaseK ), i.e. if
+K is unsatisfiable, then ?s 2 c-ChaseK ; (ii) if K is satisfiable, cert(q, K)  cert(q, c-ChaseK ).
+Proof. We first prove that c-ChaseK is a model of split(K). Since DK  c-ChaseK it is clear
+that it satisfies all facts in split(K). Let r 2 split(K); we distinguish two cases:
+ The rule r is datalog. If c-ChaseK |= body(r) for some substitution the definition
+of c-chase ensures that head(r) 2 c-ChaseK and hence the rule is satisfied.
+ Otherwise, r is of the form (3). If c-ChaseK |= body(r) for some substitution
+the definition of c-ChaseH ensures that head(c-sk(r)) 2 c-ChaseK ; thus, c-ChaseK |=
+head(r) and hence the rule is satisfied.
+We now show the contrapositive of the first property. Assume that ?s 62 c-ChaseK .
+Because c-ChaseK is a model of split(K), we have split(K) 6|= ?s and hence K is satisfiable by
+Theorem 5.5. Finally, assume that K is satisfiable. If cert(q, K) = ;, cert(q, K)  cert(q, H)
+holds trivially; otherwise let ~a be a certain answer to q w.r.t. K. By Theorem 5.5, we obtain
+~a 2 cert(q, split(K)). Because c-ChaseK |= split(K), we have ~a 2 cert(q, c-ChaseK ).
+330
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+c1
+
+tiger
+Mammal
+Herbivore
+MeatEater
+
+MeatEater
+Mammal
+Herbivore
+Plant
+
+lion
+Mammal
+Herbivore
+MeatEater
+
+c2
+
+python
+
+Plant
+
+grass Plant
+
+wolf
+
+rabbit
+
+MeatEater
+
+Herbivore
+Mammal
+MeatEater
+
+Mammal
+MeatEater
+Herbivore
+
+c3
+
+sheep
+Herbivore
+Mammal
+MeatEater
+Plant
+
+Leaf
+Plant
+
+willow Plant
+
+howler
+
+a hare
+
+Mammal
+Folivore
+Herbivore
+MeatEater
+
+Mammal
+Folivore
+Herbivore
+MeatEater
+
+Figure 2: c-chase of Kex
+5.3 Tightening the Upper Bound: Disjunctive Rules
+Although the technique described in the previous section can be quite eective in practice,
+its main limitation is that in split(K) all disjunctions in the heads of rules in K have eectively been turned into conjunctions. In this section, we show how to refine the upper bound
+by exploiting an extension of c-chase that uses a similar approach to deal with disjunctive
+rules as well as existential rules.
+Specifically, we extend c-chase to deal with disjunctive rules r of the form (4) such
+that (i) r is applied only when none of the disjuncts in the head of the rule is already
+satisfied; and (ii) when r is applied, only one of the disjuncts is included in the chase (rather
+than all of them). In order to avoid non-determinism during chase expansion and reduce
+the computational cost, disjuncts are selected deterministically by means of an (efficiently
+implementable) choice function.
+Example 5.11. Consider again our running example. First observe that wolf is an answer
+to qex w.r.t. the c-chase of Kex shown in Figure 2. Indeed, Herbivore(wolf ) is derived from
+Mammal(wolf ) and the rules in the split of (R5); thus, Plant(sheep) is also derived using
+rule (R4). Note, however, that wolf is a spurious answer: given that MeatEater(wolf ) is an
+explicit fact in Kex , rule (R5) is already satisfied for wolf and hence we can dispense with
+fact Herbivore(wolf ) in the materialisation.
+Finally, since our goal is to construct a model of Kex it is reasonable to pick disjuncts
+whose predicate is unrelated to ? in Kex . Since ? depends only on MeatEater and Folivore
+(by rule (R3)), it makes sense to include a fact Herbivore(b) in the materialisation whenever
+the disjunctive rule (R5) is applied to a constant b.
+}
+For further details we refer the reader to Section 8, where the specific choice function
+implemented in PAGOdA is described.
+We can now define our extended notion of c-chase, where an efficiently implementable
+choice function is given as an additional parameter.
+Definition 5.12. Let H be the knowledge base obtained from K by replacing ? with the
+nullary predicate ?s , let dH be the set of all datalog rules in H , and let nH = H \ dH .
+Furthermore, let f be a polynomially computable choice function that given a ground clause
+and a set of ground atoms returns a disjunct in . The c-chase sequence of K w.r.t. f is
+331
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+c2
+
+tiger
+Mammal
+Herbivore
+
+lion
+Mammal
+Herbivore
+
+python
+MeatEater
+
+Plant
+
+grass Plant
+
+wolf
+
+rabbit
+Herbivore
+Mammal
+
+Mammal
+MeatEater
+
+c3
+
+sheep
+Herbivore
+Mammal
+
+Leaf
+Plant
+
+willow Plant
+
+howler
+
+a hare
+
+Mammal
+Folivore
+Herbivore
+
+Mammal
+Folivore
+Herbivore
+
+Figure 3: c-chasef of Kex
+the sequence of sets of ground atoms {B i }i 0 , where B 0 = DH (i.e., B 0 = DK ), and B i+1 is
+defined as given next. Let Sdi+1 and Sni+1 be as follows:
+Sdi+1 = {head(r) | r 2 dH ,
+
+Sni+1 = {f (head(c-sk(r)) , B i ) | r 2 nH ,
+
+a substitution, B i |= body(r) and B i 6|= head(r)}
+
+a substitution , B i |= body(r) and B i 6|= head(r)}
+
+Then, B i+1 = B i [ Sdi+1 if Sdi+1 6= ;, and B i+1 = B i [ Sni+1 otherwise. Finally, we define the
+S
+c-chase of K w.r.t. f as c-ChasefK = i 0 B i .
+}
+Example 5.13. Consider the aforementioned choice function f that picks Herbivore(b)
+whenever rule (R5) is applied to a fact Mammal(b). Figure 3 depicts the facts in c-ChasefKex .
+It can be observed that c-ChasefKex is a strict subset of the materialisation in Figure 2, where
+the brown-colored facts are no longer derived. We can see that wolf is not an answer to
+qex w.r.t. c-ChasefKex and hence it can be identified as spurious. Furthermore, the nullary
+predicate ?s has not been derived and hence we can determine that Kex is satisfiable. }
+The relevant properties of this variant of the c-chase are as follows.
+Theorem 5.14. Let f be a choice function as in Definition 5.12. If ?s 62 c-ChasefK , then
+c-ChasefK is a model of K and cert(q, K)  cert(q, c-ChasefK ).
+Proof. The dataset DK is contained in c-ChasefK , so it suffices to show that c-ChasefK satisfies
+each rule r 2 K. We distinguish the following cases:
+ r is of the form (2). Since ?s 2
+/ c-ChasefK , there cannot exist a substitution
+that c-ChasefK |= body(r) and hence c-ChasefK satisfies r vacuously.
+
+such
+
+ r is of the form (3). Pick such that c-ChasefK |= body(r) . The definition of c-ChasefK
+ensures that head(c-sk(r)) 2 c-ChasefK and hence c-ChasefK satisfies r.
+ r is of the form (4). Pick such that c-ChasefK |= body(r) . By the definition of
+c-ChasefK , we have f (head(c-sk(r)), Sni ) 2 c-ChasefK for some set of atoms Sni in the
+chase sequence, and then c-ChasefK satisfies r.
+
+If q = ?, then cert(q, K) = ; and cert(q, K)  cert(q, c-ChasefK ) holds trivially; otherwise,
+cert(q, K)  cert(q, c-ChasefK ) follows from the fact that c-ChasefK is a model of K.
+332
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+5.4 Combined Upper Bound
+We have introduced three dierent techniques for computing an upper bound to cert(q, K).
+1. Compute the materialisation M1U of str(K), and evaluate q w.r.t. M1U to obtain a set
+of possible answers U1q to q w.r.t. K (c.f. Section 5.1).
+2. Compute the c-chase of K, denoted by M2U , and evaluate q w.r.t. M2U to obtain a set
+of possible answers U2q to q w.r.t. K (c.f. Section 5.2).
+3. Fix a choice function f , compute the c-chase of K w.r.t. f , denoted by M3U , and evaluate q w.r.t. M3U to obtain a set of possible answers U3q to q w.r.t. K (c.f. Section 5.3).
+
+It can be trivially seen that U2q and U3q are more precise than U1q , i.e. U2q  U1q and U3q  U1q .
+As shown in the following example, U2q and U3q are, however, incomparable.
+
+Example 5.15. Consider a knowledge base H consisting of facts A(a1 ), R(a1 , b1 ), B(b1 ),
+A(a2 ), R(a2 , b2 ), B(b2 ) and rules B(x) ! C(x) _ D(x), R(x, y) ^ C(y) ! S(x, y) and
+A(x) ! 9yS(x, y). Let c be the freshly introduced constant for A(x) ! 9yS(x, y), and let
+f be a choice function that picks the disjunct D(bi ) in every clause C(bi ) _ D(bi ). Then,
+c-ChaseH = DH [ {C(b1 ), D(b1 ), S(a1 , b1 ), C(b2 ), D(b2 ), S(a2 , b2 )}, and
+c-ChasefH = DH [ {D(b1 ), S(a1 , c), D(b2 ), S(a2 , c)}.
+
+For q1 (x) = 9y(S(x, y) ^ C(y) ^ D(y)), the upper bound computed using the c-ChaseH
+contains two additional answers a1 and a2 compared with that computed using c-ChasefH .
+But for q2 (x1 , x2 ) = 9y(S(x1 , y) ^ S(x2 , y)), the upper bound computed using c-ChasefH has
+additional answers (a1 , a2 ) and (a2 , a1 ) compared with that computed using c-ChaseH . }
+
+There are, however, tradeos to be considered. Clearly, the upper bound U1q is the most
+convenient from an ease of implementation point of view: once str(K) has been constructed,
+the bound can be directly computed using an o-the-shelf datalog reasoner without modification. Furthermore, the upper bound U3q has an important shortcoming: it is of no use
+whenever ?s is derived, as we will show in the following example.
+Example 5.16. Consider a choice function g that picks MeatEater(a) for any disjunction of the form Herbivore(a) _ MeatEater(a). Then the c-chase of Kex w.r.t. g will derive
+MeatEater(howler) from the fact Mammal(howler) and the disjunctive rule (R5). Using
+fact Folivore(howler) and rule (R3U) it will then derive ?s . Thus we can see that, although
+howler is in cert(qex , Kex ), Herbivore(howler) is not in the c-chase of Kex w.r.t. g, and hence
+howler is not in the upper bound computed using it; this is in contrast to the other two
+upper bounds, where Herbivore(howler) is in the materialisation of str(Kex ) and the c-chase
+of Kex , and hence howler is in the upper bound computed w.r.t. them.
+}
+Therefore, if ?s 62 c-ChasefK , we can combine U2q and U3q to compute a hopefully more
+precise upper bound; otherwise, we can use U2q . The combined upper bound query answer
+U q to q in K is formally defined as follows:
+8 ?s
+?
+< U2 \ U3 s if q = ?;
+q
+q
+q
+U =
+(13)
+U \ U3
+if q 6= ? and ?s 62 c-ChasefK ;
+: 2q
+U2
+otherwise.
+333
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+Example 5.17. The combined upper bound for qex in Kex gives:
+Uex = {tiger, lion, rabbit, sheep, howler, a hare}.
+If we compare this upper bound with the aggregated lower bound Lex given in Example 4.9
+we can identify a gap Gex = {tiger, lion, rabbit}.
+}
+
+6. Reducing the Size of the Knowledge Base
+Whenever there is a non-empty gap Gq between lower and upper bound (e.g., our running
+example) we need to verify whether each answer in Gq is spurious or not. Accomplishing
+this task using a fully-fledged reasoner can be computationally very expensive: verifying
+each answer in Gq typically involves a satisfiability test, which can be infeasible in practice
+for large-scale knowledge bases.
+In this section we propose a technique for identifying a (typically small) subset Kq of
+the knowledge base K that is sufficient for verifying all answers in Gq (i.e. ~a 2 cert(q, K) i
+~a 2 cert(q, Kq ) for each ~a 2 Gq ). It is essential that these subsets be, on the one hand, as
+small as possible and, on the other hand, efficiently computable. These requirements are in
+conflict: computing minimal-sized subsets can be as hard as answering the query, whereas
+subsets that can be easily computed may be almost as large as the initial knowledge base.
+The main idea behind our approach is to construct a datalog knowledge base whose
+materialisation identifies all rules and facts in Kq . Such knowledge base is of size polynomial
+in the sizes of K and q and it does not include predicates of arity higher than those in K or
+q. In this way, subset computation can be fully delegated to the scalable datalog reasoner,
+hence addressing the efficiency requirement. The key property of Kq , which ensures that
+it contains all the relevant information in K, is the following: for each rule or fact  2
+/ Kq
+we can show that  does not occur in any hyperresolution proof of  (resp. a gap answer
+in Gq ) from K [ Rq for q = ? (resp. q 6= ?). The completeness of hyperresolution then
+guarantees that all excluded facts and rules are indeed irrelevant.
+6.1 Overview of the Approach
+Let us motivate the main ideas behind our approach using our running example. Since ?s
+has not been derived in M2U \ M3U , we know that cert(?, Kex ) = ;, and hence that Kex
+is satisfiable (see Example 5.13). However, we still need to determine whether answers in
+Gex = {tiger, lion, rabbit} from the combined upper bound are in cert(qex , Kex ), i.e., if they
+are certain answers to qex .
+We now sketch the construction of a datalog knowledge base track(Kex , qex , Gex ) from
+which the subset of Kex relevant to the answers in Gex is derived. The key property of
+this knowledge base is that its materialisation tracks all the rules and facts that may
+participate in a hyperresolution proof of a gap answer and thus encodes the contents of the
+subset Kqex . The relevant information is recorded using fresh predicates and constants:
+ a fresh predicate P R for each predicate P in Kex , the extension of which in the
+materialisation of track(Kex , qex , Gex ) will give us the facts in the subset.
+
+334
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+ a fresh constant dr for each rule r in Kex and a special unary predicate Rel, the
+extension of which in the materialisation of track(Kex , qex , Gex ) will give us the rules
+in the subset.
+The key step in the construction of this knowledge base is to invert each rule r 2 Kex
+into a set of datalog rules (r) by (i) moving all head atoms of r into the body while
+replacing their predicates with the corresponding fresh ones (e.g., replace P with P R );
+(ii) copying all the atoms that were originally in the body of r into the (now empty) head
+while replacing predicates with the corresponding fresh ones and adding the special atom
+Rel(dr ) as an additional conjunct; and (iii) eliminating the conjunction in the head of r by
+splitting r into multiple rules, one for each head conjunct.
+Consider as a first example the datalog rule (R4) in Kex , which is inverted into the
+following rules:
+PlantR (y) ^ Herbivore(x) ^ eats(x, y) ! HerbivoreR (x)
+R
+
+R
+
+Plant (y) ^ Herbivore(x) ^ eats(x, y) ! eats (x, y)
+R
+
+Plant (y) ^ Herbivore(x) ^ eats(x, y) ! Rel(dR4 )
+
+(14)
+(15)
+(16)
+
+The head Plant(y) of (R4) has been moved to the body and predicate Plant replaced with
+PlantR ; the body Herbivore(x) ^ eats(x, y) has been copied into the head as the conjunction
+HerbivoreR (x) ^ eatsR (x, y), and then conjoined with the special atom Rel(dR4 ); and finally
+the head conjunction has been eliminated by splitting the rule into three separate rules.
+These rules reflect the intuitive meaning of the freshly introduced predicates. If fact
+PlantR (c) holds for some constant c, this means that fact Plant(c) may participate in a
+hyperresolution proof in Kex of an answer in the gap. Additionally, if Herbivore(b) and
+eats(b, c) also hold for some b, then these facts and the rule (R4) could also participate
+in one such proof since Plant(c) is a hyperresolvent of facts Herbivore(b) and eats(b, c) and
+rule (R4), which is recorded as facts HerbivoreR (b), eatsR (b, c), and Rel(dR4 ). Thus, rules
+(14)(16) faithfully invert hyperresolution steps involving rule (R4).
+Similarly, the disjunctive rule (R5) is inverted into the following two rules:
+HerbivoreR (x) ^ MeatEaterR (x) ^ Mammal(x) ! MammalR (x)
+R
+
+R
+
+Herbivore (x) ^ MeatEater (x) ^ Mammal(x) ! Rel(dR5 )
+
+(17)
+(18)
+
+In this case, the disjunctive head Herbivore(x)_MeatEater(x) of (R5) has been moved to the
+body as the conjunction HerbivoreR (x) ^ MeatEaterR (x) over the fresh predicates HerbivoreR
+and MeatEaterR . If facts HerbivoreR (c) and MeatEaterR (c) hold for some c (which means
+that facts Herbivore(c) and MeatEater(c) may participate in a relevant proof in Kex ) and
+Mammal(c) holds, then we also deem fact Mammal(c) and rule (R5) relevant.
+The situation is dierent when it comes to inverting and existentially quantified rules, in
+which case we no longer capture relevant hyperresolution steps in Kex faithfully. Consider
+rule (R7), which is inverted as follows:
+eatsR (x, y) ^ Mammal(x) ! MammalR (x)
+R
+
+eats (x, y) ^ Mammal(x) ! Rel(dR7 )
+335
+
+(19)
+(20)
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+In this case, the existentially quantified head 9y eats(x, y) is moved to the body as the atom
+eatsR (x, y). If eatsR (b, c) holds for some b and c (and hence this fact may participate in a
+relevant proof), and Mammal(b) also holds, then we record both (R7) and Mammal(b) as
+relevant (the latter by means of the fact MammalR (b)). The hyperresolvent of Mammal(b)
+and (R7) is an atom eats(b, t), with t a functional term, which may be unrelated to eats(b, c)
+and hence irrelevant to proving an answer in the gap.
+In addition to inverting the rules in Kex , the construction of track(Kex , qex , Gex ) also
+needs to take the query and gap answers into account. For this, we encode the query
+eats(x, y) ^ Plant(y) ! Pqex (~x) into the rules
+PqRex (x) ^ eats(x, y) ^ Plant(y) ! eatsR (x, y)
+
+(21a)
+
+PqRex (x) ^ eats(x, y) ^ Plant(y) ! PlantR (y)
+
+(21b)
+
+and add a fact PqRex (c) for each c 2 Gex . These query-dependent rules are used to initialise the extension of the fresh predicates, which subsequently makes the other rules in
+track(Kex , qex , Gex ) applicable.
+The query answers in the gap stem from the upper bound; consequently, in order for
+rules (21a) and (21b) to be applicable the data in track(Kex , qex , Gex ) is obtained from the
+upper bound materialisation of Kex . In the following section we show that it suffices to
+include all facts in the c-chase of Kex in order to ensure that the computed subset will
+contain all the necessary facts and rules.
+6.2 Subset Definition and Properties
+We are now ready to formally define the datalog knowledge base used for subset computation
+as well as the corresponding relevant subset.
+Definition 6.1. Let G be a set of possible answers to q, let Rel be a fresh unary predicate
+and let dr be a fresh constant unique to each r in K [ Rq . Furthermore, for each predicate
+P in K [ Rq , let P R be a fresh predicate of the same arity as P and, for an atom  = P (~t),
+let R denote P R (~t). For any normalised rule r 2 K [ Rq , let move(r) be the following
+conjunction of atoms:
+ P?R if r of the form (2);
+
+
+R x, ~
+z1 )
+1 (~
+
+
+
+R x)
+1 (~
+
+Then,
+
+if r of the form (3); and
+
+^  ^
+
+R x)
+m (~
+
+if r of the form (4).
+
+(r) is the following set of rules:
+
+(r) = {move(r) ^ body(r) ! Rel(dr )} [ {move(r) ^ body(r) !
+
+R
+k
+
+|
+
+k
+
+in body(r)}.
+
+The tracking knowledge base track(K, q, G) is the smallest knowledge base containing
+(i) all facts in the c-chase of K;
+S
+(ii) all rules in r2K[Rq (r);
+336
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+(iii) a fact PqR (~a) for each ~a 2 G; and
+(iv) a fact P?R if q 6= ?.
+The subset of K relevant to q and G, denoted by Kq,G , is the smallest knowledge base
+containing
+ each rule r 2 K such that track(K, q, G) |= Rel(dr ); and
+ each fact  2 DK such that track(K, q, G) |= R .
+For brevity, we write Kq for the particular case where G is the set of gap answers Uq \ Lq
+as defined in Sections 4.3 and 5.4.
+}
+Note that K? is a subset of Kq since track(K, ?, G? ) is a subset of track(K, q, Gq ): in
+Definition 6.1, point (i) is the same for track(K, ?, G? ) and track(K, q, Gq ); furthermore,
+the set of rules from (ii) for track(K, ?, G? ) is a subset of that for track(K, q, Gq ) since
+K [ R?  K [ Rq ; finally, the fact P?R , which is included in track(K, ?, G? ) by point (iii),
+also belongs to track(K, q, Gq ) by point (iv).
+Example 6.2. Consider again our running example, where Gex = {tiger, lion, rabbit}. The
+subset of Kex relevant to qex and Gex consists of rules R2, R4, R5, R6, and R7 and facts
+D1, D2, D3, D5, D7, D9, and D11.
+}
+The key properties of the computed subsets are established by the following theorem.
+Theorem 6.3. The following properties hold:
+(1) Assume that L? = ;. Then, K is unsatisfiable i K? is unsatisfiable.
+(2) Let q be dierent from ? and let G be any non-empty set of possible answers to q w.r.t.
+K. If K is satisfiable, then ~a 2 cert(q, K) i ~a 2 cert(q, Kq,G ) for every ~a 2 G.
+Proof. The if direction of (1) and (2) follows directly from the monotonicity of firstorder logic. The only if direction of both (1) and (2) follows from the completeness of
+hyperresolution and the following claim, which establishes that for any q and a non-empty
+G, Kq,G contains the support of all hyperresolution derivations of any clause in (q, G)
+from K [ Rq where
+
+{}
+if q = ?;
+(q, G) =
+{Pq (~a) | ~a 2 G} otherwise.
+Claim (|) If  = ( , T ) is a derivation of  2 (q, G) from K [ Rq , then support()  Kq,G .
+To show the only if direction of (1), assume that K is unsatisfiable. By Theorem 5.10,
+Theorem 5.14 and (13), we have U ? 6= ; and thus G? 6= ;. There exists a hyperresolution
+derivation 1 of  from K. Since (?, G? ) = {}, we know that support(1 )  K? by
+(|). So K? is unsatisfiable. To show the only if direction of (2), assume that ~a 2 G and
+~a 2 cert(q, K). Then there exists a hyperresolution 2 of Pq (~a) from K [ Rq . Similarly, by
+(|), we know that support(2 )  Kq,G and hence ~a 2 cert(q, Kq,G ).
+337
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+We next show inductively a statement from which (|) will follow. Let  = ( , T ) be
+a derivation of a clause in (q, G) from K [ Rq , and let H = split(K). We have already
+established (see proof of Theorem 5.10) that c-ChaseK is a model of H. Since ChaseH is a
+universal model of H there exists a homomorphism  from ChaseH to c-ChaseK . We show
+the following properties inductively for every node v in T .
+a. track(K, q, G) |= R  , for each atom  in (v); and
+b. track(K, q, G) |= Rel(dr ), if sk(r) is the main premise used to obtain the parent u of v.
+We proceed by induction on the distance of v to the root of T .
+Base case: In the base case we have that v is the root of T . Property (b) follows vacuously
+since v has no parent in .
+ If q = ?, then  is a derivation of the empty clause and (v) is the empty disjunction
+and. So property (a) also follows vacuously.
+ Otherwise, (v) = Pq (~a) for some ~a 2 G. By the definition of track(K, q, G) (point
+(iii)) we have that ( (v))R 2 track(K, q, G) and hence property (a) also holds.
+Inductive step: Assuming that properties (a) and (b) hold for a node u, we show that
+they also hold for the children v1 , . . . , vn of u. Let r be the rule in K such that sk(r) is
+the main premise in the relevant hyperresolution step with MGU , i.e., (u) = 1 _    _
+m _ 1 _    _ n is the hyperresolvent of sk(r) =  1 _    _  n _ 1 _    _ m and
+(vi ) = i _ i for 1  i  n, using . An easy observation of composition between a
+substitution and a homomorphism is used later in the rest of the proof.
+(
+
+) = (  ) for an arbitrary function-free atom .
+
+(22)
+
+By Lemma 5.4 in Section 5.1 we have that each i 2 ChaseH for each 1  i  n. Since 
+is a homomorphism from ChaseH into c-ChaseK we then have that ( i ) 2 c-ChaseK and
+by (22), i (  ) 2 c-ChaseK for 1  i  n. We next show that track(K, q, G) |= move(r)  .
+ If m = 0, then move(r) = P?R . We distinguish two cases.
+ if q 6= ?, P?R 2 track(K, q, G) by point (iv);
+
+ if q = ?, we have ?s 2 c-ChaseK and hence PqR 2 track(K, q, G) by point (iii).
+ Otherwise, by the induction hypothesis, we also have that track(K, q, G) |= (
+and again by (22), track(K, q, G) |= jR (  ) for 1  j  m.
+
+j
+
+)R 
+
+Therefore track(K, q, G) |= move(r)  . Then the body of rules in (r) is satisfied by
+the substitution  and hence track(K, q, G) |= Rel(dr ), and track(K, q, G) |= iR (  ) for
+1  i  n. Again by (22), track(K, q, G) |= ( iR ) for 1  i  n. In addition, by the
+induction hypothesis, we have track(K, q, G) |= R
+i  , for each 1  i  n. Hence, have shown
+that (a), (b) hold for each child vi of u.
+It only remains to be shown that (a) and (b) imply (|). Indeed, take any  2 support().
+338
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+ If  is a fact in K, then it is a leaf node of ; hence, by property (a) we have that
+track(K, q, G) |= R  . But then, since  is a fact in DK the definition of homomorphism ensures that R  = R . By the definition of Kq,G this implies that  2 Kq,G .
+ If  is a rule in K, then by Property (b) we have that track(K, q, G) |= Rel(d ). Again,
+the definition of Kq,G ensures that  2 Kq,G .
+This completes the proof of the theorem.
+Note that Claim (|) in the proof of the theorem also establishes an important property of
+the computed subsets, namely that they are proof-preserving; that is, the support of every
+hyperresolution proof of a relevant gap answer in the original knowledge base K is also
+contained in the computed subset. This has two key implications. First, every justification
+(i.e., minimal subset of K entailing a gap answer) is contained also in the subset; in this
+way, our subsets preserve all the formulas in K that are relevant to the gap answers, and all
+formulas that are disregarded can be seen as irrelevant. Second, any fully-fledged reasoner
+whose underpinning calculus can be cast in the framework of resolution will be able to
+compute over the subset the same derivations of the gap answers as over K. Consequently,
+in practice it is reasonable to expect that a fully-fledged reasoner will uniformly display
+better performance on the computed subsets than over Kan expectation that was borne
+out by our experiments.
+We conclude this section with an example illustrating why the dataset in track(K, q, G)
+(point 1 in Definition 6.1) is obtained from c-ChaseK  the materialisation underpinning
+the upper bound in Section 5.2rather than c-ChasefK in Section 5.3.
+Example 6.4. Consider the query q(x) = E(x) and the knowledge base K consisting of
+the following rules and facts.
+A(x) ! B(x) _ D(x)
+
+D(x) ! E(x)
+
+B(x) ! E(x)
+
+A(a)
+
+Let f be a function always choosing B(a) over D(a), then c-ChasefK = {A(a), B(a), E(a)}
+and constant a is an answer to q(x) in the gap between lower and upper bound. Suppose
+that we were to define track(K, q, G) as in Definition 6.1 but replacing the facts in point (i)
+with those in c-ChasefK . Since D(a) does not hold in c-ChasefK the corresponding subset will
+not contain the rule D(x) ! E(x), which is essential to derive E(a).
+}
+6.3 Optimisations of the Datalog Encoding
+To conclude this section, we present two optimisations of the datalog encoding in Definition
+6.1 that we will exploit in our system PAGOdA.
+The first optimisation aims at reducing the size of the computed subsets. Recall that
+the key step in the construction of the tracking knowledge base track(K, q, G) was to invert
+the rules in K to capture hyperresolution proofs in a backwards fashion. Consider the
+inversion (17) of rule (R5) in our running example. The eect of the inversion is to capture the applicability of hyperresolution: if facts Mammal(rabbit), HerbivoreR (rabbit) and
+MeatEaterR (rabbit) hold, then we include rule (R5) in the subset since there may be a proof
+339
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+in K involving a step where a ground clause Herbivore(rabbit) _ MeatEater(rabbit) _  is
+obtained by resolving (R5) with Mammal(rabbit) _ .
+Note, however, that such a step is redundant should Herbivore(rabbit) already be contained in K, in which case (R5) may not be needed in the relevant subset. We can capture
+this observation by distinguishing in the tracking knowledge base those facts in the c-chase
+of K that were not already present in the original dataset DK . We encode these implied
+facts by instantiating fresh predicates P I for each predicate P in K. In our running example,
+a fact MeatEaterI (rabbit) in the tracking knowledge base establishes that MeatEater(rabbit)
+was not present in the original data. We then use atoms over these predicates as guards in
+the inverted rules, e.g. rule (17) would now be written as follows:
+HerbivoreI (x) ^ MeatEaterI (x) ^ HerbivoreR (x)
+
+^ MeatEaterR (x) ^ Mammal(x) ! MammalR (x)
+
+Formally, Definition 6.1 can be optimised as given next.
+Definition 6.5. Let K, q, G and predicates P R be as in Definition 6.1. For each predicate
+P , let P I be a fresh predicate of the same arity as P . We now redefine move(r) for each
+rule r as the following conjunction of atoms:
+ P?R if r of the form (2);
+
+
+I x, ~
+z1 )
+1 (~
+
+
+
+I x)
+1 (~
+
+^
+
+R x, ~
+z1 )
+1 (~
+
+^  ^
+
+I x)
+m (~
+
+if r of the form (3); and
+
+^
+
+R x)
+1 (~
+
+^  ^
+
+R x)
+m (~
+
+if r of the form (4).
+
+Then, (r) is as in Definition 6.1, and track(K, q, G) is also as in Definition 6.1, but extended
+with the addition of a fact P I (~a) for each fact P (~a) that is in c-ChaseK but not in DK . }
+It is easy to see that this optimisation does not aect the correctness of Theorem 6.3:
+if a disjunction of atoms is derived via hyperresolution, where one of the atoms is already
+present in the data, then the disjunction is subsumed and can be dispensed with.
+The second optimisation can be used to obtain a more succinct encoding for datalog
+reasoners that support equality reasoning natively (such as RDFox). As already mentioned,
+the built-in semantics of the equality predicate can be axiomatised within datalog. However,
+axiomatisation can lead to performance issues, and scalability can be improved by a native
+treatment of equality where equal objects are merged into a single representative of the
+whole equivalence class.
+The axiomatisation of equality has a significant eect in our tracking encoding. For
+example, the replacement rules r of the form (EQ4) are inverted into the following rules in
+(r) for each predicate P :
+P R (x1 , . . . , xi
+
+1 , y, xi+1 , . . . , xn )
+
+P R (x1 , . . . , xi
+
+1 , y, xi+1 , . . . , xn )
+
+^ P (x1 , . . . , xn ) ^ xi  y ! P R (x1 , . . . , xn )
+^ P (x1 , . . . , xn ) ^ xi  y ! R (xi , y)
+
+(23)
+(24)
+
+where (23) is an tautology and can be dispensed with, but rule (24) is required. If the
+datalog reasoner has native support for equality, then we do not need to include in the
+340
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+tracking knowledge base the inversion of equality axioms (EQ1), (EQ2) or (EQ3), and we
+only need to include rules (24) in order to ensure that the computed subset has the required
+properties. The result is a more succinct encoding that can be materialised more efficiently.
+Example 6.6. Consider a knowledge base K consists of facts {R(a1 , b), R(a2 , b), A(a1 )}
+and the following rules.
+A(x) ! B(x) _ C(x)
+
+R(x1 , y) ^ R(x2 , y) ! x1  x2
+
+(25)
+(26)
+
+B(x) ! D(x)
+C(x) ! D(x)
+
+(27)
+(28)
+
+Let q = D(x), the gap G between lower and upper bounds to q is {a1 , a2 }. It is easy the
+see that rule (26) is essential to derive q(a2 ). To ensure that this rule is in the fragment
+Kq,G , we have to track a1  a2 using an instance of rule (24).
+}
+6.4 Comparison with Magic Sets
+The idea of inverting rules for recording relevant information has been heavily exploited in
+Logic Programming. In particular, the magic set transformation (Bancilhon, Maier, Sagiv,
+& Ullman, 1986) is a technique that, given a program and a query, optimises the materialisation process so as to derive only facts that are relevant to the query. Similarly to our
+tracking encoding, the magic sets technique uses auxiliary predicates, called magic predicates, to identify the relevant facts. This technique was originally developed for datalog,
+and was subsequently extended to handle also negation as failure (Beeri, Naqvi, Ramakrishnan, Shmueli, & Tsur, 1987; Kemp, Srivastava, & Stuckey, 1995) and disjunctions (Alviano,
+Faber, Greco, & Leone, 2012a).
+In contrast to magic sets, the goal of our transformation is not to reduce the size of the
+materialisation, but rather to compute a relevant fragment of a knowledge base potentially
+given in a very expressive (even undecidable) language, and to reduce this computation
+to datalog reasoning. In this sense, our technique is orthogonal to magic sets. Indeed,
+the benefits of our technique are only relevant for knowledge bases containing existentially
+quantified and/or disjunctive rules (if K is datalog, then the query would have been fully
+answered by the lower bound).
+Furthermore, it is worth noticing that the way we invert (datalog) rules is also dierent
+from magic sets and yields a more precise tracking. This is so because our assumption is
+that tracking starts with an already computed materialisation (see Point (i) in Definition
+6.1). For instance, given an already adorned rule A(x) ^ B(x) ! C(x), magic sets would
+produce the following rules for deriving the magic predicates AM for A and B M for B:
+C M (x) ! AM (x)
+
+C M (x) ^ A(x) ! B M (x)
+
+These rules can be used to derive a fact AM (a) from C M (a), even if A(a) cannot be used to
+derive C(a) because the aforementioned rule is not applicable (e.g., if B(a) does not hold
+and C(a) is derived using other rules). Our transformation, in contrast, would yield the
+more restrictive rules
+C R (x) ^ A(x) ^ B(x) ! AR (x)
+
+C R (x) ^ A(x) ^ B(x) ! B R (x)
+
+which are applicable to a only if both A(a) and B(a) hold in the materialisation.
+341
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+7. Summarisation and Analysis of Answer Dependencies
+In this section, let q be an input query dierent from the unsatisfiability query ?. Once
+K? and Kq have been computed, we still need to check, using the fully-fledged reasoner,
+the satisfiability of K? as well as whether Kq entails each candidate answer in Gq . This
+can be computationally expensive if these subsets are large and complex, or there are many
+candidate answers to verify. We therefore exploit summarisation techniques (Dolby et al.,
+2007) in an eort to further reduce the number of candidate answers.
+The idea behind summarisation is to shrink the data in the knowledge base by merging
+all constants that instantiate the same unary predicates. Since summarisation is equivalent
+to extending the knowledge base with equality assertions between constants, the summary
+knowledge base entails the original one by the monotonicity of first-order logic. Consequently, we can exploit summarisation as follows:
+1. If the satisfiability of K remains undetermined, we construct the summary of K? and
+check its satisfiability. If it is satisfiable, then K? (and thus also K) is also satisfiable.
+2. Construct the summary of Kq and then use the fully-fledged reasoner to check whether
+the summary of ~a is entailed to be a certain answer of q in the summary of Kq ,
+discarding any answers that are not so entailed.
+Formally, summarisation is defined as follows.
+Definition 7.1. A type T is a set of unary predicates; given a constant c in K, we say
+that T = {A | A(c) 2 K} is the type for c. For each type T , let aT be a fresh constant
+uniquely associated with T . The summary function over K is the substitution mapping
+each constant c in K to aT , where T is the type for c. Finally, the summary of K is K . }
+The following proposition shows how summarisation can be exploited to detect spurious
+answers in our setting. Since summarisation can significantly reduce data size in practice,
+and the relevant subsets K? and Kq are already significantly smaller than K, checking the
+satisfiability of K? and of each gap answer against Kq becomes feasible in many cases, even
+though doing so implies resorting to the fully-fledged reasoner.
+Proposition 7.2. Let be the summary function over K. Satisfiability of K? implies the
+following: (i) K is satisfiable; and (ii) cert(q, K)  cert(q , Kq ) for every CQ q.
+Example 7.3. In the case of our running example, the constants tiger and lion both have
+type {Mammal}, and are therefore mapped to a fresh constant, say tMammal , that is uniquely
+associated with {Mammal}. Since tMammal is not a certain answer to qex w.r.t. the summary
+of Kex , we can determine that both tiger and lion are spurious answers.
+}
+If summarisation did not succeed in pruning all candidate answers in G, we try in a
+last step to further reduce the calls to the fully-fledged reasoner by exploiting dependencies
+between the remaining candidate answers such that, if answer ~a depends on answer ~c, and
+~a is spurious, then so is ~c.
+Consider two tuples ~c and d~ of constants in Gq . Suppose that we can find an endomor~ If we can determine (by calling the fully-fledged
+phism  of the dataset DK in which ~c = d.
+~
+reasoner) that d is a spurious answer, then so must be ~c; as a result, we no longer need to
+call the fully-fledged reasoner to verify ~c. Such endomorphisms are defined next.
+342
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+Definition 7.4. Let ~c = (c1 , . . . , cn ) and d~ = (d1 , . . . , dn ) be n-tuples of constants from K.
+An endomorphism from ~c to d~ in K is a mapping  from constants to constants such that
+(i) ci  = di for each 1  i  n; (ii) P (t1 , . . . , tm ) 2 DK for each fact P (t1 , . . . , tm ) 2 DK ;
+and (iii) r 2 K for each r 2 K .
+}
+The relevant property of endomorphisms is given in the following proposition.
+Proposition 7.5. Let ~c, d~ be possible answers to q and let  be an endomorphism from ~c
+to d~ in K. Then, ~c 2 cert(q, K) implies d~ 2 cert(q, K).
+Proof. Since ~c 2 cert(q, K), we know that K |= q(~c). So there is a hyperresolution derivation
+ = (T, ) of Pq (~c) from K [ Rq . It is easy to check that (T,
+) is a hyperresolution
+~ from K [ Rq . Then, K |= q(d)
+~ and hence d~ 2 cert(q, K).
+derivation of Pq (d)
+We exploit this idea to compute a dependency graph having candidate answer tuples as
+~ whenever an endomorphism in DK exists mapping ~c to d.
+~ Since
+nodes and an edge (~c, d)
+computing endomorphisms is hard we resort in practice to a sound greedy algorithm to
+approximate the dependency graph, which we describe in Section 8.
+
+8. Implementation: The PAGOdA System
+We have implemented our approach in a system called PAGOdA, which is written in Java
+and is available under an academic license. Our system integrates the datalog reasoner
+RDFox (Motik et al., 2014) and the fully-fledged OWL 2 reasoner HermiT (Glimm et al.,
+2014) as black-boxes, and we also exploit the combined approach for ELHOr? (see Section
+4.2) implemented in KARMA (Stefanoni et al., 2014).
+PAGOdA accepts as input arbitrary OWL 2 DL ontologies, datasets in turtle format
+(PrudHommeaux & Carothers, 2014) and CQs in SPARQL. Queries can be interpreted
+under ground or certain answer semantics. In the former case, PAGOdA is sound and
+complete. In the latter case, however, PAGOdA is limited by the capabilities of HermiT,
+which can only check entailment of ground or DL concept queries; hence, PAGOdA can
+guarantee completeness only if the lower and upper bounds match, or if the query can
+be transformed into a DL concept query via internalisation (see Section 2.3). Otherwise,
+PAGOdA returns a sound (but possibly incomplete) set of answers, along with a bound on
+the incompleteness of the computed answer set.
+The architecture of PAGOdA is depicted in Figure 4. Each box in Figure 4 represents a
+component of PAGOdA, and indicates any external systems that are exploited within that
+component. We could, in principle, use any materialisation-based datalog reasoner that
+supports CQ evaluation and the incremental addition of facts, and any fully-fledged OWL
+2 DL reasoner that supports fact entailment.
+PAGOdA uses four instances of RDFox (one in each of the lower bound, c-chase, cchasef and subset extractor components) and two instances of HermiT (one in each of the
+summary filter and dependency graph components).
+The process of fully answering a query can be divided into several steps. Here, we distinguish between query independent steps and query dependent ones. As we can see in Figure
+4, the loading ontology and materialisation steps are query independent. Therefore, both
+
+343
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+cert(q, O [ D)
+heuristic planner
+
+G0  Gq
+
+HermiT
+q, Gq
+
+summary filter
+HermiT
+q, Gq
+
+endomorphism
+checker
+
+Full reasoning
+
+Kq
+
+Lq
+
+subset extractor
+
+tracking encoder
+
+Extracting subsets
+
+RDFox of D
+track(, q, Gq )
+
+, q, Gq
+
+Gq
+
+Lq
+F
+
+D
+
+Computing query bounds
+
+soundAnswers(q,  [ D)
+certU3 (q,  [ D)
+
+M2L
+q
+lower store
+KARMA
+RDFox
+
+certU2 (q,  [ D)
+
+M3U
+
+M2U
+q
+
+q
+c-chase
+
+f
+
+*
+
+c-chase
+RDFox
+
+RDFox
+
+
+
+Materialisation
+
+D
+
+shift
+
+Loading ontology & data
+
+profile checker
+
+normaliser
+HermiT clausifier
+O
+
+Figure 4: The architecture of PAGOdA
+of them are counted as pre-processing steps. Computing query bounds, extracting subset
+and full reasoning are query dependent, and are called query processing steps.
+We next describe each component, following the process flow of PAGOdA.
+8.1 Loading Ontology and Data
+PAGOdA uses the OWL API to parse the input ontology O. The dataset D is given
+separately in turtle format. The normaliser then computes the set of rules corresponding to
+the axioms in the ontology. PAGOdAs normaliser is an extension of HermiTs clausification
+component (Glimm et al., 2014), which transforms axioms into so-called DL-clauses (Motik
+et al., 2009). The dataset is loaded directly into (the four instances of) RDFox.
+After normalisation, the ontology is checked to determine if it is inside OWL 2 RL
+or ELHOr? . If an input ontology is in OWL 2 RL (resp. ELHOr? ), then RDFox (resp.
+KARMA) is already sound and complete, and in such cases PAGOdA simply processes the
+344
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+ontology, dataset and queries using the relevant component. Otherwise, PAGOdA uses a
+dedicated program shifting component to enrich the deterministic part of the ontology with
+additional information from disjunctive rules (see Section 4.1), resulting in a set of rules .
+8.2 Materialisation
+There are three components involved in this step, namely lower bound, c-chase and cchasef . Each of these takes as input  and D, and each computes a materialisation (shown
+in Figure 4 as ellipses). The lower bound component performs Steps 1 and 2 from Section 4.3
+in order to compute an aggregated lower bound M2L . The c-chase and c-chasef components
+compute the M2U and M3U upper bound materialisations as described in Section 5.4 using a
+dedicated implementation of the c-chase algorithm. The chase sequence is stored in RDFox,
+and the applicability of existential and disjunctive rules is determined by posing SPARQL
+queries to RDFox. When applying a disjunctive rule (while computing M3U ), PAGOdA
+uses a choice function to select one of the disjuncts. As discussed in Section 5.4, the choice
+function should try to select disjuncts that will not (eventually) lead to a contradiction. To
+this end, PAGOdA implements the following heuristics.
+ We construct a standard dependency graph containing an edge from predicate P to
+Q if there is a rule where P occurs in the body and Q in the head. Then, we compute
+a preference ordering on the predicates occurring in a disjunction according to their
+distance from ? in the dependency graph, preferring those that are furthest from ?.
+ We exploit the result of materialising D using the shifting enriched rules in  (see
+Section 4.1). If a fact of the form P (~a) is obtained in the materialisation, then P (~a)
+follows from the knowledge base. Hence, if we have obtained P (~a), then we try to
+avoid choosing P (~a) from a disjunct P (~a) _ during chase computation.
+If M2L contains a contradiction, then the input ontology and dataset is unsatisfiable,
+and PAGOdA reports this and terminates. If ?s is derived in M3U , then the computation
+is aborted and M3U is no longer used. If M2U contains ?s , then PAGOdA checks the
+satisfiability of  [ D; in eect, it computes cert(?,  [ D). If the answer to this query is
+non-empty, then the input ontology and dataset is unsatisfiable, and PAGOdA reports this
+and terminates; otherwise the input ontology and dataset is satisfiable, and PAGOdA is
+able to answer queries.
+8.3 Computing Query Bounds
+Given a query q, PAGOdA uses the M2L lower bound materialisation to compute the lower
+bound answer Lq . In order to do this it exploits KARMAs implementation of the filtration
+procedure (algorithm soundAnswers in Section 4.2), but for clarity this step is shown separately (as a circle with an F in it) in Figure 4. If ?s was not derived when computing the
+M3U materialisation, U q = cert(q, M2U ) \ cert(q, M3U ); otherwise U q = cert(q, M2U ). In either
+case U q is computed directly by using RDFox to answer q w.r.t. the relevant materialisation.
+Extracting Subsets The tracking encoder component implements the datalog encoding
+based on Definition 6.1 with the optimisations described in Section 6.3. The resulting
+datalog knowledge base is added to the rules and data in the c-chase component, and
+345
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+RDFox is used to extend the c-chase materialisation accordingly. The freshly derived facts
+(over the tracking predicates introduced by the tracking encoder) are then passed to the
+subset extractor component, which uses these facts to identify all the facts and rules that
+are relevant for checking gap answers, and computes the intersection between relevant facts
+and the input dataset D by querying an instance of RDFox containing D only.
+8.4 Full Reasoning
+PAGOdA uses HermiT to verify gap answers in Gq = U q \ Lq . As HermiT only accepts
+queries given either as facts or DL concepts, we have implemented the standard rolling-up
+technique to transform internalisable CQs. In the summary filter component, PAGOdA uses
+HermiT to filter out gap answers that are not entailed by a summary of Kq (see Section 7).
+The remaining gap answers G0  Gq are then passed to the endomorphism checker, which
+exploits a greedy algorithm to compute an incomplete dependency graph between answers
+in G0 . This graph is used by the heuristic planner to optimise the order in which the answers
+in G0 are checked using HermiT (see Section 7). Verified answers from G0 are combined
+with the lower bound Lq to give cert(q, O [ D).
+The implementation of summarisation is straightforward: PAGOdA essentially merges
+all constants having the same (explicit) types in the data.
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+Input: a knowledge base K = K [ DK , two tuples (a1 , . . . , an ), and (b1 , . . . , bn ).
+Output: return true if an endomorphism from (a1 , . . . , an ) to (b1 , . . . , bn ) in K is found,
+otherwise, false.
+= ;;
+foreach i 2 [1..n] do
+if ai is not locally embeddable into bi in K then return false;
+else (ai ) = bi ;
+end
+foreach i 2 [1..n] do
+if not check(ai , bi ) then return false;
+end
+if K 6= K then return false;
+else return true;
+Subroutine check(a, b)
+Oa := {c | P (ai , c) 2 DK }, Ia := {c | P (c, ai ) 2 DK };
+Ob := {d | P (bi , d) 2 DK }, Ib := {d | P (d, bi ) 2 DK };
+foreach S 2 {O, I} and c 2 Sa do
+D := {d 2 Sb | c can be locally embedded into d};
+if D is empty then return false;
+if is not defined on c then
+(c) := d where d is the most similar constant to c in D;
+if not check(c, d) then return false;
+end
+else if (c) 62 D then return false;
+end
+
+Algorithm 1: Greedy endomorphism checker.
+
+346
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+We next describe the greedy algorithm implemented in PAGOdA for checking answer
+dependencies (see Algorithm 1). Given tuples (a1 , . . . , an ) and (b1 , . . . , bn ), the algorithm
+returns True if it is able to find an endomorphism, and False otherwise. The algorithm
+considers each constant ai and tries to map it into bi locally, in the sense that only the
+immediate neighbourhoods of of ai and bi are considered at this stage. Formally, this is
+captured by the following notion of local embedding.
+Definition 8.1. Given K and a constant c let Mc be the multiset containing an occurrence
+of A for each fact A(c) 2 DK , an occurrence of P for each binary fact P (c, c0 ) 2 DK , and an
+occurrence of P for each binary fact P (c0 , c) 2 DK .
+Given constants c and d in K, we say that c is locally embeddable into d if each predicate
+in Mc occurs (with any cardinality) in Md .
+}
+The check(a, b) subroutine implements greedy search by looking at the immediate neighbours of a and b. Specifically, the subroutine considers each neighbour c of a and picks a
+neighbour d of b such that c can be locally embedded into d. When several choices of d
+are available, the algorithm heuristically chooses one according to the Jaccard similarity
+between multisets Mc and Md .6 The algorithm terminates with success if it manages to
+compute a mapping that is defined on all constants that are reachable from {a1 , . . . , an }
+in K. It is immediate to see that the computed is an endomorphism from ~a to ~b in K; thus,
+the algorithm is sound. The algorithm works in polynomial time as the choices made in the
+construction of are never revisited and local embeddability can be checked efficiently.
+
+9. Related Work
+Conjunctive query answering over ontology-enriched datasets has received a great deal of
+attention in recent years. Its computational complexity has been thoroughly investigated for
+a wide range of KR languages and a number of practicable algorithms have been proposed
+in the literature and implemented in reasoning systems.
+9.1 Computational Complexity of CQ Answering
+The decision problem associated to CQ answering is conjunctive query entailment (CQE),
+namely to decide whether K |= q(~a) when given as input a CQ q, a possible answer ~a,
+and a knowledge base K expressed in a (fixed) language L. This problem is well-known
+to be undecidable in general, even if q is restricted to be atomic and L is the language of
+existential rules (Dantsin et al., 2001).
+CQE for knowledge bases stemming from OWL DL ontologies is decidable under the
+assumption that the query does not mention transitive relations (Rudolph & Glimm, 2010).
+Decidability of CQE for unrestricted OWL DL or OWL 2 DL ontologies and CQs remains
+an open problem. Even in the cases where CQE is decidable, it is typically of very high
+computational complexity. CQE is 2-ExpTime-complete for the expressive DLs SHIQ
+and SHOQ (Glimm et al., 2008; Eiter, Lutz, Ortiz, & Simkus, 2009). Hardness results
+6. The Jaccard similarity for multisets M and M 0 is defined as |M \ M 0 |/|M [ M 0 |, where |M \ M 0 | counts
+the minimum number of occurrences of each common element in M and M 0 , whereas |M [ M 0 | counts
+the sum of occurrences of elements in M and M 0 .
+
+347
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+for 2-ExpTime are obtained already for ALCI (Lutz, 2008) as well as for Horn-SROIQ,
+which underpins the Horn fragment of OWL 2 DL (Ortiz, Rudolph, & Simkus, 2011). CQE
+for ALC and SHQ, which do not involve inverse roles, is ExpTime-complete (Lutz, 2008).
+Single exponential time results are also obtained for Horn DLs by disallowing complex role
+inclusion axioms: CQE is ExpTime-complete Horn-SHOIQ, which underpins the Horn
+fragment of OWL DL (Ortiz et al., 2011).
+Given the high complexity of CQE, there has recently been an increasing interest in
+lightweight DLs for which CQE is computationally easier. Such lightweight DLs have been
+incorporated in the OWL 2 standard as profiles (Motik et al., 2012). CQE in the OWL
+2 EL profile is PSpace-complete (Stefanoni et al., 2014). Furthermore, the complexity of
+CQE drops to NP if complex role inclusions (with the exception only of transitivity and
+reflexivity) are disallowed in OWL 2 EL (Stefanoni & Motik, 2015). The latter complexity
+is rather benign since CQE over databases is already NP-hard. Finally, CQE for the OWL
+2 QL profile is also NP-complete (Calvanese et al., 2007). Regarding data complexity,
+CQE is coNP-complete for non-Horn DLs, such as ALE (Schaerf, 1993). In contrast,
+data complexity is PTime-complete for Horn DLs that can encode recursion, such as HornSROIQ and OWL 2 EL (Ortiz et al., 2011; Stefanoni et al., 2014). Finally, data complexity
+is known to be in AC0 for the OWL 2 QL profile (Calvanese et al., 2007).
+The complexity of CQE is also well understood for rule-based KR languages. For plain
+datalog, it is ExpTime-complete in combined complexity and PTime-complete w.r.t. data
+complexity. For disjunctive datalog, it is coNExpTime-complete in combined complexity
+and coNP-complete w.r.t. data complexity. Datalog refers to a family of decidable KR
+languages based on existential rules (Cal, Gottlob, & Lukasiewicz, 2012). This includes
+guarded (Cal et al., 2013), sticky (Cal, Gottlob, & Pieris, 2011), and acyclic (Cuenca Grau
+et al., 2013) datalog . The extension of datalog languages with disjunctive rules has been
+recently studied in (Alviano et al., 2012b; Bourhis et al., 2013).
+Finally, we refer to ground query entailment (GCQE) as the problem of checking whether
+a tuple ~a is a ground answer to q(~x) = 9~y '(~x, ~y ) w.r.t. K. In KR languages that allow for
+existentially quantified rules, the restriction to ground answers typically makes CQE easier:
+the definition of ground answers means that GCQE can be trivially reduced to satisfiability
+checking. Consequently, GCQE is decidable for OWL 2 DL.
+9.2 Practical Query Answering Approaches
+Some o-the-shelf DL reasoners, such as Pellet (Sirin et al., 2007) and HermiT (Glimm
+et al., 2014) provide support for query answering. Pellet supports SPARQL conjunctive
+queries and also implements the rolling-up technique. In contrast, HermiT does not provide
+a SPARQL API and it only supports CQs in the form of (complex) DL concepts. Racer
+was among the first DL reasoners to implement and optimise CQ answering under ground
+semantics (Haarslev, Hidde, Moller, & Wessel, 2012). Finally, there has also been intensive
+work on optimising query answering in DL systems, including filter-and-refine techniques
+(Wandelt et al., 2010), ordering strategies of query atoms (Kollia & Glimm, 2013), and data
+summarisation (Dolby et al., 2009). Optimising CQ answering in DL reasoners is complementary to our approach, as the use of a more optimised DL reasoner could significantly
+improve the performance of PAGOdA on queries that require full reasoning.
+
+348
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+RDF triple stores typically implement materialisation-based (a.k.a. forward chaining)
+reasoning algorithms, and answer queries by evaluating them over the resulting materialisation. Jena (McBride, 2001) and Sesame (Broekstra, Kampman, & van Harmelen, 2002)
+were among the first such systems to provide support for RDF-Schema. Modern triple stores
+such as OWLim (Bishop et al., 2011), and Oracles native inference engine (Wu et al., 2008),
+provide extended suppport for ontologies in the RL profile. Additionally, RDFox (Motik
+et al., 2014) supports arbitrary datalog over unary and binary predicates. Finally, ASP
+engines such as DLV (Leone, Pfeifer, Faber, Eiter, Gottlob, Perri, & Scarcello, 2006) implement sound and complete reasoning for (extensions of) disjunctive datalog. Although triple
+stores exhibit appealing scalability, they can support only restricted ontology languages;
+however, as with DL reasoners, improving the scalability of triple stores is complementary
+to our approach, and advances in this area can be directly exploited in PAGOdA.
+A technique for CQ answering over lightweight DLs that is receiving increasing attention
+is the so-called combined approach (Lutz et al., 2009; Stefanoni et al., 2013; Kontchakov,
+Lutz, Toman, Wolter, & Zakharyaschev, 2011). In the combined approach the dataset is
+first augmented with new facts in a query-independent way to build (in polynomial time) a
+model of the ontology. This model can be exploited for query answering in two equivalent
+ways. In the approach by Lutz et al. (2009) and Kontchakov et al. (2011) the query is first
+rewritten and then evaluated against the constructed model. Alternatively, in the work of
+Stefanoni et al. (2013) and Lutz et al. (2013) the query is first evaluated over the model
+and then unsound answers are eliminated by means of a polynomial time filtration process.
+Combined approaches have been applied to logics of the EL family (Lutz et al., 2009;
+Stefanoni et al., 2013) as well as DL-Lite (Kontchakov et al., 2011), and in PAGOdA, we
+use the implementation of (Stefanoni et al., 2013) to compute the aggregated lower bound.
+CQ answering over Horn ontologies is often realised by means of query rewriting techniques. A rewriting of a query q w.r.t. an ontology O is another query q 0 that captures all
+information from O necessary to answer q over an arbitrary dataset. Unions of CQs and
+datalog are common target languages for query rewriting. Query rewriting enables the reuse
+of optimised data management system: UCQs can be answered using standard relational
+databases, whereas datalog queries can be evaluated using a triple store. Query rewriting
+has been successfully applied to OWL 2 QL ontologies, where rewritability into UCQs is
+guaranteed. Example systems include QuOnto (Acciarri, Calvanese, De Giacomo, Lembo,
+Lenzerini, Palmieri, & Rosati, 2005), Mastro (Calvanese, De Giacomo, Lembo, Lenzerini,
+Poggi, Rodriguez-Muro, Rosati, Ruzzi, & Savo, 2011), Rapid (Chortaras, Trivela, & Stamou, 2011), Prexto (Rosati, 2012), and Ontop (Bagosi, Calvanese, Hardi, Komla-Ebri,
+Lanti, Rezk, Rodriguez-Muro, Slusnys, & Xiao, 2014). Some of these systems have been
+successful in large scale applications; however, they are only applicable to OWL 2 QL and
+the size of the rewriting can be exponential in the size of the ontology. Datalog-based query
+rewriting has been implemented in systems such as REQUIEM (Perez-Urbina et al., 2010),
+which supports the extension of ELHOr? with inverse roles. The introduction of inverse
+roles, however, leads to a significant jump in complexity: query answering over ELHOr?
+is NP-complete (and tractable for atomic queries), whereas it becomes ExpTime-complete
+once inverse roles are introduced (furthermore, ExpTime-hardness holds already for unsatisfiability checking and atomic queries). In practice, restricting ourselves to ELHOr?
+allows us to compute a datalog program of linear size in a straightforward way by Skolemis349
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+ing existentially quantified variables into constants. Furthermore, datalog materialisation is
+query independent and all queries without existentially quantified variables can be answered
+directly over the materialisation, where more complex queries are answered using filtration.
+Finally, similarly to PAGOdA, the system Hydrowl (Stoilos, 2014a) combines an OWL
+2 RL reasoner with a query rewriting system and a fully-fledged DL reasoner in order to
+answer conjunctive queries over an OWL 2 knowledge base. The techniques in Hydrowl are,
+however, rather dierent to those in PAGOdA. Hydrowl uses two dierent query answering
+strategies. The first one is based on repairing (Stoilos, 2014b) and query rewriting, and is
+applicable only to ontologies for which a suitable repair exists. The second strategy exploits
+a query base: a set of atomic queries that Hydrowl computes in a pre-processing phase, and
+that can be fully answered using the triple store for the given ontology and an arbitrary
+dataset. When answering a query q, Hydrowl checks if q is covered by query base (Stoilos
+& Stamou, 2014); if it is, then q can be completely evaluated using the OWL 2 RL reasoner;
+otherwise, the fully-fledged reasoner is used to answer q. However, the computation of the
+query base does not appear to be correct in general,7 and we believe that this accounts for
+the apparent incompleteness of Hydrowl in some of our tests (see Section 10.3.1).
+9.3 Approximate Reasoning
+The idea of transforming the ontology, data and/or query to obtain lower and upper bound
+answers has been already explored in previous work. The Screech system (Tserendorj et al.,
+2008) uses KAON2 (Hustadt, Motik, & Sattler, 2007) to transform a SHIQ ontology
+into a (exponential size) disjunctive datalog program in such a way that ground answers to
+queries are preserved. Subsequently, Screech can exploit (unsound or incomplete) techniques
+to transform disjunctive datalog into plain datalog. In this way, Screech computes only
+an approximation of the answer. TrOWL (Thomas et al., 2010) exploits approximation
+techniques to transform an OWL 2 ontology into an ontology in the QL profile (Pan &
+Thomas, 2007). The approximation first computes the closure of the input ontology under
+entailment of OWL 2 QL axioms, and then disregards all axioms outside OWL 2 QL.
+Related approximations into OWL 2 QL have also been proposed, e.g., by Wandelt et al.
+(2010) and Console et al. (2014). Efficient approximation strategies for OWL 2 ontologies
+are again complementary to our approach, as they can be exploited by PAGOdA in order
+to refine lower and upper bound query answers.
+
+10. Evaluation
+We have evaluated our query answering system PAGOdA on a range of realistic and benchmark ontologies, datasets and queries, and we have compared its performance with stateof-the-art query answering systems. Our test data and the systems used for comparison
+are introduced in Sections 10.1 and 10.2, respectively. Our results are discussed in Section
+10.3. Experiments were conducted on a 32 core 2.60GHz Intel Xeon E5-2670 with 250GB of
+RAM, and running Fedora 20. All test ontologies, queries, and results are available online.8
+7. Stoilos (2014a) mentions a limitation in automatically extracting [the atomic queries].
+8. http://www.cs.ox.ac.uk/isg/tools/PAGOdA/2015/jair/
+
+350
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+LUBM(n)
+UOBM(n)
+FLY
+NPD
+DBPedia+
+ChEMBL
+Reactome
+Uniprot
+
+]axioms
+93
+186
+14,447
+771
+1,716
+2,593
+559
+442
+
+]rules
+133
+234
+18,013
+778
+1,744
+2,960
+575
+459
+
+]9-rules
+15
+23
+8396
+128
+11
+426
+13
+20
+
+]_-rules
+0
+6
+0
+14
+5
+73
+23
+43
+
+]facts
+n  105
+2.6n  105
+8  103
+3.8  106
+2.9  107
+2.9  108
+1.2  107
+1.2  108
+
+Table 3: Statistics for test datasets
+10.1 Test Ontologies and Queries
+Table 3 summarises our test data. The first two columns in the table indicate the total
+number of DL axioms in each test ontology as well as the total number of rules after
+normalisation. We are interested in ontologies that are not captured by OWL 2 RL and
+hence cannot be fully processed by RDFox; thus, the number of rules containing existential
+quantification and disjunction is especially relevant and is given in the third and fourth
+columns of the table, respectively. Finally, the rightmost column lists the number of data
+facts in each dataset.
+LUBM and UOBM are widely-used reasoning benchmarks (Guo, Pan, & Heflin, 2005;
+Ma, Yang, Qiu, Xie, Pan, & Liu, 2006). The ontology axioms in these benchmarks have
+been manually created and are considered fixed, whereas the data is synthetically generated
+according to a parameter n that determines its size. LUBM and UOBM come with 14 and 15
+standard queries, respectively. To make the tests on LUBM more challenging, we extended
+the benchmark with 10 additional queries for which datalog lower-bound answers are not
+guaranteed to be complete (as is the case for the standard queries).
+FLY is a realistic ontology that describes the anatomy of the Drosophila and which is
+currently integrated in the Virtual Fly Brain tool.9 Although the data is rather small
+compared to other test cases (about 8, 000 facts), the ontology is very rich in existentially
+quantified rules, which makes query answering especially challenging. We tested 6 realistic
+queries that were provided by the developers of the ontology.
+NPD FactPages is an ontology describing the petroleum activities in the Norwegian
+continental shelf. The ontology comes with a realistic dataset containing 3.8 million facts.
+Unfortunately, for NPD we have no realistic queries so we tested all atomic queries over the
+signature of the ontology.
+DBPedia contains information about Wikipedia entries. Although the dataset is rather
+large, the ontology axioms are simple and can be captured by OWL 2 RL. To provide
+a more challenging test, we have used the ontology matching system LogMap (JimenezRuiz & Cuenca Grau, 2011) to extend DBPedia with a tourism ontology containing both
+9. http://www.virtualflybrain.org/site/vfb site/overview.htm
+
+351
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+existential and disjunctive rules. As in the case of NPD we have no example test queries,
+so we focused our evaluation on atomic queries.
+ChEMBL, Reactome, and Uniprot are realistic ontologies that have been made publicly available through the European Bioinformatics Institute (EBI) linked data platform.10
+These ontologies are especially interesting for testing purposes. On the one hand, both the
+ontology axioms and data are realistic and are being used in a number of applications; on
+the other hand, the ontologies are rich in both existentially quantified and disjunctive rules,
+and the datasets are extremely large. Furthermore, the EBI website provides a number of
+example queries for each of these ontologies. In order to test scalability on these datasets as
+well as to compare PAGOdA with other systems we implemented a data sampling algorithm
+based on random walks (Leskovec & Faloutsos, 2006) and computed subsets of the data of
+increasing size. We have used for evaluation those example queries that correspond to CQs
+as well as all atomic queries over the relevant signature.
+10.2 Comparison Systems
+We compared PAGOdA against four ontology reasoners: HermiT (v.1.3.8), Pellet (v.2.3.1),
+TrOWL-BGP (v.1.2), and Hydrowl (v.0.2). With the single exception of TrOWL, all these
+systems implement sound and complete algorithms for standard reasoning tasks over OWL
+2 DL ontologies, including ontology consistency checking and concept instance retrieval.
+Additionally, all but HermiT provide support for SPARQL queries.
+As pointed out in the Section 9, there are many other systems that can answer queries
+over ontologies. However, these systems have generally been designed for specific fragments
+of OWL 2, and are incomplete for ontologies outside these fragments. Although TrOWL
+is also incomplete for OWL 2, it has been included in the evaluation because it is, on the
+one hand, a widely-used system in Semantic Web applications and, on the other hand, it is
+similar to PAGOdA in that it exploits ontology approximation techniques. In what follows,
+we describe the capabilities of these systems in more detail.
+HermiT is a fully-fledged OWL 2 reasoner based on the hypertableau calculus (Motik
+et al., 2009; Glimm et al., 2014). HermiT focuses on standard reasoning tasks in DLs.
+It does not provide a SPARQL or conjunctive query answering API, but it is capable of
+answering atomic queries over unary predicates and checking fact entailment.
+Pellet is a tableau-based OWL 2 DL reasoner with support for CQ answering (Sirin et al.,
+2007). Pellet provides a SPARQL API, and hence it can compute the set of all ground
+answers to arbitrary conjunctive queries expressed in SPARQL. Pellet is also capable of
+computing all certain answers to internalisable conjunctive queries using the rolling-up
+technique (see Section 2.3).
+TrOWL is a system based on approximated reasoning. It accepts as input an arbitrary
+OWL 2 DL ontology and a CQ in SPARQL, and aims at computing all ground answers to
+the given query (Thomas et al., 2010). TrOWL exploits a technique that approximates the
+input ontology into the OWL 2 QL profile, and it does not provide completeness guarantees.
+10. http://www.ebi.ac.uk/rdf/platform
+
+352
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+correct#
+
+incomplete#
+
+unsound#
+
+error#
+
+Kmeout#
+
+cannot#handle#
+
+100%#
+90%#
+80%#
+70%#
+60%#
+50%#
+
+Tr
+
+Tr
+
+Pe He Hy
+
+Pe He Hy
+
+Tr
+
+Pe He Hy
+
+Tr
+
+Tr
+
+Pe He Hy
+
+Pe He Hy
+
+Tr
+
+Pe He Hy
+
+Tr
+
+Pe He Hy
+
+Tr
+
+Pe He Hy
+
+Tr
+
+Pe He Hy
+
+Tr
+
+Pe He Hy
+
+40%#
+30%#
+20%#
+10%#
+
+#1
+%
+#
+Pr
+ot
+Un
+i
+
+EM
+
+Re
+ac
+to
+m
+e#
+10
+%
+#
+
+BL
+#1
+%
+#
+
+#
+DB
+Pe
+d
+
+ia
+Ch
+
+NP
+D#
+
+Fa
+
+ct
+Pa
+ge
+s#
+
+le
+dU
+p#
+ro
+l
+Y_
+FL
+
+1_
+ro
+l
+
+le
+dU
+p#
+
+1#
+UO
+BM
+
+UO
+BM
+
+le
+dU
+p#
+1_
+ro
+l
+LU
+BM
+
+LU
+BM
+
+1#
+
+0%#
+
+Figure 5: Quality of the answers computed by each system. The four bars for each ontology
+represent Trowl, Pellet, HermiT and Hydrowl respectively.
+Hydrowl (Stoilos, 2014a) is a hybrid reasoning system that is similar in spirit to PAGOdA
+(see Section 9.2 for a detailed comparison). Hydrowl integrates the triple store OWLim and
+HermiT. It accepts as input an arbitrary OWL 2 ontology and conjunctive queries as rules,
+and then computes the ground answers to the query.
+10.3 Experiments and Results
+We have performed three dierent experiments. In the first experiment, we compared
+PAGOdA with the above mentioned systems, with respect to both the quality of their
+answers (i.e., the number of correctly answered queries) and their performance relative to
+PAGOdA. In the second experiment, we evaluated the scalability by considering datasets
+of increasing size. Finally, in the third experiment, we evaluated the eectiveness of each
+of the dierent reasoning techniques implemented in PAGOdA.
+10.3.1 Comparison with Other Systems
+We have compared PAGOdA with the other systems on our test ontologies. We used
+LUBM(1) and UOBM(1) since they are already rather hard for some of the systems. Similarly, we used relatively small samples of the EBI platform ontologies (1% of the data for
+ChEMBL and UniProt, and 10% for Reactome) that can be processed by the majority
+of systems. For each test ontology we computed all ground answers to the corresponding
+test queries, and whenever possible we used internalisation (see Section 2.3) to additionally
+compute all certain answers. In the case of FLY, all test queries yield an empty set of
+ground answers, so in this case we computed only the certain answers (all FLY queries can
+be internalised). We set timeouts of 20 minutes for answering each individual query, and 5
+hours for answering all the queries over a given ontology.
+Figure 5 summarises the quality of the answers computed by each reasoner. Each bar
+in the figure represents the performance of a particular reasoner w.r.t. a given ontology and
+353
+
+fiPellet"
+
+HermiT"
+
+Hydrowl"
+
+DB
+Pe
+d
+
+TrOWL"
+
+ct
+Pa
+ge
+s"
+
+Zhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+1000"
+
+100"
+
+10"
+
+"1
+%
+"
+Pr
+ot
+Un
+i
+
+EM
+
+Re
+ac
+to
+m
+e"
+10
+%
+"
+
+BL
+"1
+%
+"
+
+"
+ia
+Ch
+
+Fa
+NP
+D"
+
+le
+dU
+p"
+ro
+l
+Y_
+FL
+
+1_
+ro
+l
+
+le
+dU
+p"
+
+1"
+UO
+BM
+
+le
+dU
+p"
+1_
+ro
+l
+
+UO
+BM
+
+0"
+
+LU
+BM
+
+LU
+BM
+
+1"
+
+1"
+
+Figure 6: Performance comparison with other systems. Each bar depicts the total time to
+answer all test queries for the relevant ontology in comparison with PAGOdA.
+set of test queries. We use green to indicate the percentage of queries for which the reasoner
+computed all the correct answers, where correctness was determined by majority voting,
+and blue (resp. purple) to indicate the percentage of queries for which the reasoner was
+incomplete (resp. unsound). Red, orange and grey indicate, respectively, the percentage of
+queries for which the reasoner reported an exception during execution, did not accept the
+input query, or exceeded the timeout. Under our criterion of correctness, PAGOdA was
+able to correctly compute all answers for every query and test ontology within the given
+timeouts. Consequently, the performance of PAGOdA is not represented in the figure.
+Figure 6 summarises the performance of each system relative to PAGOdA, but in this
+case we considered only those queries for which the relevant system yields an answer (even
+if the computed answer is unsound and/or incomplete). This is not ideal, but we chose
+to consider all such queries (rather than only the queries for which the relevant system
+yields the correct answer) because (i) the resulting time measurement is obviously closer
+to the time that would be required to correctly answer all queries; and (ii) correctness is
+only relative as we do not have a gold standard for query answers. For each ontology and
+reasoner, the corresponding bar shows t2 /t1 (on a logarithmic scale), where t1 (resp. t2 ) is
+the total time required by PAGOdA (resp. the compared system) to compute the answers to
+the queries under consideration; a missing bar indicates that the comparison system failed
+to answer any queries within the given timeout. Please note that two dierent bars for the
+same ontology are not comparable as they may refer to dierent sets of queries, so each bar
+needs to be considered in isolation.
+We can draw the following conclusions from the results of our experiments.
+ TrOWL is faster than PAGOdA on LUBM with rolling up, UOBM with rolling up
+and FLY with rolling up, but it is incomplete for 7 out of 14 LUBM queries and 3 out
+of 4 UOBM queries. For ChEMBL, TrOWL exceeds the timeout while performing the
+satisfiability check. For the remaining ontologies, PAGOdA is more efficient in spite
+of the fact that TrOWL is incomplete for some queries, and even unsound for several
+UniProt queries.
+354
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+ Pellet is one of the most robust systems in our evaluation. Although it times out for
+the FLY ontology, it succeeds in computing all answers in the remaining cases. We
+can observe, however, that in all cases Pellet is significantly slower than PAGOdA,
+sometimes by more than two orders of magnitude.
+ HermiT can only answer queries with one distinguished variable, so we could not
+evaluate atomic binary queries. We can see that HermiT exceeds the timeout in many
+cases. In the tests where HermiT succeeds, it is significantly slower than PAGOdA.
+ Although Hydrowl is based on a theoretically sound and complete algorithm, it was
+found to be incomplete in some of our tests. It also exceeded the timeout on all queries
+for three of the ontologies, ran out of memory on all queries for another two of the
+ontologies, and reported an exception for ChEMBL 1%. In the remaining cases, it
+was significantly slower than PAGOdA.
+10.3.2 Scalability Tests
+We tested the scalability of PAGOdA on LUBM, UOBM and the ontologies from the EBI
+linked data platform. For LUBM we used datasets of increasing size with a step of n =
+100. For UOBM we also used increasingly large datasets with step n = 100 and we also
+considered a smaller step of n = 5 for hard queries. Finally, in the case of EBIs datasets,
+we implemented a data sampling algorithm based on random walks and computed subsets
+of the data of increasing sizes from 1% of the original dataset up to 100% in steps of
+10%. We used the test queries described in Section 10.1 for each of these ontologies; as in
+Section 10.3.1, we computed ground answers and, whenever possible, used internalisation
+to additionally compute certain answers. For each test ontology we measured the following:
+ Pre-processing time. This includes all pre-processing steps in Section 8 as well as
+satisfiability checking (i.e., query processing for the Boolean unsatisfiability query).
+ Query processing time. This is the time to perform the query processing steps for
+a query in the given ontology. We organise the test queries into the following three
+groups depending on the techniques exploited by PAGOdA to compute their answers:
+ G1: queries for which the lower and upper bounds coincide;
+ G2: queries with a non-empty gap, but for which summarisation is able to filter
+out all remaining candidate answers; and
+ G3: queries where the fully-fledged reasoner is called over an ontology subset on
+at least one of the test datasets.
+In the scalability test, we set a timeout of 5 hours for answering all queries and 2.5 hours
+for each individual query. For LUBM and UOBM, we increased the size of the dataset until
+PAGOdA exceeded the timeout; for the other ontologies, PAGOdA was able to answer all
+queries within the timeout, even with the largest dataset.
+Pellet was the only compared system found to be sound and complete for our test
+ontologies and queries, so we have also conducted scalability tests on it. The scalability of
+Pellet is, however, limited: it already failed on LUBM(100), UOBM(5), as well as ChEMBL
+355
+
+fi3.0#
+
+G1(18)"
+
+2.5#
+
+Thousands)seconds)
+
+Thousands)seconds)
+
+Zhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+2.0#
+1.5#
+1.0#
+
+Q32"
+
+Q34"
+
+9"
+8"
+7"
+6"
+5"
+4"
+3"
+2"
+
+0.5#
+
+1"
+
+0.0#
+
+0"
+
+1#
+
+100#
+
+200#
+
+300#
+
+400#
+
+500#
+
+600#
+
+700#
+
+800#
+
+1"
+
+200"
+
+300"
+
+400"
+
+500"
+
+600"
+
+700"
+
+800"
+
+(b) LUBM query processing
+
+14"
+
+G1(18)"
+
+12"
+
+Thousands)seconds)
+
+Thousands)seconds)
+
+(a) LUBM pre-processing
+
+100"
+
+10"
+8"
+6"
+
+G2(1)"
+
+Q18"
+
+2.5"
+2"
+1.5"
+1"
+
+4"
+
+0.5"
+
+2"
+0"
+1"
+
+100"
+
+200"
+
+300"
+
+400"
+
+0"
+
+500"
+
+0"
+
+(c) UOBM pre-processing
+
+100"
+
+200"
+
+300"
+
+400"
+
+500"
+
+(d) UOBM query processing
+
+Figure 7: Scalability tests on benchmarks
+10% and Uniprot 10%. The only dataset were Pellet managed to process at least two data
+samples was Reactome, where it succeeded on all samples smaller than 40%. The case for
+Reactome is discussed in detail later on.
+Our results are summarised in Figures 7 and 8. For each ontology, we plot time against
+the size of the input dataset, and for query processing we distinguish dierent groups of
+queries as discussed above. PAGOdA behaves relatively uniformly for queries in G1 and
+G2, so we plot only the average time per query for these groups. In contrast, PAGOdAs
+behaviour for queries in G3 is quite variable, so we plot the time for each individual query.
+LUBM(n) As shown in Figure 7a, pre-processing is fast, and times appear to scale linearly with increasing dataset size. All LUBM queries belong to either G1 or G3 with the
+latter group containing just two queries. Figure 7b illustrates the average query processing
+time for queries in G1, which never exceeds 13 seconds, as well as the time for each of the
+two queries in G3 (Q32 and Q34), which reaches 8,000 seconds for LUBM(800), most of
+which is accounted for by HermiT.
+UOBM(n) As shown in Figure 7c, pre-processing times are significantly higher than for
+LUBM, reflecting the increased complexity of the ontology, but still appear to scale linearly
+with dataset size. As with LUBM, most test queries were contained in G1, and their
+processing times never exceeds 8 seconds from UOBM(1) to UOBM(500). We found one
+query in G2. Processing times for this query were somewhat longer than for those in G1
+and reached 569s for UOBM(500). Finally, we found one query (Q18) that, due to UOBMs
+356
+
+fi12"
+
+G1(1896)#
+
+10"
+
+Seconds(
+
+Thousands))seconds)
+
+PAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+8"
+6"
+4"
+2"
+0"
+1%"
+
+10%" 20%" 30%" 40%" 50%" 60%" 70%" 80%" 90%" 100%"
+
+0.50#
+0.45#
+0.40#
+0.35#
+0.30#
+0.25#
+0.20#
+0.15#
+0.10#
+0.05#
+0.00#
+1%# 10%# 20%# 30%# 40%# 50%# 60%# 70%# 80%# 90%# 100%#
+
+(a) ChEMBL pre-processing
+Pellet"
+
+G1(128)"
+
+14"
+
+Seconds(
+
+Hundreds(seconds(
+
+PAGOdA"
+
+(b) ChEMBL query processing
+
+12"
+
+G2(1)"
+
+Q65"
+
+Pellet_Q65"
+
+1000"
+800"
+
+10"
+8"
+
+600"
+
+6"
+
+400"
+
+4"
+200"
+
+2"
+0"
+
+0"
+10%" 20%"
+
+30%"
+
+40%"
+
+50%" 60%"
+
+70%"
+
+80%"
+
+90%" 100%"
+
+10%" 20%" 30%" 40%" 50%" 60%" 70%" 80%" 90%" 100%"
+
+(c) Reactome pre-processing
+Unsa9sable#
+
+G1(236)"
+
+2.0#
+
+Seconds(
+
+Thousands)seconds)
+
+Satsiable#
+
+(d) Reactome query processing
+
+1.5#
+
+G2(4)"
+
+25"
+20"
+15"
+
+1.0#
+10"
+
+0.5#
+
+5"
+
+0.0#
+
+0"
+
+1%# 10%# 20%# 30%# 40%# 50%# 60%# 70%# 80%# 90%# 100%#
+
+1%"
+
+(e) Uniprot pre-processing
+
+10%"
+
+20%"
+
+30%"
+
+40%"
+
+(f) Uniprot query processing
+
+Figure 8: Scalability tests on EBI linked data platform
+randomised data generation, was in dierent groups for dierent datasets: in UOBM(1),
+UOBM(10) and UOBM(50) it was in G3, and HermiT was called on the relevant subsets
+to fully answer the query; in UOBM(40) it was in G2, and HermiT was called on only the
+summary of the relevant subset; and in all the remaining cases shown in Figure 7d it was
+in G1, and the lower and upper bounds coincided. This query timed out in UOBM(50),
+due to the time taken by HermiT to reason over the relevant subset, but we have shown
+the times for the remaining G1 and G2 queries up to UOBM(500).
+ChEMBL As shown in Figure 8a, pre-processing times are significant but manageable,
+and again appear to scale linearly with dataset size. All test queries were contained in G1.
+
+357
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+Total
+L1 + U 1
+L2 + U 1
+L2 + U 2
+L2 + U2|3
+
+LUBM
+(100)
+35
+26
+33
+33
+33
+
+UOBM
+(1)
+20
+4
+4
+12
+16
+
+FLY
+
+NPD
+
+DBPedia
+
+6
+0
+5
+5
+5
+
+478
+442
+442
+442
+473
+
+1247
+1240
+1241
+1241
+1246
+
+ChEMBL
+1%
+1896
+1883
+1883
+1883
+1896
+
+Reactome
+10%
+130
+82
+82
+98
+128
+
+Uniprot
+1%
+240
+204
+204
+204
+236
+
+Table 4: ]Queries answered by dierent bounds
+Figure 8b illustrates the average processing times for all queries, which was less than 0.5s
+for all datasets and increases smoothly with dataset size.
+Reactome As shown in Figure 8c, pre-processing times again appear to scale quite
+smoothly. Groups G2 and G3 each contained one query, with all the remaining queries
+belonging to G1. Query processing times are shown in Figure 8d. Average query processing time for queries in G1 never exceeded 10 seconds. Average processing times for G2
+queries appeared to grow linearly to the size of datasets, and average time never exceeded
+10 seconds. Finally, it can be seen that the G3 query (Q65) is much more challenging, but
+it could still be answered in less than 900 seconds, even for the largest dataset.
+As already mentioned, we also tested the scalability of Pellet on Reactome, where Pellet
+is able to process the samples of size 10%, 20% and 30%. The pre-processing time of Pellet
+on these datasets is comparable with PAGOdA as shown in Figure 8c. Average queryprocessing times for queries in G1 and G2 are slightly higher than those of PAGOdA. In
+contrast, times for query Q65 were significantly higher: 445s, 518s and 2, 626s for Reactome
+10%, 20% and 30%, respectively (see Figure 8d). Processing times for Q65 in PAGOdA,
+however, grow smoothly thanks to the eectiveness of the subset extraction technique, which
+is able to keep the input to the fully-fledged reasoner small, even for the largest datasets.
+Uniprot In contrast to the other cases, Uniprot as a whole is unsatisfiable; our sampling
+technique can, however, produce a satisfiable subset. Figure 8e illustrates pre-processing
+times. As can be seen, these drop abruptly for unsatisfiable samples (50% and larger); this
+is because unsatisfiability can be efficiently detected in the lower bound. The figure shows
+that time to detect inconsistency for 100% is even less than that for 90%; this is because
+the time is dominated by loading time, and I/O performance varies from run to run. Query
+processing times were only considered for satisfiable samples (see Figure 8f). There were
+no queries in G3, and only four in G2. We can observe that average times for all queries
+appear to scale linearly with data size for both groups.
+10.3.3 Effectiveness of the Implemented Techniques
+We have evaluated the eectiveness of the various reasoning techniques implemented in
+PAGOdA by comparing the numbers of test queries that can be fully answered using the
+relevant technique.
+Query bounds In Sections 4 and 5 we described dierent techniques for computing lower
+and upper bound query answers. Table 4 illustrates the eectiveness of each of these bounds
+358
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+Facts
+Rules
+
+LUBM
+0.5%
+3.7%
+
+UOBM
+10.4%
+10.9%
+
+Fly
+7.3%
+0.9%
+
+NPD
+16.5%
+18.4%
+
+DBPedia
+9  10 5 %
+2.4%
+
+Reactome
+5.2%
+5.3%
+
+Uniprot
+4  10 4 %
+1.1%
+
+Table 5: Size of the largest subsets given as percentage over input rules and facts.
+in terms of the number of queries for which the bounds coincided on our test ontologies. In
+the table, we refer to the lower bound described in Section 4.1 as L1 and to the aggregated
+lower bound described in Section 4.3 as L2 . Similarly, we refer to the three upper bound
+computation techniques discussed in Section 5.4 as U1 , U2 , U3 and the combined upper
+bound U2|3 . We can observe the following from our experiments:
+ The basic lower and upper bounds suffice to answer most of the queries in many
+test ontologies. In particular, L1 and U1 matched in 26 out of the 35 queries for
+LUBM(100), 442 out of 478 for NPD, 240 out of 1247 for DBPedia, 1883 out of 1896
+for ChEMBL, and 204 out of 240 for Uniprot.
+ The aggregated lower bound L2 was very eective in the case of FLY, where the basic
+bounds did not match for any query. It was also useful for LUBM, yielding matching
+bounds for 7 more queries.
+ The refined treatment of existential rules described in Section 5.2, which yields the
+upper bound U2 , was especially eective for UOBM(1) and Reactome, where many
+existentially quantified rules were already satisfied by the lower bound materialisation.
+ Finally, the refined treatment of disjunctive rules in Section 5.3, which yields the combined upper bound U2|3 , was instrumental in obtaining additional matching bounds
+for non-Horn ontologies. We could answer an additional 4 queries for UOBM(1), 31
+for NPD, 5 for DBPedia, 13 for ChEMBL, 30 for Reactome, and 32 for Uniprot.
+Overall, we obtained matching bounds for most queries in all our test ontologies: we
+could answer all queries for ChEMBL, and all but 1 for FLY and DBPedia, all but 2 for
+Reactome and LUBM(100), all but 4 for UOBM(1) and Uniprot, and all but 5 for NPD.
+Subset extraction Table 5 shows, for each dataset, the maximum percentage of facts
+and rules that are included in the relevant subset over all test queries with non-matching
+bounds. We can observe that subset extraction is eective in all cases in terms of both facts
+and rules. For Uniprot and DBPedia, the reduction in data size was especially dramatic.
+It is also interesting to observe the large reduction in the number of rules for FLY, which
+is a rather complex ontology. Finally, subset extraction was least eective for NPD and
+UOBM, but even in these cases there was a reduction of almost one order of magnitude in
+the size of both ontology and dataset.
+We now turn our attention to summarisation and dependency analysis. The eectiveness
+of these techniques was measured by the number of hard calls to HermiT that were required
+to fully answer each query, where a call to HermiT is considered hard if the knowledge base
+passed to HermiT is not a summary. The first row of Table 6 shows the number of gap
+359
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+L2 + U2|3
++ Sum
++ Dep
+
+LUBM
+26 14
+26 14
+1
+1
+
+264
+264
+1
+
+UOBM
+112 1470
+0 1444
+0
+1
+
+264
+264
+1
+
+FLY
+344
+344
+7
+
+DBPedia
+10
+0
+0
+
+NPD
+326
+0
+0
+
+Reactome
+18
+52
+0
+52
+0
+37
+
+UniProt
+168
+0
+0
+
+Table 6: The number of hard calls to HermiT to fully answer each query
+answers for each query where the L2 and U2|3 bounds do not match. Without optimisation,
+we would have to call HermiT this number of times to fully answer each query. Row 2
+(resp. row 3) shows the number of hard calls to HermiT after applying summarisation (resp.
+summarisation plus dependency analysis). As we mentioned above, there are respectively 5
+and 4 queries with non-matching bounds for NPD and UniProt. However, for each of these
+groups, summarisation and dependency analysis have identical eects on all the queries in
+the group, so we present just one representative query for each ontology.
+Summarisation As already discussed, summarisation enables PAGOdA to fully answer
+a number of test queries with non-empty gaps. It was instrumental in fully answering one
+query for each of UOBM(1), DBPedia and Reactome, as well as 5 queries for NPD, and 4
+queries for Uniprot. Even in the cases where summarisation did not suffice to fully answer
+the query, it was eective in reducing the size of the gap. For instance, for one of the queries
+for UOBM(1) we obtained 1,470 gap answers, of which 26 were ruled out by summarisation.
+Dependency analysis In LUBM(100) there were two queries with a gap of 26 answers
+and 14 answers, respectively; in both cases, all answers were merged into a single group, and
+hence a single call to HermiT sufficed to complete the computation. Similarly, in UOBM(1)
+a single call to HermiT was again sufficient, even though the three queries with a gap
+involved a large number of candidate answers. For FLY, there are 344 answers remaining
+to be verified after summarisation, but only 7 hard calls to HermiT were required. Finally,
+in the case of Reactome one query had 52 gap answers, but dependency analysis reduced
+the number of calls to HermiT to 37.
+
+11. Conclusions
+In this paper, we have investigated a novel pay-as-you-go approach to conjunctive query
+answering that combines a datalog reasoner with a fully-fledged reasoner. The key feature
+of our approach is that it delegates the bulk of the computation to the datalog reasoner
+and resorts to the fully-fledged reasoner only as necessary to fully answer the query.
+The reasoning techniques we have proposed here are very general and are applicable to
+a wide range of knowledge representation languages. Our main goal in practice, however,
+has been to realise our approach in a highly scalable and robust query answering system for
+OWL 2 DL ontologies, which we have called PAGOdA. Our extensive evaluation has not only
+confirmed the feasibility of our approach in practice, but also that our system PAGOdA
+significantly ourperforms state-of-the art reasoning systems in terms of both robustness
+and scalability. In particular, our experiments using the ontologies in the EBI linked data
+platform have shown that PAGOdA is capable of fully answering queries over highly complex
+and expressive ontologies and realistic datasets containing hundreds of millions of facts.
+360
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+Acknowledgments
+This is an extended version of our conference publications (Zhou, Nenov, Cuenca Grau, &
+Horrocks, 2014; Zhou, Nenov, Grau, & Horrocks, 2013). This work has been supported
+by the Royal Society under a Royal Society Research Fellowship, by the EPSRC projects
+Score!, MaSI3 , and DBOnto, as well as by the EU FP7 project Optique.
+
+References
+Abiteboul, S., Hull, R., & Vianu, V. (Eds.). (1995). Foundations of Databases: The Logical
+Level. Addison-Wesley Longman Publishing Co., Inc., Boston, MA, USA.
+Acciarri, A., Calvanese, D., De Giacomo, G., Lembo, D., Lenzerini, M., Palmieri, M., &
+Rosati, R. (2005). QuOnto: Querying ontologies. In Veloso, M. M., & Kambhampati,
+S. (Eds.), AAAI 2005, Proceedings of the Twentieth National Conference on Artificial Intelligence and the Seventeenth Innovative Applications of Artificial Intelligence
+Conference, July 9-13, 2005, Pittsburgh, Pennsylvania, USA, pp. 16701671. AAAI
+Press / The MIT Press.
+Afrati, F. N., Cosmadakis, S. S., & Yannakakis, M. (1995). On datalog vs. polynomial time.
+J. Comput. Syst. Sci., 51 (2), 177196.
+Alviano, M., Faber, W., Greco, G., & Leone, N. (2012a). Magic sets for disjunctive datalog
+programs. Artificial Intelligence, 187188, 156192.
+Alviano, M., Faber, W., Leone, N., & Manna, M. (2012b). Disjunctive datalog with existential quantifiers: Semantics, decidability, and complexity issues. Theory and Practice
+of Logic Programming, 12 (4-5), 701718.
+Baader, F., Brandt, S., & Lutz, C. (2005). Pushing the EL envelope. In IJCAI 2015,
+Proceedings of the Nineteenth International Joint Conference on Artificial Intelligence,
+Edinburgh, Scotland, UK, July 30-August 5, 2005, pp. 364369.
+Baader, F., Calvanese, D., McGuinness, D. L., Nardi, D., & Patel-Schneider, P. F. (2003).
+The Description Logic Handbook: Theory, Implementation, and Applications. Cambridge Univ. Press.
+Bagosi, T., Calvanese, D., Hardi, J., Komla-Ebri, S., Lanti, D., Rezk, M., Rodriguez-Muro,
+M., Slusnys, M., & Xiao, G. (2014). The Ontop framework for ontology based data access. In Zhao, D., Du, J., Wang, H., Wang, P., Ji, D., & Pan, J. Z. (Eds.), CSWS 2014,
+Proceedings of the Semantic Web and Web Science - 8th Chinese Conference, Wuhan,
+China, August 8-12, 2014, Revised Selected Papers, Vol. 480 of Communications in
+Computer and Information Science, pp. 6777. Springer.
+Bancilhon, F., Maier, D., Sagiv, Y., & Ullman, J. D. (1986). Magic sets and other strange
+ways to implement logic programs. In Silberschatz, A. (Ed.), Proceedings of the Fifth
+ACM SIGACT-SIGMOD Symposium on Principles of Database Systems, March 2426, 1986, Cambridge, Massachusetts, USA, pp. 115. ACM.
+Beeri, C., Naqvi, S. A., Ramakrishnan, R., Shmueli, O., & Tsur, S. (1987). Sets and negation
+in a logic database language (LDL1). In Vardi, M. Y. (Ed.), Proceedings of the Sixth
+361
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+ACM SIGACT-SIGMOD-SIGART Symposium on Principles of Database Systems,
+March 23-25, 1987, San Diego, California, USA, pp. 2137. ACM.
+Bishop, B., Kiryakov, A., Ognyano, D., Peikov, I., Tashev, Z., & Velkov, R. (2011).
+OWLIM: A family of scalable semantic repositories. Semantic Web, 2 (1), 3342.
+Bourhis, P., Morak, M., & Pieris, A. (2013). The impact of disjunction on query answering under guarded-based existential rules. In IJCAI 2013, Proceedings of the 23rd
+International Joint Conference on Artificial Intelligence, Beijing, China, August 3-9,
+2013, pp. 796802. AAAI Press.
+Broekstra, J., Kampman, A., & van Harmelen, F. (2002). Sesame: A generic architecture
+for storing and querying RDF and RDF schema. In Horrocks, I., & Hendler, J. A.
+(Eds.), ISWC 2002, Proceedings the Semantic Web - First International Semantic
+Web Conference, Sardinia, Italy, June 9-12, 2002, Proceedings, Vol. 2342 of Lecture
+Notes in Computer Science, pp. 5468. Springer.
+Bry, F., Eisinger, N., Eiter, T., Furche, T., Gottlob, G., Ley, C., Linse, B., Pichler, R., & Wei,
+F. (2007). Foundations of rule-based query answering. In Antoniou, G., Amann, U.,
+Baroglio, C., Decker, S., Henze, N., Patranjan, P., & Tolksdorf, R. (Eds.), Reasoning
+Web 2007, Vol. 4636 of Lecture Notes in Computer Science, pp. 1153. Springer.
+Cal, A., Gottlob, G., & Kifer, M. (2013). Taming the infinite chase: Query answering
+under expressive relational constraints. Journal of Artificial Intelligence Research, 48,
+115174.
+Cal, A., Gottlob, G., & Lukasiewicz, T. (2012). A general datalog-based framework for
+tractable query answering over ontologies. J. Web Sem., 14, 5783.
+Cal, A., Gottlob, G., Lukasiewicz, T., Marnette, B., & Pieris, A. (2010). Datalog+/-: A
+family of logical knowledge representation and query languages for new applications.
+In LICS 2010, Proceedings of the 25th Annual IEEE Symposium on Logic in Computer
+Science, 11-14 July 2010, Edinburgh, United Kingdom, pp. 228242. IEEE Computer
+Society.
+Cal, A., Gottlob, G., & Pieris, A. (2011). New expressive languages for ontological query
+answering. In Burgard, W., & Roth, D. (Eds.), AAAI 2011, Proceedings of the TwentyFifth AAAI Conference on Artificial Intelligence, San Francisco, California, USA,
+August 7-11, 2011, Vol. 2, pp. 15411546. AAAI Press.
+Calvanese, D., De Giacomo, G., Lembo, D., Lenzerini, M., Poggi, A., Rodriguez-Muro, M.,
+Rosati, R., Ruzzi, M., & Savo, D. F. (2011). The MASTRO system for ontology-based
+data access. Semantic Web, 2 (1), 4353.
+Calvanese, D., De Giacomo, G., Lembo, D., Lenzerini, M., & Rosati, R. (2007). Tractable
+reasoning and efficient query answering in description logics: The DL-Lite family.
+Journal of Automated Reasoning, 39 (3), 385429.
+Chortaras, A., Trivela, D., & Stamou, G. B. (2011). Optimized query rewriting for OWL
+2 QL. In Bjrner, N., & Sofronie-Stokkermans, V. (Eds.), CADE 23, Proceedings of
+the 23rd International Conference on Automated Deduction, Wroclaw, Poland, July
+31 - August 5, 2011, Vol. 6803 of Lecture Notes in Computer Science, pp. 192206.
+Springer.
+362
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+Console, M., Mora, J., Rosati, R., Santarelli, V., & Savo, D. F. (2014). Eective computation
+of maximal sound approximations of description logic ontologies. In ISWC 2014,
+Proceedings of the Semantic Web - 13th International Semantic Web Conference,
+Riva del Garda, Italy, October 19-23, 2014. Proceedings, Part II, pp. 164179.
+Cuenca Grau, B., Horrocks, I., Krotzsch, M., Kupke, C., Magka, D., Motik, B., & Wang, Z.
+(2013). Acyclicity notions for existential rules and their application to query answering
+in ontologies. Journal of Artificial Intelligence Research, 47, 741808.
+Cuenca Grau, B., Horrocks, I., Motik, B., Parsia, B., Patel-Schneider, P. F., & Sattler, U.
+(2008). OWL 2: The next step for OWL. Journal of Web Semantics, 6 (4), 309322.
+Cuenca Grau, B., Motik, B., Stoilos, G., & Horrocks, I. (2012). Completeness guarantees for
+incomplete ontology reasoners: Theory and practice. Journal of Artificial Intelligence
+Research, 43, 419476.
+Dantsin, E., Eiter, T., Gottlob, G., & Voronkov, A. (2001). Complexity and expressive
+power of logic programming. ACM Computing Surveys, 33 (3), 374425.
+Dolby, J., Fokoue, A., Kalyanpur, A., Kershenbaum, A., Schonberg, E., Srinivas, K., &
+Ma, L. (2007). Scalable semantic retrieval through summarization and refinement. In
+AAAI 2007, Proceedings of the Twenty-Second AAAI Conference on Artificial Intelligence, July 22-26, 2007, Vancouver, British Columbia, Canada, pp. 299304. AAAI
+Press.
+Dolby, J., Fokoue, A., Kalyanpur, A., Schonberg, E., & Srinivas, K. (2009). Scalable highly
+expressive reasoner (SHER). Journal of Web Semantics, 7 (4), 357361.
+Eiter, T., Fink, M., Tompits, H., & Woltran, S. (2004). Simplifying logic programs under
+uniform and strong equivalence. In LPNMR 2004, Proceedings of Logic Programming
+and Nonmonotonic Reasoning - 7th International Conference, Fort Lauderdale, FL,
+USA, January 6-8, 2004, Proceedings, pp. 8799.
+Eiter, T., Lutz, C., Ortiz, M., & Simkus, M. (2009). Query answering in description logics
+with transitive roles. In Boutilier, C. (Ed.), IJCAI 2009, Proceedings of the 21st
+International Joint Conference on Artificial Intelligence, Pasadena, California, USA,
+July 11-17, 2009, pp. 759764.
+Eiter, T., Ortiz, M., & Simkus, M. (2012). Conjunctive query answering in the description
+logic SH using knots. Journal of Computer and System Sciences, 78 (1), 4785.
+
+Erling, O., & Mikhailov, I. (2009). Virtuoso: RDF support in a native RDBMS. In Virgilio,
+R. D., Giunchiglia, F., & Tanca, L. (Eds.), Semantic Web Information Management
+- A Model-Based Perspective, pp. 501519. Springer.
+Glimm, B., Horrocks, I., Motik, B., Stoilos, G., & Wang, Z. (2014). HermiT: An OWL 2
+reasoner. Journal of Automated Reasoning, 53 (3), 245269.
+Glimm, B., Lutz, C., Horrocks, I., & Sattler, U. (2008). Conjunctive query answering for
+the description logic SHIQ. Journal of Artificial Intelligence Research, 31, 157204.
+
+Grosof, B. N., Horrocks, I., Volz, R., & Decker, S. (2003). Description logic programs:
+combining logic programs with description logic. In Hencsey, G., White, B., Chen,
+Y. R., Kovacs, L., & Lawrence, S. (Eds.), WWW 2003, Proceedings of the Twelfth
+363
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+International World Wide Web Conference, Budapest, Hungary, May 20-24, 2003,
+pp. 4857. ACM.
+Guo, Y., Pan, Z., & Heflin, J. (2005). LUBM: A benchmark for OWL knowledge base
+systems. Journal of Web Semantics, 3 (2-3), 158182.
+Haarslev, V., Hidde, K., Moller, R., & Wessel, M. (2012). The RacerPro knowledge representation and reasoning system. Semantic Web, 3 (3), 267277.
+Horrocks, I., Kutz, O., & Sattler, U. (2006). The even more irresistible SROIQ. In KR
+2006, Proceedings of the Tenth International Conference on Principles of Knowledge
+Representation and Reasoning, Lake District of the United Kingdom, June 2-5, 2006,
+pp. 5767.
+Horrocks, I., Patel-Schneider, P. F., & van Harmelen, F. (2003). From SHIQ and RDF
+to OWL: the making of a web ontology language. Journal of Web Semantics, 1 (1),
+726.
+Horrocks, I., & Tessaris, S. (2000). A conjunctive query language for description logic
+aboxes. In Kautz, H. A., & Porter, B. W. (Eds.), AAAI/IAAI 2000, Proceedings of the
+Seventeenth National Conference on Artificial Intelligence and Twelfth Conference on
+on Innovative Applications of Artificial Intelligence, July 30 - August 3, 2000, Austin,
+Texas, USA., pp. 399404. AAAI Press / The MIT Press.
+Hustadt, U., Motik, B., & Sattler, U. (2007). Reasoning in description logics by a reduction
+to disjunctive datalog. Journal of Automated Reasoning, 39 (3), 351384.
+Jimenez-Ruiz, E., & Cuenca Grau, B. (2011). LogMap: Logic-based and scalable ontology
+matching. In Aroyo, L., Welty, C., Alani, H., Taylor, J., Bernstein, A., Kagal, L., Noy,
+N. F., & Blomqvist, E. (Eds.), ISWC 2011, The Semantic Web - 10th International
+Semantic Web Conference, Bonn, Germany, October 23-27, 2011, Proceedings, Part
+I, Vol. 7031 of Lecture Notes in Computer Science, pp. 273288. Springer.
+Kemp, D. B., Srivastava, D., & Stuckey, P. J. (1995). Bottom-up evaluation and query
+optimization of well-founded models. Theoretical Computer Science, 146 (12), 145
+184.
+Kollia, I., & Glimm, B. (2013). Optimizing SPARQL query answering over OWL ontologies.
+Journal of Artificial Intelligence Research, 48, 253303.
+Kontchakov, R., Lutz, C., Toman, D., Wolter, F., & Zakharyaschev, M. (2011). The combined approach to ontology-based data access. In Walsh, T. (Ed.), IJCAI 2011,
+Proceedings of the 22nd International Joint Conference on Artificial Intelligence,
+Barcelona, Catalonia, Spain, July 16-22, 2011, pp. 26562661. IJCAI/AAAI.
+Leone, N., Pfeifer, G., Faber, W., Eiter, T., Gottlob, G., Perri, S., & Scarcello, F. (2006).
+The DLV system for knowledge representation and reasoning. ACM Transactions on
+Computational Logic, 7 (3), 499562.
+Leskovec, J., & Faloutsos, C. (2006). Sampling from large graphs. In KDD 2006, Proceedings
+of the Twelfth ACM SIGKDD International Conference on Knowledge Discovery and
+Data Mining, Philadelphia, PA, USA, August 20-23, 2006, pp. 631636.
+
+364
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+Lutz, C. (2008). The complexity of conjunctive query answering in expressive description logics. In Armando, A., Baumgartner, P., & Dowek, G. (Eds.), IJCAR 2008,
+Proceedings of the 4th International Joint Conference Automated Reasoning, Sydney,
+Australia, August 12-15, 2008, Vol. 5195 of Lecture Notes in Computer Science, pp.
+179193. Springer.
+Lutz, C., Seylan, I., Toman, D., & Wolter, F. (2013). The combined approach to OBDA:
+Taming role hierarchies using filters. In Alani, H., Kagal, L., Fokoue, A., Groth, P. T.,
+Biemann, C., Parreira, J. X., Aroyo, L., Noy, N. F., Welty, C., & Janowicz, K. (Eds.),
+ISWC 2013, Proceedings of the Semantic Web - 12th International Semantic Web
+Conference, Sydney, NSW, Australia, October 21-25, 2013, Proceedings, Part I, Vol.
+8218 of Lecture Notes in Computer Science, pp. 314330. Springer.
+Lutz, C., Toman, D., & Wolter, F. (2009). Conjunctive query answering in the description logic EL using a relational database system. In Boutilier, C. (Ed.), IJCAI
+2009, Proceedings of the 21st International Joint Conference on Artificial Intelligence,
+Pasadena, California, USA, July 11-17, 2009, pp. 20702075.
+Ma, L., Yang, Y., Qiu, Z., Xie, G. T., Pan, Y., & Liu, S. (2006). Towards a complete OWL
+ontology benchmark. In Sure, Y., & Domingue, J. (Eds.), ESWC 2006, The Semantic
+Web: Research and Applications, 3rd European Semantic Web Conference, Budva,
+Montenegro, June 11-14, 2006, Proceedings, Vol. 4011 of Lecture Notes in Computer
+Science, pp. 125139. Springer.
+Manola, F., & Miller, E. (2004). RDF primer. W3C Recommendation. Available at
+http://www.w3.org/TR/rdf-primer/.
+Marnette, B. (2009). Generalized schema-mappings: from termination to tractability.
+In PODS 2009, Proceedings of the Twenty-Eigth ACM SIGMOD-SIGACT-SIGART
+Symposium on Principles of Database Systems, June 19 - July 1, 2009, Providence,
+Rhode Island, USA, pp. 1322.
+McBride, B. (2001). Jena: Implementing the RDF model and syntax specification. In
+SemWeb 2001, Proceedings of the Second International Workshop on the Semantic
+Web.
+Moller, R., Neuenstadt, C., Ozcep, O. L., & Wandelt, S. (2013). Advances in accessing
+big data with expressive ontologies. In Timm, I. J., & Thimm, M. (Eds.), KI 2013,
+Proceedings of Advances in Artificial Intelligence - 36th Annual German Conference
+on AI, Koblenz, Germany, September 16-20, 2013, Vol. 8077 of Lecture Notes in
+Computer Science, pp. 118129. Springer.
+Motik, B., Cuenca Grau, B., Horrocks, I., Wu, Z., Fokoue, A., & Lutz, C. (2012). OWL 2
+Web Ontology Language Profiles (second edition). W3C Recommendation. Available
+at http://www.w3.org/TR/owl2-profiles/.
+Motik, B., Nenov, Y., Piro, R., Horrocks, I., & Olteanu, D. (2014). Parallel materialisation
+of datalog programs in centralised, main-memory RDF systems. In Brodley, C. E., &
+Stone, P. (Eds.), AAAI 2014, Proceedings of the Twenty-Eighth AAAI Conference on
+Artificial Intelligence, July 27 -31, 2014, Quebec City, Quebec, Canada., pp. 129137.
+AAAI Press.
+365
+
+fiZhou, Cuenca Grau, Nenov, Kaminski, & Horrocks
+
+Motik, B., Shearer, R., & Horrocks, I. (2009). Hypertableau reasoning for description logics.
+Journal of Artificial Intelligence Research, 36, 165228.
+Ortiz, M., Rudolph, S., & Simkus, M. (2011). Query answering in the horn fragments of
+the description logics SHOIQ and SROIQ. In IJCAI 2011, Proceedings of the 22nd
+International Joint Conference on Artificial Intelligence, Barcelona, Catalonia, Spain,
+July 16-22, 2011, pp. 10391044.
+Pan, J. Z., & Thomas, E. (2007). Approximating OWL-DL ontologies. In AAAI 2007,
+Proceedings of the Twenty-Second AAAI Conference on Artificial Intelligence, July
+22-26, 2007, Vancouver, British Columbia, Canada, pp. 14341439.
+Perez-Urbina, H., Motik, B., & Horrocks, I. (2010). Tractable query answering and rewriting
+under description logic constraints. Journal of Applied Logic, 8 (2), 186209.
+PrudHommeaux, E., & Carothers, G. (2014). RDF 1.1 Turtle. W3C Recommendation.
+Available at http://www.w3.org/TR/turtle/.
+Robinson, J. A., & Voronkov, A. (Eds.). (2001). Handbook of Automated Reasoning (in 2
+volumes). Elsevier and MIT Press.
+Rodriguez-Muro, M., & Calvanese, D. (2012). High performance query answering over
+DL-Lite ontologies. In Brewka, G., Eiter, T., & McIlraith, S. A. (Eds.), KR 2012,
+Proceedings of Principles of Knowledge Representation and Reasoning, the Thirteenth
+International Conference, Rome, Italy, June 10-14, 2012, pp. 308318. AAAI Press.
+Rosati, R. (2012). Prexto: Query rewriting under extensional constraints in DL - lite.
+In Simperl, E., Cimiano, P., Polleres, A., Corcho, O., & Presutti, V. (Eds.), ESWC
+2012, Proceedings of the Semantic Web: Research and Applications - 9th Extended
+Semantic Web Conference, Heraklion, Crete, Greece, May 27-31, 2012, Vol. 7295 of
+Lecture Notes in Computer Science, pp. 360374. Springer.
+Rudolph, S., & Glimm, B. (2010). Nominals, inverses, counting, and conjunctive queries or:
+Why infinity is your friend!. Journal of Artificial Intelligence Research, 39, 429481.
+Schaerf, A. (1993). On the complexity of the instance checking problem in concept languages
+with existential quantification. In Komorowski, H. J., & Ras, Z. W. (Eds.), ISMIS
+1993, Proceedings of Methodologies for Intelligent Systems, 7th International Symposium, Trondheim, Norway, June 15-18, 1993, Vol. 689 of Lecture Notes in Computer
+Science, pp. 508517. Springer.
+Sirin, E., Parsia, B., Cuenca Grau, B., Kalyanpur, A., & Katz, Y. (2007). Pellet: A practical
+OWL-DL reasoner. Journal of Web Semantics, 5 (2), 5153.
+Staab, S., & Studer, R. (Eds.). (2004). Handbook on Ontologies. International Handbooks
+on Information Systems. Springer.
+Stefanoni, G., & Motik, B. (2015). Answering conjunctive queries over EL knowledge bases
+with transitive and reflexive roles. In Bonet, B., & Koenig, S. (Eds.), AAAI 2015,
+Proceedings of the 29th AAAI Conference on Artificial Intelligence, Austin, TX, USA.
+AAAI Press. To appear.
+Stefanoni, G., Motik, B., & Horrocks, I. (2013). Introducing nominals to the combined
+query answering approaches for EL. In AAAI 2013, Proceedings of the Twenty-Seventh
+AAAI Conference on Artificial Intelligence, pp. 11771183.
+366
+
+fiPAGOdA: Pay-As-You-Go Query Answering Using a Datalog Reasoner
+
+Stefanoni, G., Motik, B., Krotzsch, M., & Rudolph, S. (2014). The complexity of answering
+conjunctive and navigational queries over OWL 2 EL knowledge bases. Journal of
+Artificial Intelligence Research, 51, 645705.
+Stoilos, G. (2014a). Hydrowl: A hybrid query answering system for OWL 2 DL ontologies.
+In RR 2014, Proceedings of Web Reasoning and Rule Systems - 8th International
+Conference, Athens, Greece, September 15-17, 2014, pp. 230238.
+Stoilos, G. (2014b). Ontology-based data access using rewriting, OWL 2 RL systems and
+repairing. In Presutti, V., dAmato, C., Gandon, F., dAquin, M., Staab, S., & Tordai,
+A. (Eds.), The Semantic Web: Trends and Challenges - 11th International Conference,
+ESWC 2014, Anissaras, Crete, Greece, May 25-29, 2014. Proceedings, Vol. 8465 of
+Lecture Notes in Computer Science, pp. 317332. Springer.
+Stoilos, G., & Stamou, G. B. (2014). Hybrid query answering over OWL ontologies. In
+Schaub, T., Friedrich, G., & OSullivan, B. (Eds.), ECAI 2014 - 21st European Conference on Artificial Intelligence, 18-22 August 2014, Prague, Czech Republic - Including Prestigious Applications of Intelligent Systems (PAIS 2014), Vol. 263 of Frontiers
+in Artificial Intelligence and Applications, pp. 855860. IOS Press.
+Thomas, E., Pan, J. Z., & Ren, Y. (2010). Trowl: Tractable OWL 2 reasoning infrastructure.
+In ESWC 2010, Proceedings of the Semantic Web: Research and Applications, 7th
+Extended Semantic Web Conference, Heraklion, Crete, Greece, May 30 - June 3, 2010,
+Part II, pp. 431435.
+Tserendorj, T., Rudolph, S., Krotzsch, M., & Hitzler, P. (2008). Approximate OWLreasoning with screech. In Calvanese, D., & Lausen, G. (Eds.), RR 2008, Proceedings
+of Web Reasoning and Rule Systems, Second International Conference, Karlsruhe,
+Germany, October 31-November 1, 2008, Vol. 5341 of Lecture Notes in Computer
+Science, pp. 165180. Springer.
+W3C SPARQL Working Group (2013). SPARQL 1.1 Overview. W3C Recommendation.
+Available at http://www.w3.org/TR/sparql11-overview/.
+Wandelt, S., Moller, R., & Wessel, M. (2010). Towards scalable instance retrieval over
+ontologies. International Journal of Software and Informatics, 4 (3), 201218.
+Wu, Z., Eadon, G., Das, S., Chong, E. I., Kolovski, V., Annamalai, M., & Srinivasan, J.
+(2008). Implementing an inference engine for RDFS/OWL constructs and user-defined
+rules in oracle. In Alonso, G., Blakeley, J. A., & Chen, A. L. P. (Eds.), ICDE 2008,
+Proceedings of the 24th International Conference on Data Engineering, April 7-12,
+2008, Cancun, Mexico, pp. 12391248. IEEE.
+Zhou, Y., Nenov, Y., Cuenca Grau, B., & Horrocks, I. (2014). Pay-as-you-go OWL query
+answering using a triple store. In Proceedings of the Twenty-Eighth AAAI Conference
+on Artificial Intelligence.
+Zhou, Y., Nenov, Y., Grau, B. C., & Horrocks, I. (2013). Complete query answering over
+horn ontologies using a triple store. In The Semantic Web - ISWC 2013 - 12th
+International Semantic Web Conference, Sydney, NSW, Australia, October 21-25,
+2013, Proceedings, Part I, pp. 720736.
+
+367
+
+fi
