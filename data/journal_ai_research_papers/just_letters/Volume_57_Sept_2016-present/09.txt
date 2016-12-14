@@ -1,0 +1,3304 @@
+journal of artificial intelligence research                  
+
+submitted        published      
+
+embarrassingly parallel search in constraint programming
+arnaud malapert
+jean charles regin
+mohamed rezgui
+
+arnaud malapert unice fr
+jean charles regin unice fr
+rezgui i s unice fr
+
+universite cote dazur  cnrs  i s  france
+
+abstract
+we introduce an embarrassingly parallel search  eps  method for solving constraint
+problems in parallel  and we show that this method matches or even outperforms state ofthe art algorithms on a number of problems using various computing infrastructures  eps
+is a simple method in which a master decomposes the problem into many disjoint subproblems which are then solved independently by workers  our approach has three advantages 
+it is an efficient method  it involves almost no communication or synchronization between
+workers  and its implementation is made easy because the master and the workers rely on
+an underlying constraint solver  but does not require to modify it  this paper describes
+the method  and its applications to various constraint problems  satisfaction  enumeration 
+optimization   we show that our method can be adapted to different underlying solvers
+ gecode  choco   or tools  on different computing infrastructures  multi core  data centers  cloud computing   the experiments cover unsatisfiable  enumeration and optimization
+problems  but do not cover first solution search because it makes the results hard to analyze  the same variability can be observed for optimization problems  but at a lesser
+extent because the optimality proof is required  eps offers good average performance  and
+matches or outperforms other available parallel implementations of gecode as well as some
+solvers portfolios  moreover  we perform an in depth analysis of the various factors that
+make this approach efficient as well as the anomalies that can occur  last  we show that
+the decomposition is a key component for efficiency and load balancing 
+
+   introduction
+in the second half of the   th century  the frequency of processors doubled every    months
+or so  it has now been clear for a few years that this period of free lunch  as put by sutter
+and larus         is behind us  as outlined by bordeaux  hamadi  and samulowitz        
+the available computational power will keep increasing exponentially  but the increase will be
+in terms of number of available processors  not in terms of frequency per unit  multi core
+processors are now the norm which raises significant challenges for software development 
+data centers for high performance computing are readily accessible by many in academia
+and industry  cloud computing  amazon  microsoft azure  google          offers massive
+infrastructures for rent on which computing and storage can be used on demand  with
+such facilities anyone can now gain access to super computing facilities at a moderate cost 
+distributed computing offers possibilities to put computational resources in common
+and effectively obtains massive capabilities  examples include seti home  anderson  cobb 
+korpela  lebofsky    werthimer         distributed net  distributed computing technologies inc      and sharcnet  bauer         the main challenge is therefore to scale  i e  
+to cope with this growth 
+c
+    
+ai access foundation  all rights reserved 
+
+fimalapert  regin    rezgui
+
+constraint programming  cp  is an appealing technology for a variety of combinatorial
+problems which has grown steadily in the last three decades  the strengths of cp are
+the use of constraint propagation combined with efficient search algorithms  constraint
+propagation aims at removing combinations of values from variable domains which cannot
+appear in any solution  over a number of years  possible gains offered by the parallel
+computing have attracted the attention 
+parallel computing is a form of computation in which many calculations are carried out
+simultaneously  almasi   gottlieb        operating on the principle that large problems
+can often be divided into smaller ones  which are then solved in parallel  different forms
+of parallel computing exist  bit level  instruction level  data and task parallelism  task
+parallelism is a common approach for parallel branch and bound  b b  algorithms  mattson  sanders    massingill        and is achieved when each processor executes a different
+thread  or process  on same or different data  parallel computer programs are more difficult to write than sequential ones  because concurrency introduces several new classes of
+potential software bugs  of which race conditions are the most common  for example  when
+memory is shared  several tasks of an algorithm can modify the same data at the same
+time  this could render the program incorrect  mutual exclusion allows a worker to lock
+certain resources to obtain exclusive access  but can create starvation because the other
+workers must wait until the worker frees the resources  moreover  the indeterminism of the
+parallel programs makes the behaviour of the execution unpredictable  i e  the results of
+different program runs may differ  so  communication and synchronization among different
+sub tasks can address this issue  but are typically some of the greatest obstacles to good
+performance  another central bottleneck is load balancing  i e  keeping all processors busy
+as much as possible 
+wilkinson and allen        introduced the embarrassingly parallel paradigm which assumes that a computation can be divided into a number of completely independent parts
+and that each part can be executed by a separate processor  in this paper  we introduce
+an embarrassingly parallel search  eps  method for constraint problems and show that
+this method often outperforms state of the art parallel b b algorithms for a number of
+problems on various computing infrastructures  a master decomposes the problem into
+many disjoint subproblems which are then solved independently by workers  since a constraint program is not trivially embarrassingly parallel  the decomposition procedure must
+be carefully designed  our approach has three advantages  it is an efficient method  it
+involves almost no communication  synchronization  or mutual exclusion between workers 
+its implementation is simple because the master and the workers rely on an underlying
+constraint solver but does not require to modify it  additionally  it is deterministic under
+certain restrictions 
+this paper integrates results from a series of publications  regin  rezgui    malapert 
+            rezgui  regin    malapert         however  this paper includes novel contributions  implementations  and results  a new implementation of eps on the top of
+the java library choco   choco        uses a new decomposition procedure  new results
+are given for the implementations on the top of the c   library gecode  schulte       
+and or tools  perron  nikolaj    vincent         more problems types and instances
+are tested  eps is compared with other parallelizations of gecode and with several static
+   
+
+fiembarrassingly parallel search in cp
+
+solvers portfolios  we perform in depth analysis of various components  especially the decomposition procedures  as well as the anomalies that can occur 
+the paper is organized as follows  section   presents the constraint programming background  amdahls law  and related work about parallel constraint solving  section   gives
+a detailed description of our embarrassingly parallel search method  section   gives extensive experimental results for the various implementations  gecode  choco   or tools  on
+different computing infrastructures  multi core  data center  cloud computing  as well as
+comparisons to other state of the art parallel implementations and static solver portfolios 
+
+   related work
+here  we present the constraint programming background  two important parallelization
+measures related to amdahls law  and related work about parallel constraint solving 
+    constraint programming background
+constraint programming  cp  has attracted high attention among experts from many areas
+because of its potential for solving hard real life problems  for an extensive review on
+constraint programming  we refer the reader to the handbook by rossi  van beek  and
+walsh         a constraint satisfaction problem  csp  consists of a set x of variables
+defined by a corresponding set of possible values  the domains d  and a set c of constraints 
+a constraint is a relation between a subset of variables that restricts the possible values that
+variables can take simultaneously  the important feature of constraints is their declarative
+manner  i e  they only specify which relationship must hold  the current domain d x  of
+each variable x  x is always a  non strict  subset of its initial domain  a partial assignment
+represents the case where the domains of some variables have been reduced to a singleton
+ namely a variable has been assigned a value   a solution of a csp is an assignment of a
+value to each variable such that all constraints are simultaneously satisfied 
+solutions can be found by searching systematically through the possible assignments of
+values to variables  a backtracking scheme incrementally extends a partial assignment a
+that specifies consistent values for some of the variables  toward a complete solution  by
+repeatedly choosing a value for another variable  the variables are labeled  given a value 
+sequentially  at each node of the search tree  an uninstantiated variable is selected and the
+node is extended so that the resulting new branches out of the node represent alternative
+choices that may have to be examined in order to find a solution  the branching strategy
+determines the next variable to be instantiated  and the order in which the values from its
+domain are selected  if a partial assignment violates any of the constraints  backtracking is
+performed to the most recently assigned variable that still has alternative values available
+in its domain  clearly  whenever a partial assignment violates a constraint  backtracking is
+able to eliminate a subspace from the cartesian product of variable domains 
+a filtering algorithm is associated with each constraint which removes inconsistent values
+from the domains of the variables  i e  assignments which cannot belong to a solution of
+the constraint  constraints are handled through a constraint propagation mechanism which
+allows the reduction of the domains of variables until a global fixpoint is reached  no more
+domain reductions are possible   in fact  a constraint specifies which relationship must hold
+and its filtering algorithm is the computational procedure that enforces the relationship 
+   
+
+fimalapert  regin    rezgui
+
+generally  consistency techniques are not complete  i e  they do not remove all inconsistent
+values from the domains of the variables 
+both backtracking scheme and consistency techniques can be used alone to completely
+solve a csp  but their combination allows the search space to be explored in a complete
+and more efficient way  the propagation mechanism allows the reduction of the variable
+domains and the pruning of the search tree whereas the branching strategy can improve the
+detection of solutions  or failures for unsatisfiable problems  
+here  we consider a complete standard backtracking scheme with depth first traversal of
+the search tree combined to the following variable selection strategies  note that different
+variable selection strategies can be used although only one at a time  lex selects a variable
+according to lexicographic ordering  dom selects the variable with the smallest remaining domain  haralick   elliott         ddeg selects a variable with largest dynamic degree  beck 
+prosser    wallace         that is  the variable that is constrained with the largest number
+of unassigned variables  boussemart  hemery  lecoutre  and sais        proposed conflictdirected variable ordering heuristics in which every time a constraint causes a failure during
+search  its weight is incremented by one  each variable has a weighted degree  which is
+the sum of the weights over all constraints in which this variable occurs  wdeg selects the
+variable with the largest weighted degree  the current domain of the variable can be incorporated to give dom ddeg or dom wdeg which selects the variable with minimum ratio
+between current domain size and its dynamic or weighted degree  boussemart et al        
+beck et al          dom bwdeg is a variant which follows a binary labeling scheme  impact
+selects the variable value pair which has the strongest impact  i e  leads in the strongest
+search space reduction  refalo        
+for optimization problems  we consider a standard top down algorithm which maintains
+a lower bound  lb  and an upper bound  ub  on the objective value  when ub  lb  the subtree
+can be pruned because it cannot contain a better solution 
+    parallelization measures and amdahls law
+two important parallelization measures are speedup and efficiency  let t c  be the wallclock time of the parallel algorithm where c is the number of cores and let t    be the
+wall clock time of the sequential algorithm  the speedup su c    t      t c  is a measure
+indicating how many times the parallel algorithm performs faster due to parallelization 
+the efficiency eff  c    su c    c is a normalized version of speedup  which is the speedup
+value divided by the number of cores  the maximum possible speedup of a single program
+as a result of parallelization is known as amdahls law  amdahl         it states that a
+small portion of the program which cannot be parallelized will limit the overall speedup
+available from parallelization  let b         be the fraction of the algorithm that is strictly
+sequential  the time t c  that
+ an algorithm takes to finish when being executed on c cores
+corresponds to  t c    t    b    c     b    therefore  the theoretical speedup su c  is 
+
+su c   
+
+ 
+b       b 
+ 
+c
+
+   
+
+fiembarrassingly parallel search in cp
+
+according to amdahls law  the speedup can never exceed the number of cores  i e  a linear
+speedup  this  in terms of efficiency measure  means that efficiency will always be less
+than   
+note that the sequential and parallel b b algorithms do not always explore the same
+search space  therefore  super linear speedups in parallel b b algorithms are not in contradiction with amdahls law because processors can access high quality solutions in early
+iterations  which in turn brought a reduction in the search tree and problem size 
+    parallel constraint solving
+designing and developing parallel programs has been a manual process where the programmer was responsible for both identifying and implementing parallelism  barney   livermore         in this section  we only discuss parallel constraint solving  about parallel
+logic programming  we refer the reader to the surveys of de kergommeaux and codognet
+        and gupta  pontelli  ali  carlsson  and hermenegildo         about parallel integer
+programming  we refer the reader to the surveys of crainic  le cun  and roucairol        
+bader  hart  and phillips         and gendron and crainic        
+the main approaches to parallel constraint solving can roughly be divided into the following main categories  search space shared in memory  search space splitting  portfolio algorithms  problem splitting  most approaches require communication and synchronization 
+but the most important issue is load balancing which refers to the practice of distributing
+approximately equal amounts of work among tasks so that all processors are kept busy all
+the time 
+      search space in shared memory
+these methods are implemented by having many cores sharing a list of open nodes in the
+search tree  nodes for which there is at least one of the children that is still unvisited  
+starved processors just pick up the most promising node in the list and expand it  by
+defining different node evaluation functions  one can implement different strategies  dfs 
+bfs and others   perron        proposed a comprehensive framework tested with at most
+  processors  vidal  bordeaux  and hamadi        reported good performance for a parallel
+best first search up to    processors  although this kind of mechanism intrinsically provides
+excellent load balancing  it is known not to scale beyond a certain number of processors 
+beyond that point  performance starts to decrease  indeed  on a shared memory system 
+threads must contend with each other for communicating with memory and the problem is
+exacerbated by cache consistency transactions 
+      search space splitting
+search space splitting strategies exploring the parallelism provided by the search space
+are common approaches  when a branching is done  different branches can be explored
+in parallel  pruul  nemhauser    rushmeier         one challenge is load balancing  the
+branches of a search tree are typically extremely imbalanced and require a non negligible
+overhead of communication for work stealing  lai   sahni        
+the work stealing method was originally proposed by burton and sleep        and first
+implemented in lisp parallel machines  halstead         the search space is dynamically
+   
+
+fimalapert  regin    rezgui
+
+split during the resolution  when a worker finished to explore a subproblem  it asks other
+workers for another subproblem  if another worker agrees to the demand  then it splits
+dynamically its current subproblem into two disjoint subproblems and sends one subproblem
+to the starving worker  the starving worker steals some work to the busy one  note
+that some form of locking is necessary to avoid that several starving workers steal the
+same subproblems  the starving worker asks other workers in turn until it receives a new
+subproblem  termination of work stealing method must be carefully designed to reduce the
+overhead when almost all workers are starving  but almost no work remains  recent works
+based on this approach are those by zoeteweij and arbab         jaffar  santosa  yap  and
+zhu         michel  see  and hentenryck         and chu  schulte  and stuckey        
+because work stealing uses both communication  synchronization and computation time 
+this cannot easily be scaled up to thousands of processors  to address these issues  xie and
+davenport        allocated specific processors to coordination tasks  allowing an increase
+in the number of processors  linear scaling up to     processors  that can be used on a
+parallel supercomputer before performance starts to decline 
+machado  pedro  and abreu        proposed a hierarchical work stealing scheme correlated to the cluster physical infrastructure  in order to reduce the communication overhead 
+a worker first tries to steal from its local node  before considering remote nodes  starting
+with the closest remote node   this approach achieved good scalability up to     cores for
+the n queens and quadratic assignment problems  for constraint optimization problems 
+maintaining the best solution for each worker would require a large communication and
+synchronization overhead  but  machado et al  observed that the scalability was lowered
+because the lazy dissemination of the so far best solution  i e  because some workers use
+obsolete best solution 
+general purpose programming languages designed for multi threaded parallel computing
+like charm    kale   krishnan        and cilk    leiserson        budiu  delling   
+werneck        can ease the implementation of work stealing approaches  otherwise  a
+work stealing framework like bobpp  galea   le cun        le cun  menouer    vanderswalmen        provides an interface between solvers and parallel computers  in bobpp  the
+work is shared via a global priority queue and the search tree is decomposed and allocated to
+the different cores on demand during the search algorithm execution  periodically  a worker
+tests if starving workers exist  in this case  the worker stops the search and the path from
+the root node to the highest right open node is saved and inserted into the global priority
+queue  then  the worker continues the search with the left open node  otherwise  if no
+starving worker exists  the worker continues the search locally using the solver  the starving
+workers are notified of the insertions in the global priority queue  and each one picks up a
+node and starts the search  using or tools as an underlying solver  menouer and le cun
+        and menouer and le cun        observed good speedups for the golomb ruler
+problem with    marks       with    workers  and the    queens problem       with   
+workers   other experiments investigate the exploration overhead caused by their approach 
+bordeaux et al         proposed another promising approach based on a search space
+splitting mechanism not based on a work stealing approach  they use a hashing function
+allocating implicitly the leaves to the processors  each processor applies the same search
+strategy in its allocated search space  well designed hashing constraints can address the
+load balancing issue  this approach gives a linear speedup for up to    processors for the
+   
+
+fiembarrassingly parallel search in cp
+
+n queens problem  but then the speedups stagnate at    until to    processors  however 
+it only got moderate results     industrial sat instances 
+we have presented earlier works on the embarrassingly parallel search method based
+on search space splitting with loose communications  regin et al               rezgui et al  
+      
+fischetti  monaci  and salvagnin        proposed another paradigm called selfsplit in
+which each worker is able to autonomously determine  without any communication between
+workers  the job parts it has to process  selfsplit can be decomposed in three phases  the
+same enumeration tree is initially built by all workers  sampling   when enough open nodes
+have been generated  the sampling phase ends and each worker applies a deterministic rule
+to identify and solve the nodes that belong to it  solving   a single worker gathers the results
+from others  merging   selfsplit exhibited linear speedups up to    processors and good
+speedups up to    processors on five benchmark instances  selfsplit assumes that sampling
+is not a bottleneck in the overall computation whereas that can happen in practice  regin
+et al         
+sometimes  for complex applications where very good domain specific strategies are
+known  the parallel algorithm should exploit the domain specific strategy  moisan  gaudreault  and quimper         and moisan  quimper  and gaudreault        proposed a
+parallel implementation of the classic backtracking algorithm  limited discrepancy search
+ lds   that is known to be efficient in centralized context when a good variable value
+selection heuristic is provided  harvey   ginsberg         xie and davenport        proposed that each processor locally uses lds to search in the trees allocated to them  by a
+tree splitting or work stealing algorithm  but the global system does not replicate the lds
+strategy 
+cube and conquer  heule  kullmann  wieringa    biere        is an approach for parallelizing sat solvers  a cube is a conjunction of literals and a dnf formula a disjunction of
+cubes  the sat problem is split into several disjoint subproblems that are dnf formulas
+which are then solved independently by workers  cube and conquer using the conflictdriven clause learning  cdcl  solver lingeling outperforms other parallel sat solvers
+on some instances of the sat      benchmarks  but is also outperformed on many other
+instances  thus  concurrent cube and conquer  van der tak  heule    biere        tries
+to predict on which instances it works well and abort the parallel search after a few seconds
+in favor of a sequential cdcl solver if not 
+      las vegas algorithms   portfolios
+they explore the parallelism provided by different viewpoints on the same problem  for
+instance by using different algorithms or parameter tuning  this idea has also been exploited
+in a non parallel context  gomes   selman         no communication is required and an
+excellent level of load balancing is achieved  all workers visit the same search space   even
+if this approach causes a high level of redundancy between processors  it shows really good
+performance  it was greatly improved by using randomized restarts  luby  sinclair   
+zuckerman        where each worker executes its own restart strategy  more recently  cire 
+kadioglu  and sellmann        executed the luby restart strategy  as a whole  in parallel 
+they proved that it achieves asymptotic linear speedups and  in practice  often obtained
+   
+
+fimalapert  regin    rezgui
+
+linear speedups  besides  some authors proposed to allow processors to share information
+learned during the search  hamadi  jabbour    sais        
+one challenge is to find a scalable source of diverse viewpoints that provide orthogonal
+performance and are therefore of complementary interest  we can distinguish between
+two aspects of parallel portfolios  if assumptions can be made on the number of available
+processors then it is possible to handpick a set of solvers and settings that complement
+each other optimally  if we want to face an arbitrarily high number of processors  then we
+need automated methods to generate a portfolio of any size on demand  bordeaux et al  
+       so  portfolio designers became interested in feature selection  gomes   selman       
+            kautz  horvitz  ruan  gomes    selman         features characterize problem
+instances like number of variables  domain sizes  number of constraints  constraints arities 
+many portfolios select the best candidate solvers from a pool based on static features or by
+learning the dynamic behaviour of solvers  the sat portfolio isac  amadini  gabbrielli 
+  mauro        and the cp portfolio cphydra  omahony  hebrard  holland  nugent   
+osullivan        use feature selection to choose the solvers that yield the best performance 
+additionally  cphydra exploits the knowledge coming from the resolution of a training set
+of instances by each candidate solver  then  given an instance  cphydra determines the k
+most similar instances of the training set and determines a time limit for each candidate
+solver based on constraint program maximizing the number of solved instances within a
+global time limit of    minutes  briefly  cphydra determines a switching policy between
+solvers  choco   abscon  mistral  
+many recent sat solvers are based on a portfolio such as manysat  hamadi et al  
+       satzilla  xu  hutter  hoos    leyton brown         sartagnan  stephan   michael 
+       hydra  xu  hoos    leyton brown         pminisat  chu  stuckey    harwood 
+      based on minisat  een   sorensson         most of them combine portfolio based
+algorithm selection to automatic algorithm configuration using different underlying solvers 
+for example  satzilla  xu et al         exploits the per instance variation among solvers
+using learned runtime models 
+in general  the main advantage of the algorithms portfolio approach is that many strategies will be automatically tried at the same time  this is very useful because defining good
+search strategies is a difficult task 
+      problem splitting
+problem splitting is another idea that relates to parallelism  where the problem itself is split
+into pieces to be solved by each processor  the problem typically becomes more difficult to
+solve than in the centralized case because no processor has a complete view on the problem 
+so  reconciling the partial solutions of each subproblem becomes challenging  problem
+splitting typically relates to distributed csps  a framework introduced by yokoo  ishida 
+and kuwabara        in which the problem is naturally split among agents  as for privacy
+reasons  other distributed csp frameworks have been proposed such as those by hirayama
+and yokoo         chong and hamadi         ezzahir  bessiere  belaissaoui  and bouyakhf
+        leaute  ottens  and szymanek         and wahbi  ezzahir  bessiere  and bouyakhf
+       
+   
+
+fiembarrassingly parallel search in cp
+
+      parallel constraint propagation
+other approaches can be thought of  typically based on the parallelization of one key algorithm of the solver  for instance constraint propagation  nguyen   deville        hamadi 
+      rolf   kuchcinski         however  parallelizing propagation is challenging  kasif 
+      and the scalability is limited by amdahls law  some other approaches focus on
+particular topologies or make assumptions on the problem 
+      concluding remarks
+note that for the oldest approaches  scalability issues are still to be investigated because of
+the small number of processors  typically around    and up to    processors  one major
+issue is that all approaches may  and a few must  resort to communication  communication
+between parallel agents is costly in general  in shared memory models such as multi core 
+this typically means an access to a shared data structure for which one cannot avoid some
+form of locking  the cost of message passing cross cpu is even significantly higher  communication additionally makes it difficult to get insights on the solving process since the
+executions are highly inter dependent and understanding parallel executions is notoriously
+complex 
+most parallel b b algorithms explore leaves of the search tree in a different order than
+they would be on a single processor system  this could be a pity in situations where we
+know a really good search strategy  which is not entirely exploited by the parallel algorithm 
+for many approaches  experiments with parallel programming involve a great deal of nondeterminism  running the same algorithm twice on the same instance  with identical number
+of threads and parameters  may result in different solutions  and sometimes in different
+runtimes 
+
+   embarrassingly parallel search
+in this section  we present the details of our embarrassingly parallel search  first  section    
+introduces the key concepts that guided our design choices  then  section     introduces
+several search space splitting strategies implemented via the top down or bottom up decomposition procedures presented in section      section     gives details about the architecture
+and the communication  section     explains how to manage the queue of subproblems in
+order to obtain a deterministic parallel algorithm  section     gives more details about the
+implementation 
+    key concepts
+we introduce the key concepts that guided our design choices  massive static decomposition 
+loose communication  non intrusive implementation  toward a deterministic algorithm 
+      massive static decomposition
+the master decomposes the problem into p subproblems once and for all which are then
+solved in parallel and independently by the workers  so  the solving process is equivalent to
+the real time scheduling of p jobs on w parallel identical machines known as p   cmax  korf  
+   
+
+fimalapert  regin    rezgui
+
+schreiber         efficient algorithms exists for p   cmax and even the simple list scheduling
+algorithms  based on priority rules  are a     w    approximation  the desirable properties
+defined in section     should ensure low precision processing times that makes the problems
+easier  if we hold the precision and number of workers fixed  and increase the number of
+subproblems  then problems get harder until perfect schedules appear  and then they get
+easier  in our case  the number p of subproblems should range between one and three
+orders of magnitude larger than the number of workers w  if it is too low  the chance of
+finding perfect schedules  and therefore obtain good speedups  are low  if it is too large  the
+decomposition takes longer and becomes more difficult  if these conditions are met  then
+it is unlikely that a worker will be assigned more work than any other  and therefore  the
+decomposition will be statistically balanced  beside  to reach good speedups in practice 
+the total solving time of all subproblems must be close to the sequential solving time of the
+problem 
+an advantage is that the master and workers are independent  they can use different
+filtering algorithms  branching strategies  or even underlying solvers  the decomposition is
+a crucial step  because it can be a bottleneck of the computation and its quality also greatly
+impacts the parallelization efficiency 
+      loose communication
+p subproblems are solved in parallel and independently by the w workers  as load balancing
+must be statistically obtained from the decomposition  we do not allow work stealing in
+order to drastically reduce communication  of course  some communication is still needed
+to dispatch the subproblems  to gather the results and possibly to exchange useful additional
+information  like objective bound values  loose communication allows to use a star network
+without risk of congestion  a central node  foreman  is connected to all other nodes  master
+and workers  
+      non intrusive implementation
+for the sake of laziness and efficiency  we rely as much as possible on the underlying solver s 
+and on the computing infrastructure  consequently  we modify as little as possible the underlying solver  we do not consider nogoods or clauses exchanges because these techniques
+are intrusive and increase the communication overhead  additionally  logging and fault
+tolerance are respectively delegated to the underlying solver and to the infrastructure 
+      toward determinism
+a deterministic algorithm is an algorithm which  given a particular input  will always produce the same output  with the underlying machine always passing through the same sequence of states  if the determinism is already challenging for sequential b b algorithms
+due to their complexity  randomization  restarts  learning  optimization   it is still more
+difficult for parallel b b algorithms 
+here  we will always guarantee reproducibility if the real time assignment of subproblems to workers is stored  reproducibility means that it is always possible to replay the
+solving process  with some restrictions detailed later  our parallel algorithm can be made
+deterministic with no additional cost  moreover  the parallel algorithm should be able to
+   
+
+fiembarrassingly parallel search in cp
+
+mimic the sequential algorithm  i e  they produce identical solutions  it requires that the
+parallel algorithm visits the tree leaves in the same order as the sequential algorithm  more
+generally  it would be useful for debugging  performance evaluation  or incremental problem
+solving that the parallel algorithm may produce identical solutions no matter how many
+workers are present or which computing infrastructure is used 
+conversely  any real time scheduling algorithm can be applied to subproblems  it would
+allow to improve diversification by using more randomization  or to exploit past information
+provided by the solving process  in the experiments  we will only use fifo scheduling of
+the subproblems  because other scheduling policy would change the shape and size of the
+search tree and  therefore  reduces the relevance of speedups  unlike eps  work stealing
+approaches are not deterministic and offer no control on subproblem scheduling 
+    search space splitting strategies
+here  we extend the approach to search space splitting proposed by bordeaux et al         
+called splitting by hashing  let us recall that c is the set of constraints of the problem  to
+split the search space of a problem into p parts  one approach is to assign each subproblem
+i     i  p  an extended set of constraints c  hi where hi is a hashing constraint  which
+constrains subproblem i to a particular subset of the search space  hashing constraints
+must necessarily be sound and should be effective  nontrivial  and statistically balanced 
+sound hashing constraints must partition the search space  pi   hi must cover the entire
+initial search space  completeness   and the mutual intersections hi  hj     i   j  p 
+should preferably be empty  non overlapping  
+effective the addition of the hashing constraints should effectively allow each worker to
+efficiently skip the portions of the search space not assigned to its current subproblem  each
+subproblem must be significantly easier than the original problem  this causes overhead 
+to which we refer to as recomputation overhead 
+nontrivial the addition of the hashing constraints should not lead to an immediate
+failure of the underlying solver  thus  generating trivial subproblems might be paid by some
+exploration overhead  because many of them would have been discarded by the propagation
+mechanism of the sequential algorithm 
+statistically balanced all workers should be given about the same amount of work  if
+the decomposition is appropriate  then the number p of subproblems is significantly larger
+than the number w of workers  it is thus unlikely that a given worker would be assigned
+significantly more work than any other worker by any real time scheduling algorithm  however  it is possible that solving one subproblem requires significantly more work than another
+subproblem 
+bordeaux et al         defined hashing constraints by selecting a subset x of the variables
+p
+of the problem and stating hi     i  p  as follows  xx x  i mod p  this effectively
+decomposes a problem into p problems if p is within reasonable limits  for p      it imposes
+a parity constraints over the sum of the variables  splitting can be repeated to scale up to
+an arbitrary number of processors  this splitting is obviously sound  but less effective for
+   
+
+fimalapert  regin    rezgui
+
+cp solvers than for sat solvers  here  we study assignment splitting and node splitting to
+generate a given number p  of subproblems 
+      assignment splitting
+let us consider a non empty subset x  x of d ordered variables  x    x            xd    a vector     v            vd   is a tuple on x if vj  d xj    j              d   let h      dj    xj   vj  
+be the hashing constraints which restrict the search space to solutions extending the tuple   
+q
+a total decomposition on x splits the initial problem into di   d xi   subproblems  i e  one
+subproblem per tuple  a total decomposition is clearly sound and effective  but not efficient
+in practice  indeed  regin et al         showed that the number of trivial subproblems can
+grow exponentially 
+in a table decomposition  a subproblem is defined by a set of tuples that allows to reach
+exactly the number p  of subproblems  let t be an ordered list ofj tuples
+on x such that
+k
+ t  
+ 
+ t     p   then  the first subproblem is defined by the first k   p  tuples  the second
+subproblem is defined by the following k tuples  and so on  so  all subproblems are defined
+by the same number of tuples possibly with the exception of the last 
+a tuple  is solver consistent if the propagation of the extended set of constraints c 
+h    by the underlying solver does not detect unsatisfiability  in order to obtain nontrivial
+decompositions  total and table decompositions are restricted to solver consistent tuples 
+      node splitting
+node splitting allows the parallel algorithm to exploit domain specific strategies for the
+decomposition when a good strategy is known  let us recall some concepts on search
+trees  perron        that are the basis of the decomposition procedures introduced later 
+to decompose the problems  one needs to be able to map individual parts of the search tree
+to hashing constraints  these parts are called open nodes  once open nodes are defined 
+we present how a search tree is decomposed into a set of open nodes 
+open nodes and node expansion the search tree is partitioned into three sets  open
+nodes  closed nodes  and unexplored nodes  here  we do not make any assumption about
+the arity of the search tree  i e  the maximal number of children of its nodes  these subsets
+have the following properties 
+ all the ancestors of an open node are closed nodes 
+ each unexplored node has exactly one open node as its ancestor 
+ no closed node has an open node as its ancestor 
+the set of open nodes is called the search frontier as illustrated in figure    the search
+active
+path
+closed
+
+open
+
+frontier
+
+unexplored
+
+figure    node status and search frontier of a search tree 
+   
+
+fiembarrassingly parallel search in cp
+
+frontier evolves simply through a process known as node expansion  it removes an open node
+from the frontier  transforms the removed node into a closed node  and adds its unexplored
+children to the frontier  node expansion is the only operation that happens during the
+search  it corresponds to the branch operation in a b b algorithm 
+at any point of the search  the search frontier is a sound and nontrivial decomposition
+of the original problem where each open node is associated to a subproblem  the decomposition is effective if and only if the branching strategy is effective  let us remark that
+assignment splitting can be seen as a special case of node splitting in which a static ordering
+is used for variables and values 
+active path and jumps in the search tree expanding one node after another may
+require changing the state  at least the variables domains  of the search process from the
+first node to the second  so  the worker in charge of exploring an open node must reconstruct
+the state it visits  this is done using an active path and a jumping operation 
+when going down in the search tree  our search process builds an active path  which is
+the list of ancestors of the current open node  as illustrated in figure    when a worker
+moves from one node to another  it has to jump in the search tree  to make the jump  it
+simply recomputes every move from the root until it gets to the target node  this causes
+overhead  to which we refer to as recomputation overhead  recomputation does not change
+the search frontier because it does not expand a node 
+    decomposition procedures
+the decomposition challenge is to find the depth at which the search frontier contains
+approximately p  nodes  the assignment splitting strategy is implemented by a top down
+procedure which starts from the root node and incrementally visits the next levels  whereas
+the node splitting strategy is implemented by a bottom up procedure which starts form a
+level deep enough and climbs back to the previous levels 
+      top down decomposition
+the challenge of the top down decomposition is to find d ordered variables which produce
+approximately p  solver consistent tuples  algorithm   realizes a solver consistent table
+decomposition by iterated depth bounded depth first searches with early removals of inconsistent assignments  regin et al         
+the algorithm starts at the root node with an
+empty list of tuples  line     it computes a list t of p  tuples that are a solver consistent
+table decomposition by iterativly increasing the decomposition depth  let us assume that
+there exists a static order of the variables  at each iteration  it determines a new lower
+bound  line    on the decomposition depth d  i e  the number of variables involved in
+the decomposition  this lower bound uses the cartesian product of the current domains
+of the next variables xd     xd           then  a depth bounded depth first search extends the
+decomposition to its new depth and updates the list of tuples  line     the current tuples
+are added to the constraints of the model during the search  line    in order to reduce
+redundant work  after the search  the extended tuples are propagated  line    to reduce
+the domains  and to improve the next lower bound on the decomposition depth  each tuple
+was solver consistent  not proven infeasible  during the last search  the process is repeated
+until the number  t   of tuples is greater or equal to p    at the end  tuples are aggregated
+   
+
+fimalapert  regin    rezgui
+
+algorithm    top down decomposition 
+
+ 
+ 
+
+ 
+
+ 
+
+ 
+ 
+
+ 
+ 
+
+ 
+
+  
+
+data  a csp  x   d  c  and a number of subproblems p 
+result  a list of tuples t
+d    
+t  
+   simulate a breadth first search  iterated depth bounded dfss 
+repeat
+   determine
+on the decomposition
+depth    
+o
+n fi a lower bound
+ql
+fi
+ 
+d  min l fi max     t     i d    d xi     p  
+
+  
+
+   extend the current decomposition with new variables    
+t  depthboundeddfs  x   c    t h      d   x            xd    
+if t     then break 
+   propagate the tuples  without failure     
+d  propagate  x   c    t h      d  
+until  t     p   
+   aggregate tuples to generate exactly p  subproblems   
+t  aggregatetuples t      all subproblems become simultaneously available 
+  
+foreach   t do sendsubproblem  x   c  h     d  
+
+to generate exactly p  subproblems  in practice  consecutive tuples of t are aggregated 
+all subproblems become simultaneously available after the aggregation 
+sometimes  the sequential decomposition is a bottleneck because of amdahls law  so 
+the parallel decomposition procedure increases the scalability  regin et al          only
+two steps differ from algorithm    first  instead of starting at depth   with an empty list
+of tuples  line   of algorithm     a first list is quickly generated with at least five tuples per
+worker 
+n fi
+o
+ 
+ 
+
+fi ql
+d  min l fi i    d xi        w  
+qd
+t  i   d xi   
+
+second  at each iteration  each tuple is extended in parallel instead of extending sequentially all tuples  line   of algorithm     the parallel decomposition can change the ordering
+of t compared to the sequential one  again  all subproblems only become available at the
+end of the decomposition 
+
+ 
+
+t     
+run in parallel
+foreach   t do
+   extend each tuple in parallel   
+t    t    depthboundeddfs  x   c  h     d   x            xd    
+
+ 
+
+t  t   
+
+ 
+ 
+ 
+
+both top down procedures assume that the variable ordering used in the decomposition is static  the next decomposition procedure bypasses this limitation and handles any
+branching strategy 
+   
+
+fiembarrassingly parallel search in cp
+
+algorithm    bottom up decomposition 
+ 
+
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+  
+
+data  a csp  x   d  c   a decomposition depth d    and a subproblem limit p  
+p    
+   generate subproblems by visiting the top of the real tree    
+before node callback decomposition node  is
+if depth node   d  then
+sendsubproblem  node  
+p  p     
+if p  p then
+   decrease dynamically the depth    
+d   max    d      
+p     p 
+backtrack 
+dfs  x  c d  
+
+      bottom up decomposition
+the bottom up decomposition explores the search frontier at the depth d  with approximately p  nodes  in its simplest form  the decomposition depth d  can be provided by a
+user with good knowledge of the problem  algorithm   explores the search frontier at depth
+d  using a depth first search as illustrated in figure   a   a search callback identifies each
+node at level d   line     and sends immediately its active path  which defines a subproblem 
+so that the subproblem will be solved by a worker  if the decomposition depth is dynamic 
+then it is reduced if the number of subproblems becomes too large  line     it aims to
+compensate a poor choice of the decomposition depth d    in practice  the depth is reduced
+by one unit if the current number of subproblems exceeds a given limit p   this limit is
+initially set up to p      p  and is doubled each time it is reached  on the contrary  the
+depth is static  p      if it never changes whatever be the number of subproblems 
+in practice  it is not common that the user provides the decomposition depth  and
+an automated procedure without any users intervention is needed  algorithm   aims at
+identifying the topmost search frontier with approximately p  open nodes by sampling and
+estimation  the procedure can be divided into three phases  build a partial tree by sampling
+
+final depth d
+
+search frontier
+
+dynamic
+
+
+
+p nodes
+
+static
+p nodes
+
+initial depth d
+
+ p nodes
+
+ a  decomposition 
+
+ b  estimation 
+
+figure    bottom up decomposition and estimation 
+   
+
+fimalapert  regin    rezgui
+
+algorithm    bottom up estimation 
+
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+  
+  
+
+data  a csp  x   d  c  and a number of subproblems p   
+data  a time limit t  a node limit n  and a maximum depth d large enough
+result  a decomposition depth d 
+   set counters for the width of the levels   
+foreach d      d  do width d     
+   build a partial tree by sampling    
+before node callback estimation node  is
+d  depth node  
+if d  d then
+width d   width d      
+if width d   p  then d  d     
+else backtrack 
+if hasfinished  t n  then break 
+dfs  x  c d  
+   estimate the level widths of the tree and the decomposition depth 
+width  estimatewidths width  
+d   estimatedepth width  p    
+
+  
+
+the top of the real search tree  estimate the level widths of the real tree  and then determine
+the decomposition depth d  with a greedy heuristic 
+since we need to explore the top of the search tree  an upper bound d on the decomposition depth is fixed  the maximum decomposition depth d must be chosen according
+to the number of workers and the expected number of subproblems per worker  if d is
+too small  the decomposition could generate too few subproblems  if d is too large  the
+sampling time increases while the decomposition quality could decrease 
+the sampling phase builds a partial tree with at most p  open nodes on a level using
+a callback of a depth first search  the number of open nodes at each level of the partial
+tree is counted by the callback  the maximum depth d is reduced each time p  nodes are
+opened at a given level  line     if the sampling ends within its limits  then the top of the
+tree has been entirely visited and no estimation is needed  otherwise  line     one needs
+to estimate the widths of the topmost levels of the tree depending on the partial tree  the
+estimation is a straightforward adaptation of the one proposed by cornuejols  karamanov 
+and li        to deal with n ary search tree  line      in practice  the main issue is that the
+higher the arity is  the lower is the precision of the estimation  therefore  a greedy heuristic
+determines the decomposition depth based on the estimated number of nodes per level  but
+also on the number of nodes in the partial tree  line      the heuristics minimizes the
+absolute deviation between the estimated number of nodes and the expected number p    if
+several levels have an identical absolute deviation  then the lowest level with an estimated
+number of subproblems greater than or equal to p  is selected 
+    architecture and communication
+we describe messages exchanged by the actors depending on the problems type  then 
+a typical use case illustrates the solving process for an optimization problem  briefly  the
+   
+
+fiembarrassingly parallel search in cp
+
+communication network is a star network where the foreman acts as a pipe to transmit
+messages between the master and workers 
+      actors and messages
+the total number of messages depends linearly of the number of workers  w  and the
+number of subproblems  p   all messages are synchronous for sake of simplicity which
+means that work must wait until the communications have completed  barney   livermore 
+       interleaving computation with communication is the single greatest benefit for using
+asynchronous communications since work can be done while the communications are taking
+place  however  asynchronous communications complicate the architecture  for instance if
+a message requests a answer 
+master is the control unit which decomposes the problem and collects the final results 
+it sends the following messages  create the foreman  give a subproblem to the foreman 
+wait for the foreman to gather all results  destroy the foreman  the master only deals
+with the foreman  the decomposition time is the elapsed time between the create and
+wait messages  the workers time is the elapsed time between the first give and destroy
+messages  the wall clock time is the elapsed time from the creation to the destruction of
+the master 
+foreman is the central node of the star network  it is a queuing system which stores subproblems received from the master and dispatches them to workers  it also gathers results
+collected from the workers  the foreman allows the master to concentrate on the problems
+decomposition  which is a performance bottleneck  by handling all communications with the
+workers  it sends the following messages  create a worker  give a subproblem to a worker 
+collect  send  the final results to the master  destroy a worker  when the foreman
+detects that the search has ended  it sends a collect message containing the final results
+to the master 
+workers are search engines  they send the following messages  find a subproblem  the
+foreman must answer by a give message   collect  send  results to the foreman  the
+results contain essential information about the solution s  and the solving process  workers
+only know the foreman  when a worker acquires new work  receives a give message from
+the foreman   the acquired subproblem is recomputed which causes recomputation overhead 
+in work stealing context  schulte        noticed that the higher the node is in the search
+tree  the smaller is the recomputation overhead  by construction  only the topmost nodes
+are used here 
+      problems types
+we discuss the specificities of first solution  all solution  and best solution searches 
+first solution search the search is complete as soon as a solution has been found 
+other workers must be immediately terminated as well as the decomposition procedure 
+all solution search the search is complete when all subproblems have been solved 
+   
+
+fimalapert  regin    rezgui
+
+best solution search the main design issue in best solution search is to maintain the
+so far best solution  the sequential b b algorithm always knows the so far best solution 
+this is difficult to achieve in a concurrent setting with several workers  maintaining the best
+solution for each worker could lead to large communication and synchronization overheads 
+instead we prefer a solution where both the foreman and workers maintain the so far best
+solution as follows  by default  the give and collect messages between the foreman and the
+workers carry the objective information  additionally  a worker can send better messages
+to the foreman with an intermediate solution  or the foreman can send its best solution to
+all workers  for instance  when a worker finds a new solution  it informs the foreman by
+sending a better message if the solution is accepted by a threshold function  similarly 
+when the foreman receives a new solution through a collect or better message  it checks
+whether the solution is really better  if the solution is accepted by the threshold function 
+the foreman sends another better message to all workers  the architecture sketched above
+entails that a worker might not always know the so far best solution  in consequence  some
+parts of the search tree are explored  and they should have been pruned away if the worker
+had had exact knowledge  thus  the loose coupling might be paid by some exploration
+overhead 
+
+master
+
+foreman
+
+worker  
+
+worker  
+
+opt
+
+ allocate resources 
+   create   
+   create   
+   create   
+give
+
+find
+give
+opt
+
+better
+
+ best solution search 
+
+give
+
+give
+
+give
+collect
+find
+wait
+
+give
+collect
+better
+
+opt
+
+better
+
+ best solution search 
+
+collect
+
+collect
+opt
+ release resources 
+   destroy   
+   destroy   
+
+   destroy   
+
+master
+
+foreman
+master
+
+worker
+master 
+
+worker
+master 
+
+figure    sequence diagram of the solving process with two workers 
+   
+
+fiembarrassingly parallel search in cp
+
+      use case
+figure   is a sequence diagram illustrating the solving process for an optimization problem
+with two workers  it shows how actors operate with each other in chronological order 
+the first horizontal frame is the resource allocation  the master creates the foreman 
+the foreman creates the workers  immediately after creation  the master and each worker
+load the original problem  the foreman transparently manages a concurrent queue of subproblems produced by the master and consumed by workers  after that  workers will only
+jumps in the search tree 
+after the foreman creation  the master starts the decomposition of the original problem
+into p     subproblems  as soon as a subproblem is generated  the master gives it to
+the foreman  here  the give and find messages are interleaved as in the node splitting
+decomposition proposed in section        the assignment splitting decomposition proposed
+in section       would produce a unique give message with all subproblems  when the
+decomposition is finished  the master sends a wait message to the foreman and waits for
+a collect response containing the final result  this last collect message triggers the
+resource deallocation 
+each time a worker is starving  it asks the foreman for a subproblem and waits for it 
+here  the first subproblem is assigned to the first worker while the second worker waits for
+the second subproblem  the best solution search frames correspond to specific messages
+for optimization problems  the first worker quickly finds a good solution and sends it to
+the foreman via a better message  a second subproblem is generated by the master and
+then given to the foreman  in turn  the foreman gives the second subproblem and updated
+objective information to the second worker  the second problem is quickly solved by the
+second worker which sends a collect message to the foreman  the collect message also
+stands for a find message  then  the third  and last  subproblem is assigned to the second
+worker 
+the foreman broadcasts a better message because of the good quality of the solution
+received from the first worker  note that this message is useless for the first worker  the
+foreman detects the termination of the solving process and sends the collect message to the
+master if the three following conditions are met  the master is waiting  the subproblems
+queue is empty  and all workers are starving  the last horizontal frame is the resource
+deallocation 
+    queuing and determinism
+the foreman plays the role of a queuing system which receives subproblems from the master
+and dispatches them to the workers  in this section  we show that eps can be modified
+to return the same solution than the sequential algorithm which can be useful in several
+scenarios such as debugging or performance evaluation  generally  any queuing policy can
+be applied to select the next subproblem to solve 
+let us assume that the subproblems p    p            pp are sent to the foreman in a fixed
+order which is the case for the sequential top down procedure and the bottom up procedure 
+otherwise  a fixed order of subproblems can be obtained by sorting the subproblems 
+the first solution found by the sequential algorithm belongs to the satisfiable subproblem
+pi with the smallest index  i e  the leftmost solution  let us assume that the parallel
+   
+
+fimalapert  regin    rezgui
+
+algorithm finds a first solution for the subproblem pj such that j   i  then  it is not
+necessary to solve problems pk such that k   j and one must only wait for each problem
+pk such that k   j and then determine the leftmost solution  the satisfiable subproblem
+with the smallest index 
+it can easily be extended for optimization problems by slightly modifying the cutting
+constraints  usually  a cutting constraint is stated when a new solution is found that
+only allows strictly improving solution  on the contrary to other constraints  the cutting
+constraint is always propagated while backtracking  here  if a solution is found when solving
+the subproblem pj   then the cutting constraint only allows strictly improving solution for
+subproblems k  j  but also allows equivalent solution for subproblems k   j 
+so  the parallel algorithm returns the same solution than the sequential one if the
+subproblem are visited in the same order  moreover  the solution returned by the parallel
+algorithm does not depend on the number of workers  but only on the decomposition  in
+our experiments  the queuing policy is the fifo policy that ensures that subproblems are
+solved in the same order so that the speedups are relevant  however  there is no guaranty
+that the sequential and parallel algorithms return the same solution 
+
+   experimental results
+here  we describe experiments on eps and carry out a detailed data analysis  we aim
+to answer the following questions  is eps efficient  with different number of workers 
+with different solvers  on different computing platforms  compared to other parallel
+approaches  what is the influence of the different components  decomposition procedures 
+search strategies  constraint models   is eps robust and flexible  which anomalies can
+occur 
+section     presents the benchmark instances  execution environments  parameters settings  and the different implementations  first  in section      we analyze and evaluate the
+top down and bottom up decomposition procedures as well as the importance of the search
+strategy  especially for the decomposition  then  we evaluate the efficiency and scalability
+of parallel solvers on a multi core machine  section       on a data center  section      
+and on a cloud platform  section       in these sections  we compare our implementations
+of eps with work stealing approaches whenever it is possible  in section      we also analyze the efficiency of a parallel solver depending on the search strategy  in section     
+we transform with reasonable effort a parallel solver into a distributed parallel solver by
+using the batch scheduler provided by the data center  some anomalies of a parallel solver
+are explained and resolved by its distributed equivalent  last  section     discusses the
+performance of parallel solvers compared with static portfolios built from the underlying
+sequential solvers on the data center 
+    experimental protocol
+in this section  we introduce the benchmark instances  execution environments  metrics and
+notations  we also give more details about the implementations 
+   
+
+fiembarrassingly parallel search in cp
+
+      benchmark instances
+a lot of benchmark instances are available in the literature  we aim to select difficult
+instances with various models that represent problems tackled by cp  ideally  an instance
+is difficult if none of the solvers can solve it quickly  indeed  parallel solving is relevant
+only if it shortens a long wall clock time  here  we only consider unsatisfiable  enumeration
+and optimization problems instances  we will ignore the problem of finding a first feasible
+solution because the parallel speedup can be completely uncorrelated to the number of
+workers  making the results hard to analyze  we will consider optimization problems for
+which the same variability can be observed  but at a lesser extent because the optimality
+proof is required  the variability for unsatisfiable and enumeration instances is lowered  and
+therefore  they are often used as a test bed for parallel computing  besides  unsatisfiable
+instances have a practical importance  for instance in software testing  and enumeration is
+important for users to compare various solutions 
+the first set called fzn is a selection of    instances selected from more than     
+instances either from the repository maintained by kjellerstrand        or directly from the
+minizinc     distribution written in the flatzinc language  nicta optimisation research
+group         each instance is solved in more than     seconds and less than   hour with
+gecode  the selection is composed of   unsatisfiable    enumeration  and    optimization
+instances 
+the set xcsp is composed of instances from the categories acad and real of xcsp
+     roussel   lecoutre         it consists of difficult instances that can be solved within
+   hours by choco   malapert   lecoutre         a first subset called xcsp  is composed
+of   unsatisfiable and   enumeration instances whereas the second subset called xcsp  is
+composed of    unsatisfiable and   enumeration instances  the set xcsp  is composed of
+instances easier to solve than those of xcsp  
+besides  we will consider two classical problems  the n queens and the golomb ruler
+problems which have been widely used in the literature  gent   walsh        
+      implementation details
+we implemented eps method on top of three solvers  choco        written in java  gecode
+      and or tools rev       written in c    we use two parallelism implementation
+technologies  threads  mueller et al         kleiman  shah    smaalders        and
+mpi  lester        gropp   lusk         the typical difference between both is that
+threads  of the same process  run in a shared memory space  while mpi is a standardized
+and portable message passing system to exchange information between processes running
+in separate memory spaces  therefore  thread technology does not handle multiple nodes
+of a cluster whereas mpi does 
+in c    we use threads implemented by pthreads  a posix library  mueller et al  
+      kleiman et al         used by unix systems  in java  we use the standard java thread
+technology  hyde        
+there are many implementations for mpi like openmpi  gabriel  fagg  bosilca  angskun 
+dongarra  squyres  sahay  kambadur  barrett  lumsdaine  et al          intel mpi  intel
+corporation         mpi ch  mpi ch team        and ms mpi  krishna  balaji  lusk 
+thakur    tiller        lantz         mpi is a standard api  so the characteristics of the
+   
+
+fimalapert  regin    rezgui
+
+machine are never taken into account  so  the machine providers like bull  ibm or intel
+provide their own mpi implementation according to the specifications of the delivered machine  thus  the cluster provided by bull has a custom intel mpi     library  but openmpi
+      is also installed  and microsoft azure only supports its own ms mpi   library 
+or tools uses a sequential top down decomposition and c   threads  gecode uses a
+parallel top down decomposition and c   threads or mpi technologies  in fact  gecode
+will use c   pthread on the multi core computer  openmpi on the data center  and
+ms mpi on the cloud platform  gecode and or tools both use the lex variable selection
+heuristic because the top down decomposition requires a fixed variable ordering  choco 
+uses a bottom up decomposition and java threads  in every case  the foreman schedules
+the jobs in fifo to mimic as much as possible the sequential algorithm so that speedups
+are relevant  when needed  the master and the workers read the model from the same file 
+we always take the value selection heuristic which selects the smallest value whatever be
+the variable selection heuristic 
+      execution environments
+we use three execution environments that are representative of computing platforms available nowadays 
+multi core is a dell computer with     gb of ram and   intel e            ghz processors running on scientific linux      each processor has    cores  
+data center is the centre de calcul interactif hosted by the universite nice sophia
+antipolis which provides a cluster composed of    nodes       cores  running on centos
+     each node with    gb of ram and   intel e            ghz processors    cores   the
+cluster is managed by oar  capit  da costa  georgiou  huard  martin  mounie  neyron 
+  richard         i e   a versatile resource and task manager  as thread technology is
+limited to a single node of a cluster  choco  can use up to    physical cores whereas gecode
+can use any number of nodes thanks to mpi 
+cloud computing is a cloud platform managed by the microsoft company  microsoft
+azure  that enables to deploy applications on windows server technology  li         each
+node has    gb of ram and intel xeon e      e     ghz processors    physical cores 
+we were allowed to simultaneously use   nodes     cores  managed by the microsoft hpc
+cluster       microsoft corporation        
+some computing infrastructures provide hyper threading technologies  hyper threading
+improves parallelization of computations  doing multiple tasks at once   for each core
+that is physically present  the operating system addresses two logical cores  and shares the
+workload among them when possible  the multi core computer provides hyper threading 
+whereas it is deactivated on the cluster  and not available on the cloud 
+      setting up the parameters
+the time limit for solving each instance is set to    hours whatever be the solver  if the
+number of workers is strictly less than the number of cores  w   c   then there will always
+be unused cores  usually  one chooses w   c  so that all workers can work simultaneously 
+on the multi core computer  we use two workers per physical core  w    c  because hyperthreading is efficient as experimentally demonstrated in appendix a  the target number
+   
+
+fiembarrassingly parallel search in cp
+
+p  of subproblems depends linearly on the number w of workers  p        w  that allows
+statistical balance of the workload without increasing too much the total overhead  regin
+et al         
+in our experiments  the network and ram memory loads are low in regards to the
+capacities of the computing infrastructures  indeed  the total number of messages depends
+linearly of the number of workers and the number of subproblems  ram is pre allocated
+if the computing infrastructure allows it  last  workers almost produce no input output or
+disk access 
+      metrics and notations
+let t be the solving time  in seconds  of an algorithm and let su be the speedup of a parallel
+algorithm  in the tables  a row gives the results obtained by different algorithms for a given
+instance  for each row  the best solving times and speedups are indicated in bold  dashes
+indicate that the instance is not solved by the algorithm  question marks indicate that
+the speedup cannot be computed because the sequential solver does not solve the instance
+within the time limit  arithmetic means  abbreviated am  are computed for solving times 
+whereas geometrical means  abbreviated gm  are computed for speedups and efficiency 
+missing values  i e  dashes and question marks  are ignored when computing statistics 
+we also use a scoring procedure based on the borda count voting system  brams  
+fishburn         each benchmark instance is treated like a voter who ranks the solvers 
+each solver scores points related to the number of solvers that it beats  more precisely  a
+solver s scores points on problem p by comparing its performance with each other solver s 
+as follows 
+ if s gives a better answer than s    it scores   point 
+ else if s did not answer or gives a worse answer than s    it scores   point 
+ else scoring is based on execution time comparison  s and s  give indistinguishable
+answers  
+let t and t  respectively denote the wall clock times of solvers s and s  for a given problems
+instance  in case of indistinguishable answers  s scores f  t  t    according to the borda system
+used in the minizinc challenge  but  the function f does not capture users preferences very
+well  indeed  if the solver s solves n problems in     seconds and n others in      seconds
+whereas the solver s  solves the first n problems in     seconds and the n others in    
+seconds  then both solvers obtain the same score n whereas most users would certainly
+prefer s    so  we use another scoring function g t  t    in which g t  can be interpreted as
+the utility function for solving the problems instance within t seconds  the function g t  is
+strictly decreasing from     toward    the remaining points are shared using the function f  
+
+f  t  t     
+
+t 
+t   t 
+
+g t  t      g t    g t g t    f  t  t   
+
+g t   
+
+ 
+    loga  t          
+
+using the function g  a       in the previous example  solvers s and s  are respectively
+scored       n and       n points 
+   
+
+fimalapert  regin    rezgui
+
+    analysis of the decomposition
+in this section  we compare the quality and performance of the top down and bottom up
+decomposition procedures introduced in section     
+      decomposition quality
+the top down decomposition always returns the target number p        w of subproblems
+whereas it is not guaranteed with the bottom up decomposition  figure   a  is a boxplot
+of the number of subproblems per worker  p   w  with the bottom up decomposition of
+choco  depending on the number of workers  boxplots display differences among populations without making any assumptions of the underlying statistical distribution  they are
+non parametric  the box in the boxplot spans the range of values from the first quartile
+to the third quartile  the whiskers extend from each end of the box for a range equal to
+    times the interquartile range  any points that lie outside the range of the whiskers are
+considered outliers  they are drawn as individual circles 
+for each number of workers w                 the decompositions of xcsp instances
+using one variable selection heuristic among lex  dom  dom ddeg dom wdeg  dom bwdeg 
+and impact  combined with minval  are considered  the bottom up decomposition obtains
+satisfying average performance  mostly between    and     subproblems per worker  while
+respecting as much as possible the branching strategy  however  a few anomalies occur 
+first  the decomposition is sensitive to the shape of the search tree  sometimes  the model
+only contains a few variables with large domains which forbid an accurate decomposition 
+for instance  the first and second levels of the knights      search tree respectively contain
+more than      and       nodes  there can also be a significant underestimation of the
+tree size  especially if the branching has high arity  for instance  the width of the second
+level of fapp          is estimated around     nodes while it contains more than     
+nodes  on the contrary  an underestimation can occur if top nodes are eliminated from a
+search tree with a low arity  apart for a few underestimation  the decomposition is accurate
+for search trees with low arity 
+the top down decomposition is accurate  but requires a fixed variable ordering  whereas
+the bottom up decomposition is less accurate  but handles any branching strategy 
+ 
+
+   
+
+   
+instances    
+
+subproblems per worker
+
+    
+
+  
+
+   
+
+   
+
+ 
+   
+
+   
+  
+
+  
+
+ 
+
+   
+
+workers
+
+choco  w   
+choco  w    
+gecode w   
+gecode w    
+   
+
+ 
+
+  
+
+   
+
+time  s 
+
+ a  number of subproblems per worker 
+
+ b  decomposition time 
+
+figure    analysis of the decomposition procedures  w                
+   
+
+    
+
+fiembarrassingly parallel search in cp
+
+      decomposition time
+figure   b  gives the percentage of decompositions done within a given time  the choco 
+times are reported for all variable selection heuristics on xcsp instances  the gecode times
+are reported for lex on xcsp and fzn instances 
+because of the implementation differences  times reported for choco  and gecode are
+slightly different  indeed  the decomposition time alone is given for gecode  the choco 
+times take also into account the estimation time  the time taken by the foreman to fill
+the queue of subproblems  and the time taken by workers to empty the queue  let us
+also remind that subproblems only become available after the top down decomposition is
+complete whereas they become available on the fly during the bottom up decomposition 
+in both cases  the reported time is a lower bound on the solving time 
+the top down decomposition is faster than the bottom up decomposition because of its
+parallelism  in fact  the gecode decomposition is often faster than the estimation time alone 
+one compelling example is the instance knights      which has the highest time  around
+    seconds  as well as a poor quality because the structure of the problem is unsuited
+for the bottom up decomposition  there are only a few variables with large domains  more
+than      values   there is almost no domain reduction in the top of the tree  and the
+propagation is very long 
+to conclude  the parallel top down decomposition of gecode is fast and accurate while
+the bottom up decomposition offers greater flexibility  but less robustness 
+      influence of the search strategy
+to analyze the influence of search strategies on the decomposition and the resolution  we
+apply a variable selection heuristic during the decomposition  master  and another one
+during the resolution  workers   table   gives the solving times for the combinations of lex
+or dom when solving the instances xcsp   results are not reported if there is no significant
+differences among solving times  the choice of the variable selection heuristic is more critical
+for the decomposition than for the resolution  indeed  initial choices made by the branching
+are both the least informed and the most important  as they lead to the largest subtrees and
+the search can hardly recover from early mistakes  from now on  the master and workers
+will use the same variable selection heuristic 
+
+instances
+
+worker
+master
+
+costasarray   
+latinsquare dg   all
+lemma       mod
+pigeons   
+quasigroup    
+queenattacking  
+squares    
+
+lex
+
+dom
+
+lex
+
+dom
+
+lex
+
+dom
+
+     
+     
+     
+      
+     
+     
+     
+
+     
+     
+     
+     
+     
+     
+      
+
+     
+     
+     
+     
+     
+     
+     
+
+     
+     
+     
+     
+     
+     
+      
+
+table    solving times with different search strategies  choco   multi core  w    c       
+   
+
+fimalapert  regin    rezgui
+
+    multi core
+in this section  we use parallel solvers based on thread technologies to solve the instances
+of xcsp  or the n queens problem using a multi core computer  let us recall that there is
+two worker per physical core because hyper threading is activated  w    c        we show
+that eps frequently gives linear speedups  and outperforms the work stealing approach
+proposed by schulte         and nielsen        
+      performance analysis
+table   gives the solving times and speedups of the parallel solvers using    workers for the
+xcsp  instances  choco  is tested with lex and dom whereas gecode and or tools only
+use lex  they are also compared to a work stealing approach denoted gecode ws  schulte 
+      nielsen         first  implementations of eps are faster and more efficient than the
+work stealing  eps often reaches linear speedups in the number of cores whereas it never
+happens for the work stealing  even worse  three instances are not solved within the   
+hours time limit using the work stealing whereas they are using the sequential solver 
+for choco   dom is more efficient in parallel than lex but remains slightly slower in
+average  decomposition is a key of the bad performance on the instances knights      and
+lemma       mod  as outlined before  the decomposition of knights      takes more than
+     seconds and generates too much subproblems  which forbids any speedup  the issue
+is lessened using the sequential decomposition of or tools and is resolved by the parallel
+top down decomposition of gecode  note also that the sequential solving times of or tools
+and gecode respectively are    and    times higher  similarly  the long decomposition time
+of choco  for lemma       mod leads to a low speedup  however  the moderate efficiency
+of choco  and gecode for squares     is not caused by the decomposition 
+gecode and or tools are often more efficient and faster than choco   the solvers show
+different behaviors even when using the same variable selection heuristic because their
+instances
+
+costasarray   
+knights     
+latinsquare dg   all
+lemma       mod
+ortholatin  
+pigeons   
+quasigroup    
+queenattacking  
+series   
+squares    
+am  t  or gm  su 
+borda score  rank 
+
+choco  lex
+
+choco  dom
+
+gecode
+
+or tools
+
+gecode ws
+
+t
+
+su
+
+t
+
+su
+
+t
+
+su
+
+t
+
+su
+
+t
+
+su
+
+     
+      
+     
+     
+     
+      
+     
+     
+    
+     
+
+    
+   
+    
+   
+    
+    
+    
+    
+    
+    
+
+     
+      
+     
+     
+     
+     
+     
+     
+    
+      
+
+    
+   
+    
+   
+    
+    
+    
+    
+    
+    
+
+    
+     
+     
+   
+     
+     
+    
+       
+    
+    
+
+    
+    
+    
+    
+    
+    
+    
+ 
+    
+    
+
+    
+      
+     
+   
+     
+     
+    
+
+    
+    
+
+    
+    
+    
+    
+    
+    
+    
+
+    
+    
+
+     
+
+      
+   
+      
+
+    
+
+     
+     
+
+   
+
+   
+    
+   
+
+    
+
+   
+   
+
+     
+
+    
+
+     
+
+    
+
+      
+
+    
+
+     
+
+    
+
+      
+
+   
+
+        
+
+        
+
+        
+
+        
+
+       
+
+table    solving times and speedups  multi core  w    c        gecode and or tools use
+the lex heuristic 
+
+   
+
+fiembarrassingly parallel search in cp
+
+propagation mechanisms and decompositions differ  furthermore  the parallel top down
+decomposition of gecode does not preserve the ordering of the subproblems in regard to
+the sequential algorithm 
+      variations about the n queens problem
+here  we verify the effectiveness of eps in classic csp settings  we consider four models for
+the well known n queens problem  n        the n queens puzzle is the problem of placing
+n chess queens on an n  n chessboard so that no two queens threaten each other  here  we
+enumerate all solutions and the heuristics lex or dom are reasonable choices  the models are 
+alldifferent global constraints which enforce arc consistency  ac   alldifferent constraints which enforce bound consistency  bc   arithmetic inequalities constraints  neq  
+and a dedicated global constraint  jc   milano   trick        ch     
+table   gives the solving times and speedups of choco  with    workers when the
+decomposition depth is either   or    what is striking for this result is that our splitting
+technique gives excellent results  with a linear speedup for up to    processors with the
+exception of the jc model  it is unfortunate since the jc model is clearly the best model
+for the sequential solver  here  dom is always a better choice than lex  the number of
+subproblems for dom is the same whatever the model whereas the total number of nodes
+changes  it indicates that the filtering is weak at the top of the search tree 
+most other works report good results  and often linear speedups for the n queens problem  bordeaux et al         reported linear speedups up to    cores for the    queens  but
+no more improvement until    cores  whereas machado et al         scales up to     workers using their hierarchical work stealing approach  menouer and le cun        reported
+speedups around   using    cores for the    queens  and pedro  abreu  pedro  and abreu
+       reported speedups around    using    cores  zoeteweij and arbab        reported
+linear speedups up to    cores for the    queens  pedro et al         reported a speedup
+of    using    cores  so  the eps efficiency is slightly above the average  because similar
+results are observed with    and    queens 
+the previous experimental setting is in favor of eps because we are exploring a search
+space exhaustively  and the problem is highly symmetric  indeed  the variance of the subproblems solving time is low  especially with higher levels of consistency  note that the
+lower speedups of the jc model are probably not caused by load balancing issues because
+the subproblems of the neq model have a greater mean and variance 
+
+model
+
+lex
+
+dom
+
+d  
+
+bc
+ac
+neq
+jc
+
+d  
+
+d  
+
+d  
+
+t
+
+su
+
+t
+
+su
+
+t
+
+su
+
+t
+
+su
+
+     
+      
+     
+     
+
+    
+    
+    
+    
+
+     
+      
+     
+     
+
+    
+    
+    
+    
+
+     
+      
+     
+     
+
+    
+    
+    
+    
+
+     
+      
+     
+     
+
+    
+    
+    
+    
+
+table    variations about the    queens problem  choco   multi core  w    c       
+   
+
+fimalapert  regin    rezgui
+
+instances
+
+lex
+t
+
+dom
+su
+
+t
+
+dom ddeg
+su
+
+t
+
+dom bwdeg
+
+su
+
+t
+
+su
+
+dom wdeg
+t
+
+cc        
+                  
+ 
+
+                  
+costasarray   
+          
+                               
+     
+crossword m  
+         
+
+
+
+
+         
+     
+crossword m c 
+                                                  
+fapp         
+
+
+
+
+
+                  
+knights     
+          
+                                
+     
+knights     
+          
+                                        
+knights     
+         
+                                     
+langford     
+       
+                                         
+       
+                                  
+     
+langford     
+langford     
+
+           
+                      
+latinsquare dg 
+           
+                     
+         
+     
+lemma       mod
+         
+                   
+         
+     
+          
+                     
+                
+ortholatin  
+pigeons   
+                                                   
+                                
+         
+     
+quasigroup    
+queenattacking  
+                                            
+     
+queensknights 
+
+
+
+
+
+                  
+ruler       a 
+                      
+
+
+        
+    
+                                                  
+ruler       a 
+scen   f 
+
+
+
+
+
+            
+
+series   
+         
+                               
+     
+                               
+               
+squares    
+squaresunsat 
+
+
+
+
+
+                  
+am  t  or gm  su 
+borda score  rank 
+ 
+ 
+
+      
+
+   
+
+        
+
+      
+
+          
+
+        
+
+   
+
+      
+
+        
+
+          
+
+        
+
+ 
+
+crossword m  words      
+crossword m c words vg    ext
+queensknights      mul   squaresunsat      
+
+ 
+
+su
+
+impact
+t
+
+su
+
+           
+ 
+    
+          
+             
+              
+   
+
+
+               
+               
+   
+         
+          
+ 
+               
+          
+ 
+    
+        
+   
+         
+    
+          
+              
+   
+          
+             
+   
+
+
+   
+         
+              
+   
+
+
+   
+         
+    
+          
+   
+
+
+   
+
+         
+
+      
+
+   
+
+        
+
+latinsquare dg   all
+
+table    detailed speedups and solving times depending on the variable selection heuristics
+ choco   data center  w       
+
+  
+
+  
+
+speedup
+
+  
+
+  
+
+  
+
+ 
+
+ 
+
+lex
+
+dom
+
+ddeg
+
+bwdeg
+
+wdeg
+
+impact
+
+variable selection
+
+figure    speedups of the variable selection heuristics  choco   data center  w       
+
+   
+
+fiembarrassingly parallel search in cp
+
+    data center
+in this section  we study the influence of the search strategy on the solving times and
+speedups  the scalability up to     workers  and compare eps to a work stealing approach 
+      influence of the search strategy
+we study the performance of choco  using    workers for solving the xcsp instances using
+the variable selection heuristics presented in section      figure   is a boxplot of the
+speedups for each variable selection heuristic  first  speedups are lower for dom bwdeg
+because the decomposition is not effective  the binary branching states the constraint x   a
+in the left branch and x    a in the right branch  so  the workload between the left and right
+branches is imbalanced  in this case  only the positive decisions in the left branches should
+be taken into account  second  without learning  lex and dom   the parallel algorithm
+is more efficient and robust in terms of speedup  with learning  dom bwdeg  dom wdeg 
+impact   the parallel algorithm may explore a different search tree than the sequential
+one  indeed  the master only explores the top of the tree which changes the learning  and
+possibly the branching decisions  the worker also learns only from their subproblems  and
+not from the whole search tree  this frequently causes exploration overhead as for solving
+queensknights      mul  twelve times more nodes using dom wdeg  or  sometimes gives a
+super linear speedup as for solving quasigroup      three times less nodes using impact  
+last  low speedups occur for all variable selection heuristics 
+table   gives solving times and speedups obtained for the different variable selection
+heuristics  borda scores are computed for choco   table    and gecode  table     first 
+no variable selection heuristics strictly dominates the others either in sequential or parallel 
+however  dom wdeg is the most robust as outlined by the borda scores  in fact  the variability of the solving times between the different heuristics is reduced by the parallelization 
+but remains important  second  in spite of low speedups  dom bwdeg remains the second
+best variable selection heuristic for parallel solving because it was the best one in sequential 
+in average  using advanced variable selection heuristics such as dom bwdeg  dom wdeg  or
+impact gives lower solving times than lex or dom in spite of lower speedups  it highlights the
+fact that decomposition procedures should handle any branching strategy  in section       
+we will investigate the very low speedups for the instance crossword m c words vg   
+that are not caused by the variable selection heuristics 
+      scalability up to     workers
+table   compares the gecode implementations of eps and work stealing  ws  for solving
+xcsp instances using    or     workers  eps is faster and more efficient than the work
+stealing  with    workers  the work stealing is ranked last using the borda score  with
+    workers  eps is in average almost    times faster than the work stealing  it is also
+more efficient because they both parallelize the same sequential solver  on the multi core
+machine  gecode was faster than choco  on most instances of xcsp   here  the performance
+of gecode are more mitigated as outlined by the borda scores  five instances that are not
+solved within the time limit by gecode are not reported in table    six instances are
+not solved with    workers whereas twelve instances were not solved with the sequential
+solver  by way of comparison  only five instances are not solved by choco  using the lex
+   
+
+fimalapert  regin    rezgui
+
+w     
+
+instances
+
+w      
+
+eps
+
+cc        
+costasarray   
+crossword m c 
+crossword m  
+knights     
+knights     
+knights     
+langford     
+langford     
+langford     
+latinsquare dg   all
+lemma       mod
+ortholatin  
+pigeons   
+quasigroup    
+queenattacking  
+ruler       a 
+ruler       a 
+series   
+squares    
+
+eps
+
+ws
+
+t
+
+su
+
+t
+
+su
+
+t
+
+su
+
+t
+
+su
+
+
+    
+     
+     
+      
+      
+      
+       
+      
+       
+     
+   
+     
+     
+    
+       
+    
+     
+    
+    
+
+
+    
+    
+    
+ 
+ 
+    
+ 
+ 
+ 
+    
+    
+    
+    
+    
+ 
+    
+    
+    
+    
+
+
+    
+     
+     
+       
+
+      
+       
+       
+
+     
+   
+     
+      
+    
+       
+     
+     
+    
+    
+
+
+    
+   
+    
+ 
+
+   
+ 
+ 
+
+    
+   
+    
+   
+    
+ 
+    
+    
+   
+   
+
+
+   
+    
+    
+     
+     
+    
+     
+    
+     
+    
+   
+    
+    
+   
+      
+   
+   
+   
+   
+
+
+     
+     
+     
+ 
+ 
+     
+ 
+ 
+ 
+     
+    
+     
+     
+     
+ 
+     
+     
+     
+     
+
+
+    
+    
+    
+      
+
+     
+      
+      
+
+     
+   
+    
+      
+   
+      
+    
+    
+   
+   
+
+
+    
+    
+    
+ 
+
+    
+ 
+ 
+
+    
+    
+    
+   
+    
+ 
+    
+    
+    
+    
+
+      
+
+    
+
+      
+
+   
+
+      
+
+     
+
+      
+
+    
+
+am  t  or gm  su 
+borda score  rank 
+ 
+
+ws
+
+        
+
+crossword m  words      
+
+ 
+
+        
+
+crossword m c words vg    ext
+
+table    speedups and solving times for xcsp  gecode  lex  data center  w      or      
+heuristics whereas all instances are solved in sequential or parallel when using dom wdeg or
+dom bwdeg  once again  it highlights the importance of the search strategy 
+figure   is a boxplot of the speedups with different numbers of workers for solving fzn
+instances  the median of speedups are around w  in average and their dispersion remains
+low 
+   
+   
+
+speedup  su 
+
+   
+  
+  
+  
+ 
+ 
+ 
+
+  
+
+  
+
+  
+
+   
+
+   
+
+   
+
+workers  w 
+
+figure    scalability up to     workers  gecode  lex  data center  
+   
+
+fiembarrassingly parallel search in cp
+
+instance
+
+eps
+
+market split s    
+market split s    
+market split u    
+pop stress     
+nmseq    
+pop stress     
+fillomino   
+steiner triples   
+nmseq    
+golombruler   
+cc base mzn rnd test   
+ghoulomb       
+still life free  x 
+bacp  
+depot placement st    
+open stacks    wbp        
+bacp   
+still life still life  
+talent scheduling alt film   
+am  t  or gm  su 
+
+ws
+
+t
+
+su
+
+t
+
+su
+
+     
+     
+     
+     
+     
+     
+     
+     
+     
+
+    
+    
+    
+    
+   
+    
+    
+    
+   
+
+     
+     
+     
+      
+     
+     
+     
+     
+     
+
+    
+    
+    
+   
+   
+   
+    
+   
+   
+
+     
+      
+     
+     
+     
+     
+     
+     
+     
+    
+
+    
+   
+   
+   
+    
+    
+    
+    
+    
+    
+
+     
+      
+      
+      
+     
+      
+     
+     
+     
+     
+
+    
+   
+   
+   
+   
+   
+    
+   
+    
+    
+
+     
+
+    
+
+     
+
+   
+
+table    solving times and speedups for fzn  gecode  lex  cloud  w       
+
+    cloud computing
+eps can be deployed on the microsoft azure cloud platform  the available computing
+infrastructure is organized as follows  cluster nodes computes the application  one head
+node manages the cluster nodes  and proxy nodes load balances communication between
+cluster nodes  on the contrary to a data center  cluster nodes may be far from each other
+and communication time may take longer  proxy nodes requires   cores and are managed
+by the service provider  here    nodes of   cores with    gb of ram memory provide   
+workers  cluster nodes  managed by mpi 
+table   compares the gecode implementations of eps and work stealing for solving the
+fzn instances with    workers  briefly  eps is always faster than the work stealing  and
+therefore  more efficient because they both parallelize the same sequential solver  the work
+stealing suffers from a higher communication overhead in the cloud than in a data center 
+furthermore  the architecture of the computing infrastructure and the location of cluster
+nodes are mostly unknown which forbid improvements of the work stealing such as those
+proposed by machado et al          or by xie and davenport        
+    embarrassingly distributed search
+in this section  we transform with reasonable effort a parallel solver  eps  into a distributed
+parallel solver  edps  by using the batch scheduler oar  capit et al         provided by
+   
+
+fimalapert  regin    rezgui
+
+the data center  in fact  the batch scheduler oar plays the foreman  the parallel choco 
+solver is modified so that the workers write the subproblems into files instead of solving
+them  then  a script submits the jobs subproblems to the oar batch scheduler  waits
+for their termination  and gathers the results  oar schedules jobs on the cluster using
+priority fifo with backfilling and fair share based priorities  backfilling allows to start
+lower priority jobs without delaying highest priority jobs whereas fair share means that no
+user application is preferred in any way  the main drawback is that a new worker must
+be created for each subproblem  each worker process is allocated by oar with predefined
+resources  a worker is either a sequential  eds  or a parallel solver  edps  
+this approach offers a practical advantage for resource reservation in a data center 
+indeed  when asking for an mpi process  one has to wait until enough resources are available
+before the process starts  here  resources  cores or nodes  are nibbled as soon as they
+become available which can drastically reduce the waiting time  furthermore  it bypasses
+limitations of the threads technology by allowing to use multiple nodes of the data center 
+however  it clearly increases the recomputation overhead because  a worker solves a single
+subproblem instead of multiple subproblems  so  the model creation and initial propagation
+are realized more often  it also introduces a non negligible submission overhead which is
+the time taken to create and submit all jobs to the oar batch scheduler 
+      anomaly in crossword m c words vg    ext
+we investigate the very low speedups for solving the instance crossword m c words vg   
+with any variable selection heuristic  see table     we compare the results of the parallel
+ eps  w       and distributed  eds with sequential worker  algorithms for different decomposition depths  d             table   gives the solving times  speedups  and efficiencies 
+the number of distinct cores used by the distributed algorithm is a bad estimator for computing efficiencies  because some of them are used only for a short period of time  therefore 
+the number c of cores used to compute the efficiency of eds or edps is estimated as the
+ratio of the total runtime over the wall clock time 
+first  the parallel algorithm is always slower than the sequential one  however  the
+speedups of the distributed algorithms are significant even if they decrease quickly as the
+decomposition depth increases  the fall of the efficiency shows that eds is not scalable
+with sequential workers  indeed  the recomputation  and especially the submission overhead
+become too important when the number of subproblems increases 
+second  the bad performance of the parallel algorithms are not caused by a statistically
+imbalanced decomposition because we would observe similar performance for the distributed
+algorithm  profiling the parallel algorithm on this particular instances suggests that the bad
+eds
+d
+
+p
+
+ 
+ 
+ 
+
+   
+   
+    
+
+eps  w      
+
+t
+
+su
+
+eff
+
+t
+
+su
+
+eff
+
+    
+     
+     
+
+    
+   
+   
+
+     
+     
+     
+
+      
+      
+      
+
+   
+   
+   
+
+     
+     
+     
+
+table    eds and eps for the crossword instance  choco   dom  data center  
+   
+
+fiembarrassingly parallel search in cp
+
+performance comes from the underlying solver itself  indeed  the number of instructions is
+similar for the sequential and parallel algorithms whereas the numbers of context switches 
+cache references and cache misses increase considerably  in fact  the parallel algorithms
+spent more than half of its time in some internal methods of extensional constraints  i e  the
+relation of the constraint is specified by listing its satisfying tuples  this issue occurred on all
+computing infrastructure and for different java virtual machines  note that other instances
+use extensional constraints  but they impose fewer consequences  this issue would not
+happen with an mpi implementation because there is no shared memory  so  it advocates
+for implementations of eps based on mpi rather than on the thread technology 
+      variations about the golomb ruler problem
+a golomb ruler is a set of marks at integer positions along an imaginary ruler such that no
+two pairs of marks are the same distance apart  the number of marks on the ruler is its
+order  and the largest distance between two of its marks is its length  here  we enumerate
+the optimal rulers  minimal length for the specific number of marks  with a simple constraint
+model inspired from the one by galinier  jaumard  morales  and pesant        for which the
+heuristics lex or dom are a reasonable choice  table   gives the solving times  speedups  and
+efficiencies for the parallel algorithm  w        the distributed algorithm with sequential
+workers  w       and the distributed algorithms with parallel workers  w      and the
+worker decomposition depth is dw      with different master decomposition depths d 
+first  eps obtains almost linear speedup if the decomposition depth is large enough 
+without surprise  speedups are lower if there are not enough subproblems  second  the
+distributed algorithm eds with sequential workers is efficient only if the number of subproblems remains low  otherwise  it can still give some speedups  dom   but wastes the
+resources since the efficiency is very low  in fact  submitting too many jobs to the batch
+scheduler  lex  lead to a high submission overhead  around    minutes  and globally degrades the performance  finally  the distributed algorithms with parallel workers offer a
+good trade off between speedups and efficiencies because it allows to use many resources
+while only submitting a few jobs thus reducing the submission and recomputation overheads  note that eds with d     is not tested because it is roughly equivalent to eps with
+   workers  and edps with d     is not tested because the submission overhead becomes
+too important 
+
+edps  w       dw     
+
+eds
+d
+
+p
+
+t
+
+su
+
+eff
+
+t
+
+su
+
+lex
+
+ 
+ 
+ 
+
+  
+   
+     
+
+
+     
+       
+
+
+    
+   
+
+
+     
+     
+
+     
+     
+
+
+    
+     
+
+
+dom
+
+ 
+ 
+ 
+
+  
+   
+    
+
+
+      
+      
+
+
+    
+    
+
+
+     
+     
+
+      
+     
+
+
+    
+     
+
+
+eps  w      
+t
+
+su
+
+eff
+
+     
+     
+
+
+       
+      
+      
+
+   
+    
+    
+
+     
+     
+     
+
+     
+     
+
+
+       
+      
+      
+
+   
+    
+    
+
+     
+     
+     
+
+eff
+
+table    eds and eps for golomb ruler with    marks  choco   data center  
+   
+
+fimalapert  regin    rezgui
+
+most other parallel approaches reported good performance for the golomb ruler problem  for instance  michel et al          and chu et al         respectively reported linear
+speedups for   and   workers  eds is more efficient than the work stealing proposed
+by menouer and le cun        using    workers for the ruler with    marks and as efficient
+as the selfsplit by fischetti et al         using    workers for the ruler with    marks 
+last  we enumerated optimal golomb rulers with    and    marks using edps  the
+master and workers use the lex heuristic  the master decomposition depth d is equal to
+  that generates around     hundreds subproblems  there are    parallel workers with a
+decomposition depth dw equal to    with this settings  we used more than     cores of the
+data center during the solving process  so  it bypasses the limitations on the number of
+cores used by mpi imposed by the administrator  furthermore  the solving process starts
+immediately because cores are grabbed as soon as they become available whereas a mpi
+process waits that enough cores becomes simultaneously available  enumerating optimal
+rulers with    and    marks respectively took      and      seconds  to our knowledge 
+this is the first time where a constraint solver finds these rulers  and furthermore in a reasonable amount of time  however  these optimal rulers have been discovered via an exhaustive
+computer search  shearer         more recently  distributed computing technologies inc
+     found optimum rulers up to    marks  beside  plane construction  atkinson   hassenklover        allows to find larger optimal rulers 
+    comparison with portfolios
+portfolio approaches exploit the variability of performance that is observed between several
+solvers  or several parameter settings for the same solver  we use   portfolios  the portfolio
+cphydra  omahony et al         uses features selection on the top of the solvers mistral 
+gecode  and choco   cphydra uses case based reasoning to determine how to solve an
+unseen problem instance by exploiting a case base of problem solving experience  it aims
+to find a feasible solution within    minutes  it does not handle optimization or all solution problems and the time limit is hard coded  the other static and fixed size portfolios
+ choco   cag  or tools  use different variable selection heuristics  see section      as well
+as randomization and restarts  details about choco  and cag can be found in  malapert  
+lecoutre         the cag portfolio extends the choco  portfolio by also using the solvers
+abscon and gecode  so  cag always produces better results than choco   the or tools
+portfolio was the gold medal of the minizinc challenge      and       it can seem unfair
+to compare parallel solvers and portfolios using different numbers of workers  but designing
+scalable portfolio  up to     workers  is a difficult task and almost no implementation is
+publicly available 
+table   gives the solving times of eps and portfolios for solving the xcsp instances on the
+data center  first  cphydra with    workers only solves   among    unsatisfiable instances
+ cc         and pigeons      but in less than   seconds whereas these are difficult for
+all other approaches  or tools is the second less efficient approach because it solves fewer
+problems and often takes longer as confirmed by its low borda score  the parallel choco 
+using dom wdeg is better in average than the choco  portfolio even if the portfolio solves a
+few instances much faster such as scen   f  or queensknights      mul  in this case  the
+diversification provided by the portfolio outperforms the speedups offered by the parallel
+   
+
+fiembarrassingly parallel search in cp
+
+instances
+
+eps
+choco 
+
+cc        
+costasarray   
+crossword m  words      
+crossword m c words vg    ext
+fapp         
+knights     
+knights     
+knights     
+langford     
+langford     
+langford     
+latinsquare dg   all
+lemma       mod
+ortholatin  
+pigeons   
+quasigroup    
+queenattacking  
+queensknights      mul
+ruler       a 
+ruler       a 
+scen   f 
+series   
+squares    
+squaresunsat      
+arithmetic mean
+borda score  rank 
+
+portfolio
+
+gecode
+
+choco 
+
+cag
+
+or tools
+
+w     
+
+w     
+
+w      
+
+w     
+
+w     
+
+w     
+
+      
+     
+     
+      
+      
+     
+      
+      
+      
+     
+      
+     
+     
+     
+      
+     
+     
+      
+    
+      
+
+     
+     
+      
+
+
+    
+     
+     
+
+      
+      
+      
+       
+      
+       
+     
+   
+     
+     
+    
+       
+
+    
+     
+
+    
+    
+
+
+
+   
+    
+    
+
+     
+     
+    
+     
+    
+     
+    
+   
+    
+    
+   
+      
+
+   
+   
+
+   
+   
+
+
+      
+      
+     
+     
+    
+      
+      
+      
+      
+      
+       
+    
+     
+      
+       
+      
+      
+     
+     
+      
+    
+      
+      
+      
+
+   
+     
+     
+     
+   
+   
+   
+     
+      
+      
+       
+    
+    
+      
+      
+     
+      
+   
+     
+      
+   
+     
+     
+      
+
+      
+      
+       
+       
+
+
+
+       
+
+
+
+      
+    
+      
+       
+     
+
+
+      
+
+
+     
+     
+
+
+      
+
+      
+
+     
+
+      
+
+      
+
+      
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+table    solving times of eps and portfolio  data center  
+b b algorithm  this is emphasized for the cag portfolio that solves all instances and
+obtains several of the best solving times  the parallel gecode with    workers is often slower
+and less robust than the portfolios choco  and cag  however  increasing the number of
+workers to     clearly makes it the fastest solver  but still less robust because five instances
+are not solved within the time limit 
+to conclude  choco  and cag portfolios are more robust thanks to the inherent diversification  but the solving times vary more from one instance to another  with    workers 
+implementations of eps outperform the cphydra and or tools portfolio  are competitive
+with the choco  portfolio  and are slightly dominated by the cag portfolio  in fact  the
+good scaling of eps is a key to beat the portfolios 
+
+   conclusion
+we have introduced an embarrassingly parallel search  eps  method for solving constraint
+satisfaction problems and constraint optimization problems  this approach has several
+advantages  first  it is an efficient method which matches or even outperforms state of the   
+
+fimalapert  regin    rezgui
+
+art algorithms on a number of problems using various computing infrastructures  second 
+it involves almost no communication or synchronization and mostly relies on the underlying
+sequential solver so that the implementation and debugging is made easier  last  the
+simplicity of the method allows to propose many variants adapted to specific applications
+or computing infrastructures  moreover  under certain restrictions  the parallel algorithm
+can be deterministic  and even mimic the sequential algorithm which is very important in
+practice either in production or for debugging 
+there are several interesting perspectives around eps  first  it can be modified in order
+to provide diversification and to learn useful information when solving subproblems  for
+instance  it can easily be combined with a portfolio approach in which subproblems can be
+solved by several search strategies  second  thanks to its simplicity  the simplest variants
+of eps could be implemented as meta searches  rendl  guns  stuckey    tack         and
+would offer a convenient way to parallelize applications with a satisfactory efficiency  last 
+another perspective is to predict the solution time of a large combinatorial problem  based
+on known solution times of a small set of subproblems based on statistical or machine
+learning approaches 
+
+acknowledgments
+we would like to thank very much christophe lecoutre  laurent perron  youssef hamadi 
+carine fedele  bertrand lecun and tarek menouer for their comments and advices which
+helped to improve the paper  this work has been supported by both cnrs and oseo
+ bpi france  within the isi project pajero  this work was granted access to the hpc and
+visualization resources of centre de calcul interactif hosted by universite nice sophia
+antipolis  and also to the microsoft azure cloud  we also wish to thank the anonymous
+referees for their comments 
+
+appendix a  efficiency of hyper threading
+in this section  we show that hyper threading technology improves the efficiency of eps
+for solving the instances of xcsp  on a multi core computer  figure   is a boxplot of the
+speedups provided by the hyper threading for each parallel solver among choco   gecode 
+or tools  here  the speedups indicate how many times a parallel solver using    workers
+ w    c  is faster than one using    workers  w   c   the maximum speedup according to
+amdahls law is   
+choco  is tested with lex and dom whereas gecode and or tools only use lex  they
+are also compared to a work stealing approach proposed by schulte        and denoted
+gecode ws  hyper threading clearly improves the parallel efficiency of eps whereas the
+performance of the work stealing roughly remains unchanged  it is interesting because
+eps has a very high cpu demand and resources of each physical core are shared by
+its two logical cores  indeed  the performance of hyper threading are known to be very
+application dependent  with the exception of lemma       mod and squares      choco 
+and or tools are faster with    workers  for lemma       mod  the choco  decomposition
+for    workers takes longer and generates too many subproblems  the instance is solved
+   
+
+fiembarrassingly parallel search in cp
+
+hyperthreading speedup
+
+ 
+
+ 
+
+   
+
+choco  lex
+
+choco  dom
+
+gecode
+
+or tools
+
+gecode ws
+
+figure    speedups provided by hyper threading  multi core  w           
+easily by or tools  less than two seconds  and it becomes difficult to improve its efficiency  for squares      the decomposition changes according to the number of workers 
+but it cannot explain why hyper threading does not improve eps  the parallel efficiency of
+gecode is reduced for multiple instances and the interest of hyper threading is less obvious
+than for choco  or or tools  to conclude  hyper threading globally improves the efficiency
+of eps while it has a limited interest on the work stealing 
+
+references
+almasi  g  s     gottlieb  a          highly parallel computing  benjamin cummings
+publishing co   inc   redwood city  ca  usa 
+amadini  r   gabbrielli  m     mauro  j          an empirical evaluation of portfolios
+approaches for solving csps in gomes  c     sellmann  m eds   integration of
+ai and or techniques in constraint programming for combinatorial optimization
+problems  vol       of lecture notes in computer science  pp          springer
+berlin heidelberg 
+amdahl  g          validity of the single processor approach to achieving large scale
+computing capabilities in proceedings of the april              spring joint computer conference  afips     pp          new york  ny  usa  acm 
+anderson  d  p   cobb  j   korpela  e   lebofsky  m     werthimer  d          seti home 
+an experiment in public resource computing commun  acm                
+atkinson  m  d     hassenklover  a          sets of integers with distinct differences tech 
+rep  scs tr     school of computer science  carlton university  ottawa ontario 
+canada 
+bader  d   hart  w     phillips  c          parallel algorithm design for branch and
+bound in g  h ed   tutorials on emerging methodologies and applications in operations research  vol     of international series in operations research   management
+science  pp         springer new york 
+   
+
+fimalapert  regin    rezgui
+
+barney  b     livermore  l          introduction to parallel computing
+computing llnl gov tutorials parallel comp  
+
+https   
+
+bauer  m  a          high performance computing  the software challenges in proceedings
+of the      international workshop on parallel symbolic computation  pasco    
+pp        new york  ny  usa  acm 
+beck  c   prosser  p     wallace  r          trying again to fail first in recent advances
+in constraints  pp        springer berlin heidelberg 
+bordeaux  l   hamadi  y     samulowitz  h          experiments with massively parallel
+constraint solving  in boutilier  boutilier         pp         
+boussemart  f   hemery  f   lecoutre  c     sais  l          boosting systematic search
+by weighting constraints in proceedings of the   th eureopean conference on artificial intelligence  ecai      including prestigious applicants of intelligent systems 
+pais  pp         
+boutilier  c ed           ijcai       proceedings of the   st international joint conference
+on artificial intelligence  pasadena  california  usa  july       
+brams  s  j     fishburn  p  c          voting procedures in arrow  k  j   sen  a  k  
+  suzumura  k eds   handbook of social choice and welfare  vol    of handbook of
+social choice and welfare  chap     pp          elsevier 
+budiu  m   delling  d     werneck  r          dryadopt  branch and bound on distributed
+data parallel execution engines in parallel and distributed processing symposium
+ ipdps        ieee international  pp            ieee 
+burton  f  w     sleep  m  r          executing functional programs on a virtual tree
+of processors in proceedings of the      conference on functional programming
+languages and computer architecture  fpca     pp          new york  ny  usa 
+acm 
+capit  n   da costa  g   georgiou  y   huard  g   martin  c   mounie  g   neyron  p    
+richard  o          a batch scheduler with high level components in proceedings
+of the fifth ieee international symposium on cluster computing and the grid  ccgrid      volume     volume     ccgrid     pp          washington  dc  usa 
+ieee computer society 
+choco  t          choco  an open source java constraint programming library ecole des
+mines de nantes  research report          
+chong  y  l     hamadi  y          distributed log based reconciliation in proceedings
+of the      conference on ecai         th european conference on artificial intelligence august     september          riva del garda  italy  pp          amsterdam 
+the netherlands  the netherlands  ios press 
+chu  g   schulte  c     stuckey  p  j          confidence based work stealing in parallel constraint programming in gent  i  p ed   cp  vol       of lecture notes in
+computer science  pp          springer 
+chu  g   stuckey  p  j     harwood  a          pminisat  a parallelization of minisat
+    tech  rep   nicta   national ict australia 
+   
+
+fiembarrassingly parallel search in cp
+
+cire  a  a   kadioglu  s     sellmann  m          parallel restarted search in proceedings
+of the twenty eighth aaai conference on artificial intelligence  aaai    pp     
+     aaai press 
+cornuejols  g   karamanov  m     li  y          early estimates of the size of branchand bound trees informs journal on computing           
+crainic  t  g   le cun  b     roucairol  c          parallel branch and bound algorithms
+parallel combinatorial optimization         
+de kergommeaux  j  c     codognet  p          parallel logic programming systems acm
+computing surveys  csur                  
+distributed computing technologies inc       the distributed net home page http   
+www distributed net  
+een  n     sorensson  n          minisat  a sat solver with conflict clause minimization
+sat       
+ezzahir  r   bessiere  c   belaissaoui  m     bouyakhf  e  h          dischoco  a platform
+for distributed constraint programming in dcr    eighth international workshop
+on distributed constraint reasoning   in conjunction with ijcai    pp        hyderabad  india 
+fischetti  m   monaci  m     salvagnin  d          self splitting of workload in parallel
+computation in simonis  h ed   integration of ai and or techniques in constraint
+programming    th international conference  cpaior       cork  ireland  may             proceedings  pp          cham  springer international publishing 
+gabriel  e   fagg  g   bosilca  g   angskun  t   dongarra  j   squyres  j   sahay  v   kambadur  p   barrett  b   lumsdaine  a   et al          open mpi  goals  concept 
+and design of a next generation mpi implementation in recent advances in parallel
+virtual machine and message passing interface  pp         springer 
+galea  fran c     le cun  b          bob     a framework for exact combinatorial
+optimization methods on parallel machines in international conference high performance computing   simulation       hpcs    and in conjunction with the   st
+european conference on modeling and simulation  ecms        pp         
+galinier  p   jaumard  b   morales  r     pesant  g          a constraint based approach
+to the golomb ruler problem in  rd international workshop on integration of ai
+and or techniques 
+gendron  b     crainic  t  g          parallel branch and bound algorithms  survey and
+synthesis operations research                   
+gent  i     walsh  t          csplib  a benchmark library for constraints in proceedings of the  th international conference on principles and practice of constraint
+programming  cp     pp         
+gomes  c     selman  b          algorithm portfolio design  theory vs  practice in
+proceedings of the thirteenth conference on uncertainty in artificial intelligence  pp 
+       
+   
+
+fimalapert  regin    rezgui
+
+gomes  c     selman  b          search strategies for hybrid search spaces in tools with
+artificial intelligence        proceedings    th ieee international conference  pp 
+        ieee 
+gomes  c     selman  b          hybrid search strategies for heterogeneous search spaces
+international journal on artificial intelligence tools           
+gomes  c     selman  b          algorithm portfolios artificial intelligence            
+gropp  w     lusk  e          the mpi communication library  its design and a portable
+implementation in scalable parallel libraries conference         proceedings of the 
+pp          ieee 
+gupta  g   pontelli  e   ali  k  a   carlsson  m     hermenegildo  m  v          parallel
+execution of prolog programs  a survey acm transactions on programming languages
+and systems  toplas                  
+halstead  r          implementation of multilisp  lisp on a multiprocessor in proceedings
+of the      acm symposium on lisp and functional programming  lfp     pp 
+     new york  ny  usa  acm 
+hamadi  y          optimal distributed arc consistency constraints            
+hamadi  y   jabbour  s     sais  l          manysat  a parallel sat solver  journal on
+satisfiability  boolean modeling and computation                
+haralick  r     elliott  g          increasing tree search efficiency for constraint satisfaction problems artificial intelligence                 
+harvey  w  d     ginsberg  m  l          limited discrepancy search in proceedings of
+the fourteenth international joint conference on artificial intelligence  ijcai    
+montreal quebec  canada  august               volumes  pp         
+heule  m  j   kullmann  o   wieringa  s     biere  a          cube and conquer  guiding
+cdcl sat solvers by lookaheads in hardware and software  verification and testing 
+pp        springer 
+hirayama  k     yokoo  m          distributed partial constraint satisfaction problem in
+principles and practice of constraint programming cp    pp          springer 
+hyde  p          java thread programming  vol     sams 
+intel corporation         intel mpi library https   software intel com en us intel
+ mpi library 
+jaffar  j   santosa  a  e   yap  r  h  c     zhu  k  q          scalable distributed depthfirst search with greedy work stealing in   th ieee international conference on
+tools with artificial intelligence  pp         ieee computer society 
+kale  l     krishnan  s          charm    a portable concurrent object oriented system
+based on c    vol      acm 
+kasif  s          on the parallel complexity of discrete relaxation in constraint satisfaction networks artificial intelligence             
+kautz  h   horvitz  e   ruan  y   gomes  c     selman  b          dynamic restart policies
+  th national conference on artificial intelligence aaai iaai             
+   
+
+fiembarrassingly parallel search in cp
+
+kjellerstrand  h          hakan kjellerstrands blog http   www hakank org  
+kleiman  s   shah  d     smaalders  b          programming with threads  sun soft press 
+korf  r  e     schreiber  e  l          optimally scheduling small numbers of identical
+parallel machines in borrajo  d   kambhampati  s   oddi  a     fratini  s eds  
+icaps  aaai 
+krishna  j   balaji  p   lusk  e   thakur  r     tiller  f          implementing mpi on
+windows  comparison with common approaches on unix in recent advances in
+the message passing interface  vol       of lecture notes in computer science  pp 
+        springer berlin heidelberg 
+lai  t  h     sahni  s          anomalies in parallel branch and bound algorithms commun  acm                 
+lantz  e          windows hpc server   using microsoft message passing interface  msmpi  
+le cun  b   menouer  t     vander swalmen  p          bobpp http   forge prism
+ uvsq fr projects bobpp 
+leaute  t   ottens  b     szymanek  r          frodo      an open source framework
+for distributed constraint optimization  in boutilier  boutilier         pp         
+leiserson  c  e          the cilk   concurrency platform the journal of supercomputing 
+               
+lester  b          the art of parallel programming  prentice hall englewood cliffs  nj 
+li  h          introducing windows azure  apress  berkely  ca  usa 
+luby  m   sinclair  a     zuckerman  d          optimal speedup of las vegas algorithms
+inf  process  lett              
+machado  r   pedro  v     abreu  s          on the scalability of constraint programming
+on hierarchical multiprocessor systems in icpp  pp          ieee 
+malapert  a     lecoutre  c          a propos de la bibliotheque de modeles xcsp
+in   emes journees francophones de programmation par contraintes jfpc    
+angers  france 
+mattson  t   sanders  b     massingill  b          patterns for parallel programming  first
+ed    addison wesley professional 
+menouer  t     le cun  b          anticipated dynamic load balancing strategy to parallelize constraint programming search in      ieee   th international symposium
+on parallel and distributed processing workshops and phd forum  pp           
+menouer  t     le cun  b          adaptive n to p portfolio for solving constraint
+programming problems on top of the parallel bobpp framework in      ieee   th
+international symposium on parallel and distributed processing workshops and phd
+forum 
+michel  l   see  a     hentenryck  p  v          transparent parallelization of constraint
+programming informs journal on computing             
+   
+
+fimalapert  regin    rezgui
+
+microsoft corporation         microsoft hpc pack      r  and hpc pack      http   
+technet microsoft com en us library jj       aspx 
+milano  m     trick  m          constraint and integer programming  toward a unified
+methodology  springer us  boston  ma 
+moisan  t   gaudreault  j     quimper  c  g          parallel discrepancy based search
+in principles and practice of constraint programming  vol       of lecture notes in
+computer science  pp        springer berlin heidelberg 
+moisan  t   quimper  c  g     gaudreault  j          parallel depth bounded discrepancy
+search in simonis  h ed   integration of ai and or techniques in constraint programming    th international conference  cpaior       cork  ireland  may       
+      proceedings  pp          cham  springer international publishing 
+mpi ch team         high performance portable mpi http   www mpich org  
+mueller  f   et al          a library implementation of posix threads under unix  in
+usenix winter  pp       
+nguyen  t     deville  y          a distributed arc consistency algorithm science of
+computer programming                     concurrent constraint programming 
+nicta optimisation research group         minizinc and flatzinc http   www g  
+ csse unimelb edu au minizinc  
+nielsen  m          parallel search in gecode masters thesis  kth royal institute of
+technology 
+omahony  e   hebrard  e   holland  a   nugent  c     osullivan  b          using casebased reasoning in an algorithm portfolio for constraint solving in irish conference
+on artificial intelligence and cognitive science  pp         
+pedro  v   abreu  s   pedro  v     abreu  s          distributed work stealing for constraint solving corr  abs                
+perron  l          search procedures and parallelism in constraint programming in principles and practice of constraint programming  cp     th international conference 
+cp    alexandria  va  usa  october              proceedings  pp          berlin 
+heidelberg  springer berlin heidelberg 
+perron  l   nikolaj  v  o     vincent  f          or tools tech  rep   google 
+pruul  e   nemhauser  g     rushmeier  r          branch and bound and parallel computation  a historical note operations research letters          
+refalo  p          impact based search strategies for constraint programming in wallace 
+m ed   principles and practice of constraint programming    th international conference  cp       toronto  canada  vol       of lecture notes in computer science 
+pp          springer 
+regin  j  c   rezgui  m     malapert  a          embarrassingly parallel search in principles and practice of constraint programming    th international conference  cp
+      uppsala  sweden  september              proceedings  pp          springer
+berlin heidelberg  berlin  heidelberg 
+   
+
+fiembarrassingly parallel search in cp
+
+regin  j  c   rezgui  m     malapert  a          improvement of the embarrassingly parallel search for data centers in osullivan  b ed   principles and practice of constraint
+programming    th international conference  cp       lyon  france  september            proceedings  vol       of lecture notes in computer science  pp         
+springer international publishing  cham 
+rendl  a   guns  t   stuckey  p     tack  g          minisearch  a solver independent
+meta search language for minizinc in pesant  g   pesant  g     pesant  g eds  
+principles and practice of constraint programming    st international conference 
+cp       cork  ireland  august     september          proceedings  vol       of
+lecture notes in computer science  pp          springer international publishing 
+cham 
+rezgui  m   regin  j  c     malapert  a          using cloud computing for solving
+constraint programming problems in first workshop on cloud computing and optimization  a conference workshop of cp       lyon  france 
+rolf  c  c     kuchcinski  k          parallel consistency in constraint programming
+pdpta     the      international conference on parallel and distributed processing techniques and applications            
+rossi  f   van beek  p     walsh  t eds           handbook of constraint programming 
+elsevier 
+roussel  o     lecoutre  c          xml representation of constraint networks format
+http   www cril univ artois fr cpai   xcsp   competition pdf 
+schulte  c          parallel search made simple in proceedings of trics  techniques
+for implementing constraint programming systems  a post conference workshop of
+cp       pp        singapore 
+schulte  c          gecode  generic constraint development environment http   www
+ gecode org  
+shearer  j  b          some new optimum golomb rulers ieee trans  inf  theor          
+       
+stephan  k     michael  k          sartagnan   a parallel portfolio sat solver with
+lockless physical clause sharing in pragmatics of sat 
+sutter  h     larus  j          the free lunch is over  a fundamental turn toward toward
+concurrency dr  dobbs journal             
+van der tak  p   heule  m  j     biere  a          concurrent cube and conquer in theory
+and applications of satisfiability testingsat       pp          springer 
+vidal  v   bordeaux  l     hamadi  y          adaptive k parallel best first search 
+a simple but efficient algorithm for multi core domain independent planning in
+proceedings of the third international symposium on combinatorial search  aaai
+press 
+wahbi  m   ezzahir  r   bessiere  c     bouyakhf  e  h          dischoco    a platform
+for distributed constraint reasoning in proceedings of the ijcai   workshop on
+distributed constraint reasoning  dcr    pp          barcelona  catalonia  spain 
+   
+
+fimalapert  regin    rezgui
+
+wilkinson  b     allen  m          parallel programming  techniques and application
+using networked workstations and parallel computers   nd ed    prentice hall inc 
+xie  f     davenport  a          massively parallel constraint programming for supercomputers  challenges and initial results in integration of ai and or techniques
+in constraint programming for combinatorial optimization problems   th international conference  cpaior       bologna  italy  june              proceedings  vol 
+     of lecture notes in computer science  pp          berlin  heidelberg  springer
+berlin heidelberg 
+xu  l   hoos  h     leyton brown  k          hydra  automatically configuring algorithms for portfolio based selection in aaai conference on artificial intelligence 
+vol      pp         
+xu  l   hutter  f   hoos  h     leyton brown  k          satzilla  portfolio based algorithm selection for sat journal of artificial intelligence research             
+yokoo  m   ishida  t     kuwabara  k          distributed constraint satisfaction for dai
+problems in proceedings of the      distributed ai workshop  bandara  tx 
+zoeteweij  p     arbab  f          a component based parallel constraint solver in de
+nicola  r   ferrari  g  l     meredith  g eds   coordination  vol       of lecture
+notes in computer science  pp          springer 
+
+   
+
+fi

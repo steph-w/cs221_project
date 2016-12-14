@@ -1,0 +1,4466 @@
+journal of artificial intelligence research                 
+
+submitted        published      
+
+best first heuristic search for multicore machines
+ethan burns
+sofia lemons
+wheeler ruml
+
+eaburns at cs   unh   edu
+sofia   lemons at cs unh   edu
+ruml at cs   unh   edu
+
+department of computer science
+university of new hampshire
+durham  nh       usa
+
+rong zhou
+
+rzhou at parc   com
+
+embedded reasoning area
+palo alto research center
+palo alto  ca       usa
+
+abstract
+to harness modern multicore processors  it is imperative to develop parallel versions of fundamental algorithms  in this paper  we compare different approaches to parallel best first search in a
+shared memory setting  we present a new method  pbnf  that uses abstraction to partition the state
+space and to detect duplicate states without requiring frequent locking  pbnf allows speculative
+expansions when necessary to keep threads busy  we identify and fix potential livelock conditions
+in our approach  proving its correctness using temporal logic  our approach is general  allowing it
+to extend easily to suboptimal and anytime heuristic search  in an empirical comparison on strips
+planning  grid pathfinding  and sliding tile puzzle problems using   core machines  we show that
+a   weighted a  and anytime weighted a  implemented using pbnf yield faster search than
+improved versions of previous parallel search proposals 
+
+   introduction
+it is widely anticipated that future microprocessors will not have faster clock rates  but instead
+more computing cores per chip  tasks for which there do not exist effective parallel algorithms
+will suffer a slowdown relative to total system performance  in artificial intelligence  heuristic
+search is a fundamental and widely used problem solving framework  in this paper  we compare
+different approaches for parallelizing best first search  a popular method underlying algorithms such
+as dijkstras algorithm and a   hart  nilsson    raphael        
+in best first search  two sets of nodes are maintained  open and closed  open contains the search
+frontier  nodes that have been generated but not yet expanded  in a   open nodes are sorted by their
+f value  the estimated lowest cost for a solution path going through that node  open is typically
+implemented using a priority queue  closed contains all previously generated nodes  allowing the
+search to detect states that can be reached via multiple paths in the search space and avoid expanding
+them multiple times  the closed list is typically implemented as a hash table  the central challenge
+in parallelizing best first search is avoiding contention between threads when accessing the open
+and closed lists  we look at a variety of methods for parallelizing best first search  focusing on
+algorithms which are based on two techniques  parallel structured duplicate detection and parallel
+retracting a  
+c
+    
+ai access foundation  all rights reserved 
+
+fib urns   l emons   ruml     z hou
+
+parallel structured duplicate detection  psdd  was originally developed by zhou and hansen
+       for parallel breadth first search  in order to reduce contention on shared data structures by
+allowing threads to enjoy periods of synchronization free search  psdd requires the user to supply
+an abstraction function that maps multiple states  called an nblock  to a single abstract state  we
+present a new algorithm based on psdd called parallel best n block first  pbnf     unlike psdd 
+pbnf extends easily to domains with non uniform and non integer move costs and inadmissible
+heuristics  using pbnf in an infinite search space can give rise to livelock  where threads continue
+to search but a goal is never expanded  we will discuss how this condition can be avoided in
+pbnf using a method we call hot nblocks  as well as our use of bounded model checking to test its
+effectiveness  in addition  we provide a proof of correctness for the pbnf framework  showing its
+liveness and completeness in the general case 
+parallel retracting a   pra   was created by evett  hendler  mahanti  and nau         pra 
+distributes the search space among threads by using a hash of a nodes state  in pra   duplicate
+detection is performed locally  communication with peers is only required to transfer generated
+search nodes to their home processor  pra  is sensitive to the choice of hashing function used
+to distribute the search space  we show a new hashing function  based on the same state space
+abstraction used in psdd  that can give pra  significantly better performance in some domains 
+additionally  we show that the communication cost incurred in a naive implementation of pra  can
+be prohibitively expensive  kishimoto  fukunaga  and botea        present a method that helps to
+alleviate the cost of communication in pra  by using asynchronous message passing primitives 
+we evaluate pra   and its variants   pbnf and other algorithms empirically using dual quadcore intel machines  we study their behavior on three popular search domains  strips planning 
+grid pathfinding  and the venerable sliding tile puzzle  our empirical results show that the simplest
+parallel search algorithms are easily outperformed by a serial a  search even when they are run
+with eight threads  the results also indicate that adding abstraction to the pra  algorithm can give
+a larger increase in performance than simply using asynchronous communication  although using
+both of these modifications together may outperform either one used on its own  overall  the pbnf
+algorithm often gives the best performance 
+in addition to finding optimal solutions  we show how to adapt several of the algorithms to
+bounded suboptimal search  quickly finding w  admissible solutions  with cost within a factor of w
+of optimal   we provide new pruning criteria for parallel suboptimal search and prove that algorithms using them retain w  admissibility  our results show that  for sufficiently difficult problems 
+parallel search may significantly outperform serial weighted a  search  we also found that the
+advantage of parallel suboptimal search increases with problem difficulty 
+finally  we demonstrate how some parallel searches  such as pbnf and pra   lead naturally
+to effective anytime algorithms  we also evaluate other obvious parallel anytime search strategies
+such as running multiple weighted a  searches in parallel with different weights  we show that the
+parallel anytime searches are able to find better solutions faster than their serial counterparts and
+they are also able to converge more quickly on optimal solutions 
+
+   peanut butter n  marshmallow  fluff  also known as a fluffernutter  is a well known childrens sandwich in the
+usa 
+
+   
+
+fib est f irst s earch for m ulticore m achines
+
+   previous approaches
+there has been much previous work in parallel search  we will briefly summarize selected proposals
+before turning to the foundation of our work  the pra  and psdd algorithms 
+    depth  and breadth first approaches
+early work on parallel heuristic search investigated approaches based on depth first search  two
+examples are distributed tree search  ferguson   korf         and parallel window search  powley
+  korf        
+distributed tree search begins with a single thread  which is given the initial state to expand 
+each time a node is generated an unused thread is assigned to the node  the threads are allocated
+down the tree in a depth first manner until there are no more free threads to assign  when this occurs 
+each thread will continue searching its own children with a depth first search  when the solution
+for a subtree is found it is passed up the tree to the parent thread and the child thread becomes free
+to be re allocated elsewhere in the tree  parent threads go to sleep while their children search  only
+waking once the children terminate  passing solutions upward to their parents recursively  because
+it does not keep a closed list  depth first search cannot detect duplicate states and does not give
+good search performance on domains with many duplicate states  such as grid pathfinding and some
+planning domains 
+parallel window search parallelizes the iterative deepening a   ida   see korf        algorithm  in parallel window search  each thread is assigned a cost bound and will perform a costbounded depth first search of the search space  the problem with this approach is that ida  will
+spend at least half of its search time on the final iteration and since every iteration is still performed
+in only a single thread  the search will be limited by the speed of a single thread  in addition  nonuniform costs can foil iterative deepening  because there may not be a good way to choose new
+upper bounds that give the search a geometric growth 
+holzmann and bosnacki        have been able to successfully parallelize depth first search for
+model checking  the authors are able to demonstrate that their technique that distributes nodes
+based on search depth was able to achieve near linear speedup in the domain of model checking 
+other research has used graphics processing units  gpus  to parallelize breadth first search for
+use in two player games  edelkamp   sulewski         in the following sections we describe
+algorithms with the intent of parallelizing best first search 
+    simple parallel best first search
+the simplest approach to parallel best first search is to have open and closed lists that are shared
+among all threads  kumar  ramesh    rao         to maintain consistency of these data structures 
+mutual exclusion locks  mutexes  need to be used to ensure that a single thread accesses the data
+structure at a time  we call this search parallel a   since each node that is expanded is taken
+from the open list and each node that is generated is looked up in the closed list by every thread  this
+approach requires a lot of synchronization overhead to ensure the consistency of its data structures 
+as we see in section      this naive approach performs worse than serial a  
+there has been much work on designing complex data structures that retain correctness under
+concurrent access  the idea behind these special wait free data structures is that many threads
+can use portions of the data structure concurrently without interfering with one another  most of
+   
+
+fib urns   l emons   ruml     z hou
+
+these approaches use a special compare and swap primitive to ensure that  while modifying the
+structure  it does not get modified by another thread  we implemented a simple parallel a  search 
+which we call lock free parallel a   in which all threads access a single shared  concurrent priority
+queue and concurrent hash table for the open and closed lists  respectively  we implemented the
+concurrent priority queue data structure of sundell and tsigas         for the closed list  we used
+a concurrent hash table which is implemented as an array of buckets  each of which is a concurrent
+ordered list as developed by harris         these lock free data structures used to implement lpa 
+require a special lock free memory manager that uses reference counting and a compare and swap
+based stack to implement a free list  valois         we will see that  even with these sophistocated
+structures  a straightforward parallel implementation of a  does not give competitive performance 
+one way of avoiding contention altogether is to allow one thread to handle synchronization of
+the work done by the other threads  k  best first search  felner  kraus    korf        expands the
+best k nodes at once  each of which can be handled by a different thread  in our implementation  a
+master thread takes the k best nodes from open and gives one to each worker  the workers expand
+their nodes and the master checks the children for duplicates and inserts them into the open list 
+this allows open and closed to be used without locking  however  in order to adhere to a strict
+k  best first ordering this approach requires the master thread to wait for all workers to finish their
+expansions before handing out new nodes  in the domains used in this paper  where node expansion
+is not particularly slow  we show that this method does not scale well 
+one way to reduce contention during search is to access the closed list less frequently  a technique called delayed duplicate detection  ddd   korf         originally developed for externalmemory search  can be used to temporarily delay access to the a closed list  while several variations have been proposed  the basic principle behind ddd is that generated nodes are added to
+a single list until a certain condition is met  a depth level is fully expanded  some maximum list
+size is reached  stern   dill         etc   once this condition has been met  the list is sorted to
+draw duplicate nodes together  all nodes in the list are then checked against the closed list  with
+only the best version being kept and inserted onto the open list  the initial ddd algorithm used a
+breadth first frontier search and therefore only the previous depth layer was required for duplicate
+detection  a parallel version was later presented by niewiadomski  amaral  and holte      a  
+which split each depth layer into sections and maintained separate input and output lists for each 
+these were later merged in order to perform the usual sorting and duplicate detection methods 
+this large synchronization step  however  will incur costs similar to kbfs  it also depends upon
+an expensive workload distribution scheme to ensure that all processors have work to do  decreasing the bottleneck effect of nodes being distributed unevenly  but further increasing the algorithms
+overhead  a later parallel best first frontier search based on ddd was presented  niewiadomski 
+amaral    holte      b   but incurs even further overhead by requiring synchronization between
+all threads to maintain a strict best first ordering 
+jabbar and edelkamp        present an algorithm called parallel external a   pea   that uses
+distributed computing nodes and external memory to perform a best first search  pea  splits the
+search space into a set of buckets that each contain nodes with the same g and h values  the
+algorithm performs a best first search by exploring all the buckets with the lowest f value beginning
+with the one with the lowest g  a master node manages requests to distribute portions of the current
+bucket to various processing nodes so that expanding a single bucket can be performed in parallel 
+to avoid contention  pea  relies on the operating system to synchronize access to files that are
+shared among all of the nodes  jabbar and edelkamp used the pea  algorithm to parallelize a
+   
+
+fib est f irst s earch for m ulticore m achines
+
+model checker and achieved almost linear speedup  while partitioning on g and h works on some
+domains it is not general if few nodes have the same g and h values  this tends to be the case in
+domains with real valued edge costs  we now turn our attention to two algorithms that will reappear
+throughout the rest of this paper  pra  and psdd 
+    parallel retracting a 
+pra   evett et al         attempts to avoid contention by assigning separate open and closed lists
+to each thread  a hash of the state representation is used to assign nodes to the appropriate thread
+when they are generated   full pra  also includes a retraction scheme that reduces memory use
+in exchange for increased computation time  we do not consider that feature in this paper   the
+choice of hash function influences the performance of the algorithm  since it determines the way
+that work is distributed  note that with standard pra   any thread may communicate with any of
+its peers  so each thread needs a synchronized message queue to which peers can add nodes  in a
+multicore setting  this is implemented by requiring a thread to take a lock on the message queue 
+typically  this requires a thread that is sending  or receiving  a message to wait until the operation
+is complete before it can continue searching  while this is less of a bottleneck than having a single
+global  shared open list  we will see below that it can still be expensive  it is also interesting to
+note that pra  and the variants mentioned below practice a type of delayed duplicate detection 
+because they store duplicates temporarily before checking them against a thread local closed list
+and possibly inserting them into the open list 
+      i mprovements
+kishimoto et al         note that the original pra  implementation can be improved by removing the synchronization requirement on the message queues between nodes  instead  they use the
+asynchronous send and receive functionality from the mpi message passing library  snir   otto 
+      to implement an asynchronous version of pra  that they call hash distributed a   hda   
+hda  distributes nodes using a hash function in the same way as pra   except the sending and
+receiving of nodes happens asynchronously  this means that threads are free to continue searching
+while nodes which are being communicated between peers are in transit 
+in contact with the authors of hda   we have created an implementation of hda  for multicore
+machines that does not have the extra overhead of message passing for asynchronous communication between threads in a shared memory setting  also  our implementation of hda  allows us
+to make a fair comparison between algorithms by sharing common data structures such as priority
+queues and hash tables 
+in our implementation  each hda  thread is given a single queue for incoming nodes and one
+outgoing queue for each peer thread  these queues are implemented as dynamically sized arrays
+of pointers to search nodes  when generating nodes  a thread performs a non blocking call to
+acquire the lock  for the appropriate peers incoming queue  acquiring the lock if it is available and
+immediately returning failure if it is busy  rather than waiting  if the lock is acquired then a simple
+pointer copy transfers the search node to the neighboring thread  if the non blocking call fails the
+nodes are placed in the outgoing queue for the peer  this operation does not require a lock because
+the outgoing queue is local to the current thread  after a certain number of expansions  the thread
+attempts to flush the outgoing queues  but it is never forced to wait on a lock to send nodes  it
+   one such non blocking call is the pthread mutex trylock function of the posix standard 
+
+   
+
+fib urns   l emons   ruml     z hou
+
+figure    a simple abstraction  self loops have been eliminated 
+also attempts to consume its incoming queue and only waits on the lock if its open list is empty 
+because in that case it has no other work to do  using this simple and efficient implementation 
+we confirmed the results of kishimoto et al         that show that the asynchronous version of
+pra   called hda   outperforms the standard synchronous version  full results are presented in
+section   
+pra  and hda  use a simple representation based node hashing scheme that is the same one 
+for example  used to look up nodes in closed lists  we present two new variants  apra  and
+ahda   that make use of state space abstraction to distribute search nodes among the processors 
+instead of assigning nodes to each thread  each thread is assigned a set of blocks of the search space
+where each block corresponds to a state in the abstract space  the intuition behind this approach
+is that the children of a single node will be assigned to a small subset of all of the remote threads
+and  in fact  can often be assigned back to the expanding thread itself  this reduces the number of
+edges in the communication graph among threads during search  reducing the chances for thread
+contention  abstract states are distributed evenly among all threads by using a modulus operator in
+the hope that open nodes will always be available to each thread 
+    parallel structured duplicate detection
+psdd is the major previously proposed alternative to pra   the intention of psdd is to avoid
+the need to lock on every node generation and to avoid explicitly passing individual nodes between
+threads  it builds on the idea of structured duplicate detection  sdd   which was originally developed for external memory search  zhou   hansen         sdd uses an abstraction function  a
+many to one mapping from states in the original search space to states in an abstract space  the
+abstract node to which a state is mapped is called its image  an nblock is the set of nodes in the
+state space that have the same image in the abstract space  the abstraction function creates an abstract graph of nodes that are images of the nodes in the state space  if two states are successors in
+the state space  then their images are successors in the abstract graph  figure   shows a state space
+graph  left  consisting of    nodes and an abstract graph  right  which consists of nine nodes  each
+node in the abstract graph represents a grouping of four nodes  called an nblock  in the original state
+space  shown by the dotted lines in the state space graph on the left 
+   
+
+fib est f irst s earch for m ulticore m achines
+
+figure    two disjoint duplicate detection scopes 
+
+each nblock has an open and closed list  to avoid contention  a thread will acquire exclusive
+access to an nblock  additionally  the thread acquires exclusive access to the nblocks that correspond to the successors in the abstract graph of the nblock that it is searching  for each nblock we
+call the set of nblocks that are its successors in the abstract graph the its duplicate detection scope 
+this is because these are the only abstract nodes to which access is required in order to perform
+perfect duplicate detection when expanding nodes from the given nblock  if a thread expands a
+node n in nblock b the children of n must fall within b or one of the nblocks that are successors of
+b in the abstract graph  threads can determine whether or not new states generated from expanding
+n are duplicates by simply checking the closed lists of nblocks in the duplicate detection scope 
+this does not require synchronization because the thread has exclusive access to this set of nblocks 
+in psdd  the abstract graph is used to find nblocks whose duplicate detection scopes are disjoint  these nblocks can be searched in parallel without any locking during node expansions 
+figure   shows two disjoint duplicate detection scopes delineated by dashed lines with different
+patterns  an nblock that is not in use by any thread and whose duplicate detection scope is also
+not in use is considered to be free  a free nblock is available for a thread to acquire it for searching  free nblocks are found by explicitly tracking  for each nblock b   b   the number of nblocks
+among bs successors that are in use by another thread  an nblock b can only be acquired when
+ b      
+the advantage of psdd is that it only requires a single lock  the one controlling manipulation
+of the abstract graph  and the lock only needs to be acquired by threads when finding a new free
+nblock to search  this means that threads do not need to synchronize while expanding nodes  their
+most common operation 
+zhou and hansen        used psdd to parallelize breadth first heuristic search  zhou   hansen 
+       in this algorithm  each nblock has two lists of open nodes  one list contains open nodes
+at the current search depth and the other contains nodes at the next search depth  in each thread 
+only the nodes at the current search depth in an acquired nblock are expanded  the children that
+are generated are put in the open list for the next depth in the nblock to which they map  which will
+be in the duplicate detection scope of the nblock being searched  as long as they are not duplicates 
+when the current nblock has no more nodes at the current depth  it is swapped for a free nblock
+   
+
+fib urns   l emons   ruml     z hou
+
+that does have open nodes at this depth  if no more nblocks have open nodes at the current depth 
+all threads synchronize and then progress together to the next depth  an admissible heuristic is used
+to prune nodes that fall on or above the current solution upper bound 
+      i mprovements
+while psdd can be viewed as a general framework for parallel search  in our terminology  psdd
+refers to an instance of sdd in a parallel setting that uses layer based synchronization and breadthfirst search  in this subsection  we present two algorithms that use the psdd framework and attempt
+to improve on the psdd algorithm in specific ways 
+as implemented by zhou and hansen         the psdd algorithm uses the heuristic estimate
+of a node only for pruning  this is only effective if a tight upper bound is already available  to
+cope with situations where a good bound is not available  we have implemented a novel algorithm
+using the psdd framework that uses iterative deepening  idpsdd  to increase the bound  as we
+report below  this approach is not effective in domains such as grid pathfinding that do not have a
+geometrically increasing number of nodes within successive f bounds 
+another drawback of psdd is that breadth first search cannot guarantee optimality in domains
+where operators have differing costs  in anticipation of these problems  zhou and hansen       
+suggest two possible extensions to their work  best first search and a speculative best first layering
+approach that allows for larger layers in the cases where there are few nodes  or nblocks  with the
+same f value  to our knowledge  we are the first to implement and test these algorithms 
+best first psdd  bfpsdd  uses f value layers instead of depth layers  this means that all
+nodes that are expanded in a given layer have the same  lowest  f value  bfpsdd provides a bestfirst search order  but may incur excessive synchronization overhead if there are few nodes in each
+f layer  to ameliorate this  we loosen the best first ordering by enforcing that at least m nodes
+are expanded before abandoning a non empty nblock   zhou   hansen       credit edelkamp  
+schrodl       with this idea   also  when populating the list of free nblocks for each layer  all of
+the nblocks that have nodes with the current layers f value are used or a minimum of k nblocks are
+added where k is four times the number of threads   this value for k gave better performance than
+other values tested   this allows us to add additional nblocks to small layers in order to amortize the
+cost of synchronization  in addition  we tried an alternative implementation of bfpsdd that used
+a range of f values for each layer  a parameter f was used to proscribe the width  in f values 
+of each layer of search  this implementation did not perform as well and we do not present results
+for it  with either of these enhancements  threads may expand nodes with f values greater than that
+of the current layer  because the first solution found may not be optimal  search continues until all
+remaining nodes are pruned by the incumbent solution 
+having surveyed the existing approaches to parallel best first search  we now present a new
+approach which comprises the main algorithmic contribution of this paper 
+
+   parallel best n block first  pbnf 
+in an ideal scenario  all threads would be busy expanding nblocks that contain nodes with the lowest
+f values  to approximate this  we combine psdds duplicate detection scopes with an idea from
+the localized a  algorithm of edelkamp and schrodl         localized a   which was designed
+to improve the locality of external memory search  maintains sets of nodes that reside on the same
+memory page  the decision of which set to process next is made with the help of a heap of sets
+   
+
+fib est f irst s earch for m ulticore m achines
+
+   while there is an nblock with open nodes
+   lock  b  best free nblock  unlock
+   while b is no worse than the best free nblock or weve done fewer than min expansions
+  
+m  best open node in b
+  
+if f  m   f  incumbent   prune all open nodes in b
+  
+else if m is a goal
+  
+if f  m    f  incumbent 
+  
+lock  incumbent  m  unlock
+  
+else for each child c of m
+   
+if c is not on the closed list of its nblock
+   
+insert c in the open list of the appropriate nblock
+figure    a sketch of basic pbnf search  showing locking 
+ordered by the minimum f value in each set  by maintaining a heap of free nblocks ordered on each
+nblocks best f value  we can approximate our ideal parallel search  we call this algorithm parallel
+best n block first  pbnf  search 
+in pbnf  threads use the heap of free nblocks to acquire the free nblock with the best open
+node  a thread will search its acquired nblock as long as it contains nodes that are better than those
+of the nblock at the front of the heap  if the acquired nblock becomes worse than the best free
+one  the thread will attempt to release its current nblock and acquire the better one which contains
+open nodes with lower f values  there is no layer synchronization  so threads do not need to wait
+unless no nblocks are free  the first solution found may be suboptimal  so search must continue
+until all open nodes have f values worse than the incumbent solution  figure   shows high level
+pseudo code for the algorithm 
+because pbnf is designed to tolerate a search order that is only approximately best first  we
+have freedom to introduce optimizations that reduce overhead  it is possible that an nblock has only
+a small number of nodes that are better than the best free nblock  so we avoid excessive switching
+by requiring a minimum number of expansions  due to the minimum expansion requirement it is
+possible that the nodes expanded by a thread are arbitrarily worse than the frontier node with the
+minimum f   we refer to these expansions as speculative  this can be viewed as trading off node
+quality for reduced contention on the abstract graph  section     shows the results of an experiment
+that evaluates this trade off 
+our implementation also attempts to reduce the time a thread is forced to wait on a lock by
+using non blocking operations to acquire the lock whenever possible  rather than sleeping if a lock
+cannot be acquired  a non blocking lock operation  such as pthread mutex trylock  will
+immediately return failure  this allows a thread to continue expanding its current nblock if the lock
+is busy  both of these optimizations can introduce additional speculative expansions that would
+not have been performed in a serial best first search 
+    livelock
+the greedy free for all order in which pbnf threads acquire free nblocks can lead to livelock in
+domains with infinite state spaces  because threads can always acquire new nblocks without waiting
+for all open nodes in a layer to be expanded  it is possible that the nblock containing the goal will
+   
+
+fib urns   l emons   ruml     z hou
+
+never become free  this is because we have no assurance that all nblocks in its duplicate detection
+scope will ever be unused at the same time  for example  imagine a situation where threads are
+constantly releasing and acquiring nblocks that prevent the goal nblock from becoming free  to
+fix this  we have developed a method called hot nblocks where threads altruistically release their
+nblock if they are interfering with a better nblock  we call this enhanced algorithm safe pbnf 
+we use the term the interference scope of b to refer to the set of nblocks that  if acquired 
+would prevent b from being free  the interference scope includes not only bs successors in the
+abstract graph  but their predecessors too  in safe pbnf  whenever a thread checks the heap of
+free nblocks to determine if it should release its current nblock  it also ensures that its acquired
+nblock is better than any of those that it interferes with  nblocks whose interference scope the
+acquired nblock is in   if it finds a better one  it flags that nblock as hot  any thread that finds
+itself blocking a hot nblock will release its nblock in an attempt to free the hot nblock  for each
+nblock b we define h  b  to be the number of hot nblocks that b is in the interference scope of  if
+h  b        b is removed from the heap of free nblocks  this ensures that a thread will not acquire
+an nblock that is preventing a hot nblock from becoming free 
+consider  for example  an abstract graph containing four nblocks connected in a linear fashion 
+a  b  c   a possible execution of pbnf can alternate between a thread expanding from
+nblocks a and c   if this situation arrises then nblocks b will never be considered free  if the only
+goals are located in nblock b then  in an infinite search space there may be a livelock  with the
+safe variant of pbnf  however  when expanding from either a or c a thread will make sure to
+check the f value of the best open node in nblock b periodically  if the best node in b is seen to be
+better than the nodes in a or c then b will be flagged as hot and both nblocks a and c will no
+longer be eligable for expansion until after nblock b has been acquired 
+more formally  let n be the set of all nblocks  predecessors x   and successors x   be the sets
+of predecessors and successors in the abstract graph of nblock x   h be the set of all hot nblocks 
+intscope b     l  n   x  successors b    l  predecessors x    be the interference scope
+of an nblock b and x  y be a partial order over the nblocks where x  y iff the minimum f
+value over all of the open nodes in x is lower than that of y  there are three cases to consider when
+attempting to set an nblock b to hot with an undirected abstract graph 
+   h  intscope b        h   x  n   b  intscope x          none of the nblocks b
+interferes with or that interfere with b are hot  so b can be set to hot 
+   x  h   x  intscope b   x  b  b is interfered with by a better nblock that is already
+hot  so b must not be set to hot 
+   x  h   x  intscope b   b  x   b is interfered with by an nblock x that is worse than
+b and x is already hot  x must be un flagged as hot  updating h values appropriately  and in
+its place b is set to hot 
+directed abstract graphs have two additional cases 
+   x  h   b  intscope x    b  x   b is interfering with an nblock x and b is better than x
+so un flag x as hot and set b to hot 
+   x  h   b  intscope x    x  b  b is interfering with an nblock x and x is better than b
+so do not set b to hot 
+   
+
+fib est f irst s earch for m ulticore m achines
+
+this scheme ensures that there are never two hot nblocks interfering with one another and that
+the nblock that is set to hot is the best nblock in its interference scope  as we verify below  this
+approach guarantees the property that if an nblock is flagged as hot it will eventually become free 
+full pseudo code for safe pbnf is given in appendix a 
+    correctness of pbnf
+given the complexity of parallel shared memory algorithms  it can be reassuring to have proofs of
+correctness  in this subsection we will verify that pbnf exhibits various desirable properties 
+      s oundness
+soundness holds trivially because no solution is returned that does not pass the goal test 
+      d eadlock
+there is only one lock in pbnf and the thread that currently holds it never attempts to acquire it a
+second time  so deadlock cannot arise 
+      l ivelock
+because the interaction between the different threads of pbnf can be quite complex  we modeled
+the system using the tla   lamport        specification language  using the tlc model checker
+ yu  manolios    lamport        we were able to demonstrate a sequence of states that can give rise
+to a livelock in plain pbnf  using a similar model we were unable to find an example of livelock
+in safe pbnf when using up to three threads and    nblocks in an undirected ring shaped abstract
+graph and up to three threads and eight nblocks in a directed graph 
+in our model the state of the system is represented with four variables  state  acquired  ishot and
+succs  the state variable contains the current action that each thread is performing  either search
+or nextblock   the acquired variable is a function from each thread to the id of its acquired nblock
+or the value none if it currently does not have an nblock  the variable ishot is a function from
+nblocks to either true or false depending on whether or not the given nblock is flagged as hot 
+finally  the succs variable gives the set of successor nblocks for each nblock in order to build the
+nblock graph 
+the model has two actions  dosearch and donextblock  the dosearch action models the search
+stage performed by a pbnf thread  since we were interested in determining if there is a livelock 
+this action abstracts away most of the search procedure and merely models that the thread may
+choose a valid nblock to flag as hot  after setting an nblock to hot  the thread changes its state
+so that the next time it is selected to perform an action it will try to acquire a new nblock  the
+donextblock simulates a thread choosing its next nblock if there is one available  after a thread
+acquires an nblock  if one was free  it sets its state so that the next time it is selected to perform an
+action it will search 
+the tla  source of the model is located in appendix b 
+formal proof  in addition to model checking  the tla  specification language is designed to
+allow for formal proofs of properties  this allows properties to be proved for an unbounded space 
+using our model we have completed a formal proof that a hot nblock will eventually become free
+   
+
+fib urns   l emons   ruml     z hou
+
+regardless of the number of threads or the abstract graph  we present here an english summary 
+first  we need a helpful lemma 
+lemma   if an nblock n is hot  there is at least one other nblock in its interference scope that is
+in use  also  n is not interfering with any other hot nblocks 
+proof  initially no nblocks are hot  this can change only while a thread searches or when it releases
+an nblock  during a search  a thread can only set n to hot if it has acquired an nblock m that is in
+the interference scope of n  additionally  a thread may only set n to hot if it does not create any
+interference with another hot nblock  during a release  if n is hot  either the final acquired nblock
+in its interference scope is released and n is no longer hot  or n still has at least one busy nblock in
+its interference scope 
+ 
+now we are ready for the key theorem 
+theorem   if an nblock n becomes hot  it will eventually be added to the free list and will no
+longer be hot 
+proof  we will show that the number of acquired nblocks in the interference scope of a hot nblock
+n is strictly decreasing  therefore  n will eventually become free 
+assume an nblock n is hot  by lemma    there is a thread p that has an nblock in the interference scope of n  and n is not interfering with or interfered by any other hot nblocks  assume that
+a thread q does not have an nblock in the interference scope of n  there are four cases 
+   p searches its nblock  p does not acquire a new nblock and therefore the number of nblocks
+preventing n from becoming free does not increase  if p sets an nblock m to hot  m is not in
+the interference scope of n by lemma    p will release its nblock after it sees that n is hot
+ see case    
+   p releases its nblock and acquires a new nblock m from the free list  the number of acquired
+nblocks in the interference scope of n decreases by one as p releases its nblock  since m 
+the new nblock acquired by p  was on the free list  it is not in the interference scope of n 
+   q searches its nblock  q does not acquire a new nblock and therefore the number of nblocks
+preventing n from becoming free does not increase  if q sets an nblock m to hot  m is not in
+the interference scope of n by lemma   
+   q releases its nblock  if it had one  and acquires a new nblock m from the free list  since m 
+the new nblock acquired by q  was on the free list  it is not in the interference scope of n and
+the number of nblocks preventing n from becoming free does not increase 
+ 
+we can now prove the progress property that we really care about 
+theorem   a node n with minimum f value will eventually be expanded 
+proof  we consider ns nblock  there are three cases 
+   the nblock is being expanded  because n has minimum f   it will be at the front of open and
+will be expanded 
+   
+
+fib est f irst s earch for m ulticore m achines
+
+   the nblock is free  because it holds the node with minimum f value  it will be at the front of
+the free list and selected next for expansion  reducing to case   
+   the nblock is not on the free list because it is in the interference scope of another nblock that
+is currently being expanded  when the thread expanding that nblock checks its interference
+scope  it will mark the better nblock as hot  by theorem    we will eventually reach case   
+ 
+      c ompleteness
+this follows easily from liveness 
+corollary   if the heuristic is admissible or the search space is finite  a goal will be returned if one
+is reachable 
+proof  if the heuristic is admissible  we inherit the completeness of serial a   nilsson        by
+theorem    nodes are only re expanded if their g value has improved  and this can happen only a
+finite number of times  so a finite number of expansions will suffice to exhaust the search space   
+      o ptimality
+because pbnfs expansion order is not strictly best first  it operates like an anytime algorithm  and
+its optimality follows the same argument as that for algorithms such as anytime a   hansen  
+zhou        
+theorem   pbnf will only return optimal solutions 
+proof  after finding an incumbent solution  the search continues to expand nodes until the minimum
+f value among all frontier nodes is greater than or equal to the incumbent solution cost  this means
+that the search will only terminate with the optimal solution 
+ 
+before discussing how to adapt pbnf to suboptimal and anytime search  we first evaluate its
+performance on optimal problem solving 
+
+   empirical evaluation  optimal search
+we have implemented and tested the parallel heuristic search algorithms described above on three
+different benchmark domains  grid pathfinding  the sliding tile puzzle  and strips planning  we
+will discuss each domain in turn  with the exception of the planning domain  the algorithms were
+programmed in c   using the posix threading library and run on dual quad core intel xeon e    
+    ghz processors with   gb ram  for the planning results the algorithms were written independently in c from the pseudo code in appendix a  this gives us additional confidence in the
+correctness of the pseudo code and our performance claims  the planning experiments were run
+on dual quad core intel xeon x        ghz processors limited to roughly  gb of ram  all open
+lists and free lists were implemented as binary heaps except in psdd and idpsdd which used a
+queue giving them less overhead since they do not require access to minimum valued elements  all
+closed lists were implemented as hash tables  pra  and apra  used queues for incoming nodes 
+and a hash table was used to detect duplicates in both open and closed  for grids and sliding tiles 
+   
+
+fib urns   l emons   ruml     z hou
+
+we used the jemalloc library  evans         a special multi thread aware malloc implementation 
+instead of the standard glibc  version      malloc  because we found that the latter scales poorly
+above   threads  we configured jemalloc to use    memory arenas per cpu  in planning  a custom
+memory manager was used which is also thread aware and uses a memory pool for each thread 
+on grids and sliding tiles abstractions were hand coded and  nblock data structures were created
+lazily  so only the visited part of abstract graph was instantiated  the time taken to create the
+abstraction is accounted for in all of the wall time measurements for these two domains  in strips
+planning the abstractions were created automatically and the creation times for the abstractions are
+reported separately as described in section     
+    tuning pbnf
+in this section we present results for a set of experiments that we designed to test the behavior of
+pbnf as some of its parameters are changed  we study the effects of the two important parameters
+of the pbnf algorithm  minimum expansions required before switching to search a new nblock
+and the size of the abstraction  this study used twenty     x     four connected grid pathfinding
+instances with unit cost moves where each cell has a      probability of being an obstacle  the
+heuristic used was the manhattan distance to the goal location  error bars in the plots show    
+confidence intervals and the legends are sorted by the mean of the dependent variable in each plot 
+in the pbnf algorithm  each thread must perform a minimum number of expansions before
+it is able to acquire a new nblock for searching  requiring more expansions between switches is
+expected to reduce the contention on the nblock graphs lock but could increase the total number
+of expanded nodes  we created an instrumented version of the pbnf algorithm that tracks the
+time that the threads have spent trying to acquire the lock and the amount of time that threads
+have spent waiting for a free nblock  we fixed the size of the abstraction to        nblocks and
+varied the number of threads  from   to    and minimum expansions               and    minimum
+expansions  
+the upper left panel in figure   shows the average amount of cpu time in seconds that each
+thread spent waiting to acquire the lock  y axis  as the minimum expansions parameter was increased  x axis   each line in this plot represents a different number of threads  we can see that the
+configuration which used the most amount of time trying to acquire the lock was with eight threads
+and one minimum expansion  as the number of threads decreased  there was less contention on
+the lock as there were fewer threads to take it  as the number of minimum required expansions
+increased the contention was also reduced  around eight minimum expansions the benefit of increasing the value further seemed to greatly diminish 
+the upper right panel of figure   shows the results for the cpu time spent waiting for a free
+nblock  y axis  as minimum expansions was increased  x axis   this is different than the amount
+of time waiting on the lock because  in this case  the thread successfully acquired the lock but
+then found that there were no free nblocks available to search  we can see that the configuration
+with eight threads and one for minimum expansions caused the longest amount of time waiting
+for a free nblock  as the number of threads decreased and as the required number of minimum
+expansions increased the wait time decreased  the amount of time spent waiting  however  seems
+fairly insignificant because it is an order of magnitude smaller than the lock time  again  we see
+that around eight minimum expansions the benefit of increasing seemed to diminish 
+   
+
+fi 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+   
+
+average time waiting  seconds 
+
+average time acquiring locks  seconds 
+
+b est f irst s earch for m ulticore m achines
+
+   
+
+   
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+    
+
+    
+
+   
+  
+
+  
+
+  
+
+  
+
+total nodes expanded   k nodes 
+
+minimum expansions
+
+  
+
+  
+
+minimum expansions
+
+     
+
+     
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+     
+
+  
+
+  
+
+  
+
+minimum expansions
+
+figure    pbnf locking behavior vs minimum expansions on grid pathfinding with       
+nblocks  each line represents a different number of threads 
+
+the final panel  on the bottom in figure    shows the total number of nodes expanded  y axis 
+which is in thousands of nodes  as minimum expansions was increased  increasing the minimum
+number of expansions that a thread must make before switching to an nblock with better nodes
+caused the search algorithm to explore more of the space that may not have been covered by a strict
+best first search  as more of these speculative expansions were performed the total number of
+nodes encountered during the search increased  we can also see that adding threads increased the
+number of expanded nodes too 
+from the results of this experiment it appears that requiring more than eight expansions before switching nblocks had a decreasing benefit with respect to locking and waiting time  in our
+non instrumented implementation of pbnf we found that slightly greater values for the minimum
+expansion parameter lead to the best total wall times  for each domain below we use the value that
+gave the best total wall time in the non instrumented pbnf implementation 
+   
+
+fib urns   l emons   ruml     z hou
+
+   
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+    
+
+average time waiting  seconds 
+
+average time acquiring locks  seconds 
+
+   
+
+   
+
+   
+
+    
+
+    
+
+    
+
+   
+  
+
+   
+
+   
+
+   
+
+   
+
+  
+
+total nodes expanded   k nodes 
+
+abstraction size   k nblocks 
+
+   
+
+   
+
+   
+
+   
+
+abstraction size   k nblocks 
+
+     
+
+     
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+     
+
+  
+
+   
+
+   
+
+   
+
+   
+
+abstraction size   k nblocks 
+
+figure    pbnf abstraction size      x     grid pathfinding     minimum expansions 
+
+since pbnf uses abstraction to decompose a search space it is also important to understand the
+effect of abstraction size on search performance  our hypothesis was that using too few abstract
+states would lead to only a small number of free nblocks therefore making threads spend a lot of
+time waiting for an nblock to become free  on the other hand  if there are too many abstract states
+then there will be too few nodes in each nblock  if this happens  threads will perform only a small
+amount of work before exhausting the open nodes in their nblock and being forced to switch to
+a new portion of the search space  each time a thread must switch nblocks the contention on the
+lock is increased  figure   shows the results of an experiment that was performed to verify this
+theory  in each plot we have fixed the minimum expansions parameter to     which gave the best
+total wall time on grid pathfinding  and varied the number of threads  from   to    and the size of
+the abstraction                 and         nblocks  
+the upper left panel of figure   shows a plot of the amount of cpu seconds spent trying to acquire the lock  y axis  versus the size of the abstraction  x axis   as expected  when the abstraction
+was very coarse there was little time spent waiting on the lock  but as the size of the abstraction grew
+   
+
+fib est f irst s earch for m ulticore m achines
+
+and the number of threads increased the amount of time spent locking increased  at eight threads
+with         nblocks over   second of cpu time was spent waiting to acquire the lock  we suspect
+that this is because threads were exhausting all open nodes in their nblocks and were  therefore 
+being forced to take the lock to acquire a new portion of the search space 
+the upper right panel of figure   shows the amount of time that threads spent waiting for an
+nblock to become free after having successfully acquired the lock only to find that no nblocks are
+available  again  as we suspected  the amount of time that threads wait for a free nblock decreases
+as the abstraction size is increased  the more available nblocks  the more disjoint portions of the
+search space will be available  as with our experiments for minimum expansions  the amount of
+time spent waiting seems to be relatively insignificant compared to the time spent acquiring locks 
+the bottom panel in figure   shows that the number of nodes that were expanded increased
+as the size of the abstraction was increased  for finer grained abstractions the algorithm expanded
+more nodes  this is because each time a thread switches to a new nblock it is forced to perform at
+least the minimum number of expansions  therefore the more switches  the more forced expansions 
+    tuning pra 
+we now turn to looking at the performance impact on pra  of abstraction and asynchronous communication  first  we compare pra  with and without asynchronous communication  results from
+a set of experiments on twenty     x     grid pathfinding and a set of     random    puzzle instances that were solvable by a  in   million expansions are shown in figure    the line labeled
+sync   pra   used synchronous communication  async  sends  used synchronous receives and asynchronous sends  async  receives  used synchronous sends and asynchronous receives and async 
+ hda    used asynchronous communication for both sends and receives  as before  the legend is
+sorted by the mean performance and the error bars represent the     confidence intervals on the
+mean  the vertical lines in the plots for the life cost grid pathfinding domains show that these
+configurations were unable to solve instances within the     second time limit 
+the combination of both asynchronous sends and receives provided the best performance  we
+can also see from these plots that making sends asynchronous provided more of a benefit than
+making receives asynchronous  this is because  without asynchronous sends  each node that is generated will stop the generating thread in order to communicate  even if communication is batched 
+each send may be required to go to a separate neighbor and therefore a single send operation may be
+required per generation  for receives  the worst case is that the receiving thread must stop at each
+expansion to receive the next batch nodes  since the branching factor in a typical search space is
+approximately constant there will be approximately a constant factor more send communications as
+there are receive communications in the worst case  therefore  making sends asynchronous reduces
+the communication cost more than receives 
+figure   shows the results of an experiment that compares pra  using abstraction to distribute
+nodes among the threads versus pra  with asynchronous communication  the lines are labeled
+as follows  sync   pra   used only synchronous communication  async   hda   used only asynchronous communication and sync  with abst   apra   used only synchronous communication and
+used abstraction to distribute nodes among the threads and async  and abst   ahda   used a combination of asynchronous communication and abstraction  again  the vertical lines in the plots for
+the life cost grid pathfinding domains show that these configurations were unable to solve instances
+within the     second time limit 
+   
+
+fib urns   l emons   ruml     z hou
+
+grid unit four way
+sync   pra  
+async  receives
+async  sends
+async   hda  
+
+sync   pra  
+async  receives
+async  sends
+async   hda  
+
+  
+
+wall time  seconds 
+
+  
+
+wall time  seconds 
+
+grid unit eight way
+
+  
+
+  
+
+  
+
+  
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+threads
+grid life four way
+   
+
+ 
+
+ 
+
+threads
+grid life eight way
+   
+
+sync   pra  
+async  receives
+async  sends
+async   hda  
+
+sync   pra  
+async  receives
+async  sends
+async   hda  
+
+wall time  seconds 
+
+wall time  seconds 
+
+   
+
+   
+
+  
+
+   
+
+  
+ 
+ 
+
+ 
+
+ 
+
+ 
+
+threads
+
+ 
+
+ 
+
+ 
+
+threads
+
+sync   pra  
+async  receives
+async  sends
+async   hda  
+
+  
+
+wall time  seconds 
+
+ 
+
+   puzzles      easy
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+threads
+
+figure    pra  synchronization      x     grids and easy sliding tile instances 
+
+it is clear from these plots that the configurations of pra  that used abstraction gave better
+performance than pra  without abstraction in the grid pathfinding domain  the reason for this is
+   
+
+fib est f irst s earch for m ulticore m achines
+
+grid unit four way
+sync   pra  
+async   hda  
+sync  and abst   apra  
+async  and abst   ahda  
+
+sync   pra  
+async   hda  
+sync  and abst   apra  
+async  and abst   ahda  
+
+  
+
+wall time  seconds 
+
+  
+
+wall time  seconds 
+
+grid unit eight way
+
+  
+
+  
+
+  
+
+  
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+threads
+grid life four way
+   
+
+ 
+
+ 
+
+threads
+grid life eight way
+   
+
+sync   pra  
+async   hda  
+sync  and abst   apra  
+async  and abst   ahda  
+
+sync   pra  
+async   hda  
+sync  and abst   apra  
+async  and abst   ahda  
+
+wall time  seconds 
+
+wall time  seconds 
+
+   
+
+   
+
+  
+
+   
+
+  
+
+ 
+ 
+
+ 
+
+ 
+
+ 
+
+threads
+
+ 
+
+ 
+
+ 
+
+threads
+
+sync   pra  
+async   hda  
+sync  and abst   apra  
+async  and abst   ahda  
+
+  
+
+wall time  seconds 
+
+ 
+
+   puzzles      easy
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+threads
+
+figure    pra  abstraction      x     grids and easy sliding tile instances 
+
+because the abstraction in grid pathfinding will often assign successors of a node being expanded
+back to the thread that generated them  when this happens no communication is required and the
+   
+
+fib urns   l emons   ruml     z hou
+
+nodes can simply be checked against the local closed list and placed on the local open list if they
+are not duplicates  with abstraction  the only time that communication will be required is when a
+node on the edge of an abstract state is expanded  in this case  some of the children will map into
+a different abstract state and communication will be required  this experiment also shows that the
+benefits of abstraction were greater than the benefits of asynchronous communication in the grid
+pathfinding problems  we see the same trends on the sliding tile instances  however they are not
+quite as pronounced  the confidence intervals often overlap 
+overall  it appears that the combination of pra  with both abstraction for distributing nodes
+among the different threads and using asynchronous communication gave the best performance  in
+the following section we show the results of a comparison between this variant of pra   the safe
+pbnf algorithm and the best first variant of psdd 
+    grid pathfinding
+in this section  we evaluate the parallel algorithms on the grid pathfinding domain  the goal of
+this domain is to navigate through a grid from an initial location to a goal location while avoiding
+obstacles  we used two cost models  discussed below  and both four way and eight way movement 
+on the four way grids  cells were blocked with a probability of      and on the eight way grids
+cells were blocked with a probability of       the abstraction function that was used maps blocks
+of adjacent cells to the same abstract state  forming a coarser abstract grid overlaid on the original
+space  the heuristic was the manhattan distance to the goal location  the hash values for states
+ which are used to distribute nodes in pra  and hda   are computed as  x  ymax   y of the state
+location  this gives a minimum perfect hash value for each state  for this domain we were able to
+tune the size of the abstraction and our results show execution with the best abstraction size for each
+algorithm where it is relevant 
+      f our  way u nit c ost
+in the unit cost model  each move has the same cost  one 
+less promising algorithms figure    shows a performance comparison between algorithms that 
+on average  were slower than serial a   these algorithms were tested on    unit cost four way
+movement     x     grids with the start location in the bottom left corner and the goal location in
+the bottom right  the x axis shows the number of threads used to solve each instance and the y axis
+shows the mean wall clock time in seconds  the error bars give a     confidence interval on the
+mean wall clock time and the legend is sorted by the mean performance 
+from this figure we can see that psdd gave the worst average solution times  we suspect that
+this was because the lack of a tight upper bound which psdd uses for pruning  we see that a  with
+a shared lock free open and closed list  lpa   took  on average  the second longest amount of time
+to solve these problems  lpa s performance improved up to   threads and then started to drop off
+as more threads were added  the overhead of the special lock free memory manager along with
+the fact that access to the lock free data structures may require back offs and retries could account
+for the poor performance compared to serial a   the next algorithm  going down from the top in
+the legend  is kbfs which slowly increased in performance as more threads were added however
+it was not able to beat serial a   a simple parallel a  implementation  pa   using locks on the
+open and closed lists performed worse as threads were added until about four where it started to
+give a very slow performance increase matching that of kbfs  the pra  algorithm using a simple
+   
+
+fib est f irst s earch for m ulticore m achines
+
+  
+
+psdd
+lpa 
+kbfs
+pa 
+pra 
+serial a 
+
+wall time  seconds 
+
+  
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+threads
+
+figure    simple parallel algorithms on unit cost  four way     x     grid pathfinding 
+
+state representation based hashing function gave the best performance in this graph but it was fairly
+erratic as the number of threads changed  sometimes increasing and sometimes decreasing  at  
+and   threads  pra  was faster than serial a  
+we have also implemented the idpsdd algorithm which tries to find the upper bound for a
+psdd search using iterative deepening  but the results are not shown on the grid pathfinding domains  the non geometric growth in the number of states when increasing the cost bound leads to
+very poor performance with iterative deepening on grid pathfinding  due to the poor performance of
+the above algorithms  we do not show their results in the remaining grid  tiles or planning domains
+ with the exception of psdd which makes a reappearance in the strips planning evaluation of
+section      where we supply it with an upper bound  
+more promising algorithms the upper left plot in figure   shows the performance of algorithms
+on unit cost four way grid pathfinding problems  the y axis represents the speedup over serial a 
+and the x axis shows the number of threads in use for each data point  error bars indicate    
+confidence intervals on the mean over    different instances  algorithms in the legend are ordered
+by their average performance  the line labeled perfect speedup shows a perfect linear speedup
+where each additional thread increases the performance linearly 
+a more practical reference point for speedup is shown by the achievable speedup line  on
+a perfect machine with n processors  running with n cores should take time that decreases linearly
+with n  on a real machine  however  there are hardware considerations such as memory bus contention that prevent this n fold speedup  to estimate this overhead for our machines  we ran sets
+of n independent a  searches in parallel for    n    and calculated the total time for each set
+to finish  on a perfect machine all of these sets would take the same time as the set with n     
+we compute the achievable speedup with the ratio of the actual completion times to the time
+   
+
+fib urns   l emons   ruml     z hou
+
+grid unit four way
+
+grid unit eight way
+ 
+
+perfect speedup
+achievable speedup
+safe pbnf
+ahda 
+bfpsdd
+
+ 
+
+speedup over serial a 
+
+speedup over serial a 
+
+ 
+
+ 
+
+perfect speedup
+achievable speedup
+safe pbnf
+ahda 
+bfpsdd
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+threads
+grid life four way
+
+ 
+
+ 
+
+ 
+
+ 
+
+threads
+grid life eight way
+ 
+
+perfect speedup
+achievable speedup
+safe pbnf
+ahda 
+bfpsdd
+
+ 
+
+speedup over serial a 
+
+speedup over serial a 
+
+ 
+
+ 
+
+ 
+
+ 
+
+perfect speedup
+achievable speedup
+ahda 
+safe pbnf
+bfpsdd
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+threads
+
+speedup over serial a 
+
+ 
+
+ 
+
+ 
+
+threads
+
+   puzzles      easy
+perfect speedup
+achievable speedup
+safe pbnf
+ahda 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+threads
+
+figure    speedup results on grid pathfinding and the sliding tile puzzle 
+
+for the set with n      at t threads given the completion times for the sets  hc    c         cn i 
+ 
+achievable speedup t    tc
+ct  
+   
+
+fib est f irst s earch for m ulticore m achines
+
+the upper left panel shows a comparison between ahda   pra  with asynchronous communication and abstraction   bfpsdd and safe pbnf algorithm on the larger      x      unit cost
+four way problems  safe pbnf was superior to any of the other algorithms  with steadily decreasing solution times as threads were added and an average speedup over serial a  of more than  x
+when using eight threads  ahda  had less stable performance  sometimes giving a sharp speedup
+increase and sometimes giving a decreased performance as more threads were added  at seven
+threads where ahda  gave its best performance  it was able to reach  x speedup over serial a 
+search  the bfpsdd algorithm solved problems faster as more threads were added however it was
+not as competitive as pbnf and ahda  giving no more than  x speedup over serial a  with eight
+threads 
+      f our  way l ife c ost
+moves in the life cost model have a cost of the row number of the state where the move was
+performedmoves at the top of the grid are free  moves at the bottom cost       ruml   do 
+       this differentiates between the shortest and cheapest paths which has been shown to be a
+very important distinction  richter   westphal        cushing  bentor    kambhampati        
+the left center plot in figure   shows these results in the same format as for the unit cost variant 
+number of threads on the x axis and speedup over serial a  on the y axis  on average  safe pbnf
+gave better speedup than ahda   however ahda  outperformed pbnf at six and seven threads 
+at eight threads  however  apra  did not perform better than at seven threads  both of these algorithms achieve speedups that are very close to the achievable speedup for this domain  again
+bfpsdd gave the worst performance increase as more threads were added reaching just under  x
+speedup 
+      e ight way u nit c ost
+in eight way movement path
+ planning problems  horizontal and vertical moves have cost    but
+diagonal movements cost    these real valued costs make the domain different from the previous
+two path planning domains  the upper right panel of figure   shows number of threads on the x
+axis and speedup over serial a  on the y axis for the unit cost eight way movement domain  we see
+that safe pbnf gave the best average performance reaching just under  x speedup at eight threads 
+ahda  did not outperform safe pbnf on average  however it was able to achieve a just over  x
+speedup over serial a  at seven threads  again however  we see that ahda  did not give very
+stable performance increases with more threads  bfpsdd improved as threads were added out to
+eight but it never reached more than  x speedup 
+      e ight way l ife c ost
+this model combines the eight way movement and the life cost models  it tends to be the most difficult path planning domain presented in this paper  the right center panel of figure   shows threads
+on the x axis and speedup over serial a  on the y axis  ahda  gave the best average speedup over
+serial a  search  peaking just under  x speedup at seven threads  although it outperformed safe
+pbnf on average at eight threads ahda  has a sharp decrease in performance reaching down to
+almost  x speedup where safe pbnf had around  x speedup over serial a   bfpsdd again peaks
+at just under  x speedup at eight threads 
+   
+
+fib urns   l emons   ruml     z hou
+
+ahda  minus safe pbnf wall time  seconds 
+
+   puzzles     easy ahda  vs safe pbnf paired difference
+ ahda      safe pbnf 
+zero
+
+ 
+
+ 
+
+ 
+ 
+
+ 
+
+ 
+
+ 
+
+threads
+
+figure     comparison of wall clock time for safe pbnf versus ahda  on the sliding tile puzzle 
+
+    sliding tile puzzle
+the sliding tile puzzle is a common domain for benchmarking heuristic search algorithms  for these
+results  we use     randomly generated    puzzles that serial a  was able to solve within   million
+expansions 
+the abstraction used for the sliding tile puzzles ignores the numbers on a set of tiles  for
+example  the results shown for safe pbnf in the bottom panel of figure   use an abstraction that
+looks at the position of the blank  one and two tiles  this abstraction gives      nblocks  in order
+for ahda  to get the maximum amount of expansions that map back to the expanding thread  as
+described above for grids   its abstraction uses the one  two and three tile  since the position of the
+blank is ignored  any state generation that does not move the one  two or three tiles will generate a
+child into the same nblock as the parent therefore requiring no communication  the heuristic that
+was used in all algorithms was the manhattan distance heuristic  the hash value used for tiles states
+was a perfect hash value based on the techniques presented by korf and schultze        
+the bottom panel of figure   shows the results for ahda   and safe pbnf on these sliding
+tiles puzzle instances  the plot has the number of threads on the x axis and the speedup over serial
+a  on the y axis  safe pbnf had the best mean performance but there was overlap in the confidence
+intervals with ahda   bfpsdd was unable to show a speedup over serial a  and its performance
+was not shown in this plot 
+because sliding tile puzzles vary so much in difficulty  in this domain we also did a paireddifference test  shown in figure     the data used for figure    was collected on the same set of
+runs as shown in the bottom panel of figure    the y axis in this figure  however  is the average 
+over all instances  of the time that ahda  took on that instance minus the time that safe pbnf
+took  this paired test gives a more powerful view of the algorithms relative performance  values
+greater than     represent instances where safe pbnf was faster than ahda  and values lower than
+   
+
+fib est f irst s earch for m ulticore m achines
+
+    represent those instances where ahda  was faster  the error bars show the     confidence
+interval on the mean  we can clearly see that the safe pbnf algorithm was significantly faster than
+ahda  across all numbers of threads from   to   
+    strips planning
+in addition to the path planning and sliding tiles domains  the algorithms were also embedded into
+a domain independent optimal sequential strips planner  in contrast to the previous two domains
+where node expansion is very quick and therefore it is difficult to achieve good parallel speedup 
+node expansion in strips planning is relatively slow  the planner used in these experiments uses
+regression and the max pair admissible heuristic of haslum and geffner         the abstraction
+function used in this domain is generated dynamically on a per problem basis and  following zhou
+and hansen         this time was not taken into account in the solution times presented for these
+algorithms  the abstraction function is generated by greedily searching in the space of all possible
+abstraction functions  zhou   hansen         because the algorithm needs to evaluate one candidate abstraction for each of the unselected state variables  it can be trivially parallelized by having
+multiple threads work on different candidate abstractions 
+table   presents the results for a   ahda   pbnf  safe pbnf  psdd  given an optimal upper
+bound for pruning and using divide and conquer solution reconstruction   apra  and bfpsdd 
+the values of each cell are the total wall time in seconds taken to solve each instance  a value
+of m indicates that the program ran out of memory  the best result on each problem and results
+within     of the best are marked in bold  generally  all of the parallel algorithms were able to
+solve the instances faster as they were allowed more threads  all of the parallel algorithms were
+able to solve instances much faster than serial a  at seven threads  the pbnf algorithm  either
+pbnf or safe pbnf  gave the best solution times in all but three domains  interestingly  while
+plain pbnf was often a little faster than the safe version  it failed to solve two of the problems  this
+is most likely due to livelock  although it could also simply be because the hot nblocks fix forces
+safe pnbf to follow a different search order than pbnf  ahda  tended to give the second best
+solution times  followed by psdd which was given the optimal solution cost up front for pruning 
+bfpsdd was often better than apra  
+the column  labeled abst  shows the time that was taken by the parallel algorithms to serially
+generate the abstraction function  even with the abstraction generation time added on to the solution
+times all of the parallel algorithms outperform a  at seven threads  except in the block    domain
+where the time taken to generate the abstraction actually was longer than the time a  took to solve
+the problem 
+    understanding search performance
+we have seen that the pbnf algorithm tends to have better performance than the ahda  algorithm
+for optimal search  in this section we show the results of a set of experiments that attempts to
+determine which factors allow pbnf to perform better in these domains  we considered three
+hypotheses  first  pbnf may achieve better performance because it expands fewer nodes with f
+values greater than the optimal solution cost  second  pbnf may achieve better search performance
+because it tends to have many fewer nodes on each priority queue than ahda   finally  pbnf
+may achieve better search performance because it spends less time coordinating between threads 
+in the following subsections we show the results of experiments that we performed to test our
+   
+
+fib urns   l emons   ruml     z hou
+
+threads
+logistics  
+blocks   
+gripper  
+satellite  
+elevator   
+freecell  
+depots  
+driverlog   
+gripper  
+
+threads
+logistics  
+blocks   
+gripper  
+satellite  
+elevator   
+freecell  
+depots  
+driverlog   
+gripper  
+
+threads
+logistics  
+blocks   
+gripper  
+satellite  
+elevator   
+freecell  
+depots  
+driverlog   
+gripper  
+
+a 
+ 
+    
+    
+      
+      
+      
+      
+m
+m
+m
+
+ 
+    
+    
+     
+     
+      
+      
+      
+      
+      
+
+ 
+    
+    
+     
+     
+      
+      
+      
+      
+      
+
+ahda 
+ 
+ 
+ 
+ 
+    
+              
+    
+              
+                       
+                       
+                        
+                        
+                         
+                        
+                         
+safepbnf
+ 
+ 
+    
+    
+    
+    
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+
+ 
+    
+    
+    
+     
+     
+     
+     
+     
+     
+
+apra 
+ 
+ 
+ 
+    
+    
+    
+    
+    
+    
+                 
+                 
+                    
+                  
+                  
+                  
+                    
+
+ 
+    
+    
+     
+     
+      
+      
+      
+      
+      
+
+ 
+    
+    
+     
+     
+      
+      
+m
+m
+      
+
+pbnf
+ 
+ 
+         
+         
+           
+           
+           
+           
+m
+m
+m
+m
+           
+
+psdd
+ 
+ 
+    
+    
+    
+    
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+      
+      
+
+bfpsdd
+ 
+ 
+ 
+    
+         
+    
+         
+                 
+                 
+                  
+                  
+                  
+                  
+                   
+
+table    wall time on strips planning problems 
+
+   
+
+ 
+    
+    
+    
+     
+     
+     
+m
+m
+     
+
+ 
+    
+    
+     
+     
+     
+     
+     
+     
+      
+abst 
+
+ 
+    
+    
+     
+     
+     
+     
+     
+     
+     
+
+ 
+    
+   
+   
+ 
+   
+  
+   
+   
+   
+
+fib est f irst s earch for m ulticore m achines
+
+ahda 
+safe pbnf
+
+ahda 
+safe pbnf
+
+ e   
+
+ e   
+
+cumulative expansions
+
+cumulative expansions
+
+ e   
+
+ e   
+
+ e   
+
+ e   
+
+ e   
+
+ e   
+
+ 
+
+ 
+   
+
+   
+
+   
+
+ 
+
+factor of optimal cost
+
+   
+
+   
+
+   
+
+factor of optimal cost
+
+figure     cumulative normalized f value counts for nodes expanded with eight threads on unitcost four way grid pathfinding  left  and the    puzzle  right  
+
+three hypotheses  the results of these experiments agree with the first two hypotheses  however  it
+appears that the third hypothesis does not hold and  in fact  pbnf occasionally spends more time
+coordinating between threads than ahda  
+      n ode q uality
+because both pbnf and ahda  merely approximate a best first order  they may expand some
+nodes that have f values greater than the optimal solution cost  when a thread expands a node
+with an f value greater than the optimal solution cost its effort was a waste because the only nodes
+that must be expanded when searching for an optimal solution are those with f values less than the
+optimal cost  in addition to this  both search algorithms may re expand nodes for which a lower
+cost path has been found  if this happens work was wasted during the first sub optimal expansion
+of the node 
+threads in pbnf are able to choose which nblock to expand based on the quality of nodes in
+the free nblocks  in ahda   however  a thread must expand only those nodes that are assigned
+to it  we hypothesized that pbnf may expand fewer nodes with f values that are greater than the
+optimal solution cost because the threads have more control over the quality of the nodes that they
+choose to expand 
+we collected the f value of each node expanded by both pbnf and ahda   figure    shows
+cumulative counts for the f values of nodes expanded by both pbnf and ahda  on the same set
+of unit cost four way     x     grid pathfinding instances as were used in section      right  and
+on the    puzzle instances used in section      left   in both plots  the x axis shows the f value of
+expanded nodes as a factor of the optimal solution cost for the given instance  the y axis shows
+the cumulative count of nodes expanded up to the given normalized f over the set of instances 
+   
+
+fimean cpu time  seconds 
+
+b urns   l emons   ruml     z hou
+
+ e   
+
+ e   
+
+ e   
+
+ 
+
+safepbnf
+ahda 
+grid pathfinding
+
+safepbnf
+ahda 
+   puzzle
+
+figure     mean cpu time per open list operation 
+by looking at y location of the right most tip of each line we can find the total number of nodes
+expanded by each algorithm summed over all instances 
+on the left panel of figure    we can see that both algorithms tended to expand only a very
+small number of nodes with f values that were greater than the optimal solution cost on the grid
+pathfinding domain  the ahda  algorithm expanded more nodes in total on this set of instances 
+both pbnf and ahda  must expand all of the nodes below the optimal solution cost  because of
+this  the only way that ahda  can have a greater number of expansions for nodes below a factor
+of   is if it re expanded nodes  it appears that ahda  re expanded more nodes than pbnf and this
+seems to account for the fact that ahda  expanded more nodes in total 
+the right half of figure    shows the results on the    puzzle  we see that  again  ahda 
+expanded more nodes in total than pbnf  in this domain the algorithms expanded approximately
+the same number of nodes with f values less than the optimal solution cost  we can also see from
+this plot that ahda  expanded many more nodes that had f values greater than or equal to the
+optimal solution cost  in summary  pbnf expanded fewer nodes and better quality nodes than
+ahda  in both the grid pathfinding and sliding tiles domains  we speculate that this may happen
+because in pbnf the threads are allowed to choose which portion of the space they search and they
+choose it based on low f value  in ahda  the threads must search the nodes that map to them and
+these nodes may not be very good 
+      o pen l ist s izes
+we have found that  since pbnf breaks up the search space into many different nblocks  it tends
+to have data structures with many fewer entries than ahda   which breaks up the search space
+based on the number of threads  since we are interested general purpose algorithms that can handle
+domains with real valued costs  like eight way grid pathfinding  both pbnf and ahda  use binary
+heaps to implement their open lists  pbnf has one heap per nblock  that is one per abstract state 
+whereas ahda  has one heap per thread  because the number of nblocks is greater than the
+   
+
+fib est f irst s earch for m ulticore m achines
+
+number of threads ahda  will have many more nodes than pbnf in each of its heaps  this causes
+the heap operations in ahda  to take longer than the heap operations in pbnf 
+the cost of operations on large heaps has been shown to greatly impact overall performance of
+an algorithm  dai   hansen         in order to determine the extent to which large heaps effect the
+performance of ahda  we added timers to all of the heap operations for both algorithms  figure   
+shows the mean cpu time for a single open list operation for unit cost four way grid pathfinding
+domain and for the    puzzle  the boxes show the second and third quartiles with a line drawn
+across at the median  the whiskers show the extremes of the data except that data points residing
+beyond the first and third quartile by more than     times the inter quartile range are signified by
+a circle  the shaded rectangle shows the     confidence interval on the mean  we can see that 
+in both cases  ahda  tended to spend more time performing heap operations than pbnf which
+typically spent nearly no time per heap operation  heap operations must be performed once for each
+node that is expanded and may be required on each node generation  even though these times are in
+the tens of microseconds the frequency of these operations can be very high during a single search 
+finally  as is described by hansen and zhou         the reduction in open list sizes can also explain the good single thread performance that pbnf experiences on strips planning  see table    
+hansen and zhou point out that  although a  is optimally efficient in terms of node expansions  it is
+not necessarily optimal with respect to wall time  they found that the benefit of managing smaller
+open lists enabled the anytime weighted a  algorithm to outperform a  in wall time even though
+it expanded more nodes when converging to the optimal solution  as we describe in section    this
+good single thread performance may also be caused by speculative expansions and pruning 
+      c ooordination overhead
+our third hypothesis was that the amount of time that each algorithm spent on coordination overhead might differ  both parallel algorithms must spend some of their time accessing data structures
+shared among multiple threads  this can cause overhead in two places  the first place where coordination overhead can be seen is in the synchronization of access to shared data structures  pbnf
+has two modes of locking the nblock graph  first  if a thread has ownership of an nblock with open
+nodes that remain to be expanded then it will use try lock because there is work that could be
+done if it fails to acquire the lock  otherwise  if there are no nodes that the thread could expand
+then it attempt to acquire the lock on the nblock graph using the normal operation that blocks on
+failure  ahda  will use a try lock on its receive queue at each expansion where it has nodes
+on this queue and on its open list  in our implementation ahda  will only use the blocking lock
+operation when a thread has no nodes remaining to expand but has nodes remaining in its send or
+receive buffers 
+the second place where overhead may be incurred is when threads have no nodes to expand 
+in pbnf this occurs when a thread exhausts its current nblock and there are no free nblocks to
+acquire  the thread must wait until a new nblock becomes free  in ahda  if no open nodes map
+to a thread then it may have no nodes to expand  in this situation the thread will busy wait until a
+node arrives on its receive queue  in either situation  locking or waiting  there is time that is wasted
+because threads are not actively searching the space 
+when evaluating coordination overhead  we combine the amount of time spent waiting on a
+lock and the amount of time waiting without any nodes to expand  figure    shows the per thread
+coordination times for locks  waiting and the sum of the two normalized to the total wall time 
+   
+
+fipercentage of wall time
+
+b urns   l emons   ruml     z hou
+
+ 
+
+ 
+
+percentage of wall time
+
+safepbnf ahda 
+locks
+
+safepbnf ahda 
+wait
+
+safepbnf ahda 
+sum
+
+safepbnf ahda 
+wait
+
+safepbnf ahda 
+sum
+
+  
+
+  
+
+safepbnf ahda 
+locks
+
+figure     per thread ratio of coordination time to wall time on unit cost four way pathfinding  top 
+and the    puzzle  bottom  
+
+unlike the previous set of boxplots  individual data points residing at the extremes are not signified
+by circles in order to improve readability  the locks column of this plot shows the distribution
+of times spent by each thread waiting on a lock  the wait column shows the distribution of times
+that threads spent waiting without any nodes available to expand and the sum column shows the
+distribution of the sum of the mean lock and wait times 
+the left side of figure    shows the results for grid pathfinding  from locks column we see
+that threads in ahda  spent almost no time acquiring locks  this is expected because ahda 
+uses asynchronous communication  it appears that the amount of time that threads in pbnf spent
+acquiring locks was significantly greater than that of ahda   the wait column of this plot
+shows that both pbnf and ahda  appeared to have threads spend nearly the same amount of time
+waiting without any nodes to expand  finally  the sum column shows that the threads in pbnf
+spent more time overall coordinating between threads 
+the bottom half of figure    shows the coordination overhead for the    puzzle domain  again 
+we see that threads in ahda  spent almost no time acquiring a lock  individual threads in pbnf 
+however  tended to spend a larger fraction of their time waiting on locks in the sliding tiles domain
+   
+
+fib est f irst s earch for m ulticore m achines
+
+than in grid pathfinding  in the wait column of this figure we can see that ahda  spent more
+time than pbnf without any nodes to expand  finally  we see that  over all  pbnf spent more time
+coordinating between threads than ahda  
+overall our experiments have verified that our first two hypotheses that pbnf expanded better
+quality nodes than ahda  and that it spent less time performing priority queue operations than
+ahda   we also found that our third hypothesis did not hold and that threads in pbnf tended to
+have more coordination overhead that ahda  but this seems to be out weighed by the other two
+factors 
+    summary
+in this section we have shown the results of an empirical evaluation of optimal parallel best first
+search algorithms  we have shown that several simple parallel algorithms can actually be slower
+than a serial a  search even when offered more computing power  additionally we showed empirical results for a set of algorithms that make good use of parallelism and do outperform serial a  
+overall the safe pbnf algorithm gave the best and most consistent performance of this latter set of
+algorithms  our ahda  variant of pra  had the second fastest mean performance in all domains 
+we have also shown that using abstraction in a pra  style search to distribute nodes among
+the different threads can give a significant boost in speed by reducing the amount of communication  this modification to pra  appears to be a lot more helpful than simply using asynchronous
+communication  using both of these improvements in conjunction  ahda    yields a competitive
+algorithm that has the additional feature of not relying on shared memory 
+finally  we performed a set of experiments in an attempt to explain why safe pbnf tended to
+give better search performance than ahda   our experiments looked at three factors  node quality 
+open list sizes and thread coordination overhead  we concluded that pbnf is faster because it
+expands fewer nodes with suboptimal f values and it takes less time to perform priority queue
+operations 
+
+   bounded suboptimal search
+sometimes it is acceptable or even preferable to search for a solution that is not optimal  suboptimal
+solutions can often be found much more quickly and with lower memory requirements than optimal
+solutions  in this section we show how to create bounded suboptimal variants of some of the best
+optimal parallel search algorithms 
+weighted a   pohl         a variant of a  that orders its search on f   n    g n    w  h n  
+with w      is probably the most popular suboptimal search  it guarantees that  for an admissible
+heuristic h and a weight w   the solution returned will be w  admissible  within a w factor of the
+optimal solution cost   davis  bramanti gregor    wang        
+it is possible to modify ahda   bfpsdd  and pbnf to use weights to find suboptimal solutions  we call these algorithms wahda   wbfpsdd and wpbnf  just as in optimal search 
+parallelism implies that a strict f  search order will not be followed  the proof of weighted a s
+w  optimality depends crucially on following a strict f  order  and for our parallel variants we must
+prove the quality of our solution by either exploring or pruning all nodes  thus finding effective
+pruning rules can be important for performance  we will assume throughout that h is admissible 
+   
+
+fib urns   l emons   ruml     z hou
+
+    pruning poor nodes
+let s be the current incumbent solution and w the suboptimality bound  a node n can clearly be
+pruned if f  n   g s   but according to the following theorem  we only need to retain n if it is on
+the optimal path to a solution that is a factor of w better than s  this is a much stronger rule 
+theorem   we can prune a node n if w  f  n   g s  without sacrificing w  admissibility 
+proof  if the incumbent is w  admissible  we can safely prune any node  so we consider the case
+where g s    w g opt   where opt is an optimal goal  note that without pruning  there always exists
+a node p in some open list  or being generated  that is on the best path to opt  let f  be the cost of an
+optimal solution  by the admissibility of h and the definition of p  w f  p   w f   p    w g opt  
+if the pruning rule discards p  that would imply g s   w  f  p  and thus g s   w  g opt   which
+contradicts our premise  therefore  an open node leading to an optimal solution will not be pruned
+if the incumbent is not w  admissible  a search that does not terminate until open is empty will not
+terminate until the incumbent is w  admissible or it is replaced by an optimal solution 
+ 
+we make explicit a useful corollary 
+corollary   we can prune a node n if f   n   g s  without sacrificing w  admissibility 
+
+proof  clearly w  f  n   f   n   so theorem   applies 
+ 
+with this corollary  we can use a pruning shortcut  when the open list is sorted on increasing f  and
+the node at the front has f   g s   we can prune the entire open list 
+    pruning duplicate nodes
+when searching with an inconsistent heuristic  as in weighted a   it is possible for the search to
+find a better path to an already expanded state  likhachev  gordon  and thrun        noted that 
+provided that the underlying heuristic function h is consistent  weighted a  will still return a w admissible solution if these duplicate states are pruned during search  this ensures that each state
+is expanded at most once during the search  unfortunately  their proof depends on expanding in
+exactly best first order  which is violated by several of the parallel search algorithms we consider
+here  however  we can still prove that some duplicates can be dropped  consider the expansion
+of a node n that re generates a duplicate state d that has already been expanded  we propose the
+following weak duplicate dropping criterion  the new copy of d can be pruned if the old g d   
+g n    w  c   n  d    where c   n  d   is the optimal cost from node n to node d  
+theorem   even if the weak dropping rule is applied  there will always be a node p from an optimal
+solution path on open such that g p   w  g   p  
+proof  we proceed by induction over iterations of search  the theorem clearly holds after expansion
+of the initial state  for the induction step  we note that node p is only removed from open when it
+is expanded  if its child pi that lies along the optimal path is added to open  the theorem holds  the
+only way it wont be added is if there exists a previous duplicate copy pi and the pruning rule holds 
+i e   g pi    g pi      w  c   pi    pi    by the inductive hypothesis  g pi     w  g   pi     and
+ 
+by definition g   pi      c   pi    pi     g   pi    so we have g pi    w  g   pi   
+note that the use of this technique prohibits using the global minimum f value as a lower bound on
+the optimal solutions cost  because g values can now be inflated by up to a factor of w   however 
+if s is the incumbent and we search until the global minimum f  value is  g s   as in a serial
+weighted a  search  then w  admissibility is assured 
+   
+
+fib est f irst s earch for m ulticore m achines
+
+corollary   if the minimum f  value is  g s   where s is the incumbent  then we have g s  
+w  g   opt 
+proof  recall node p from theorem    g s   f   p    g p    w  h p   w   g   p    h p   
+w  g   opt  
+ 
+it remains an empirical question whether pruning on this rather weak criterion will lead to better
+performance in practice  our results indicate that it does provide an advantage in the grid pathfinding
+domain  results are presented in section      it should be noted that  while extra pruning can
+preserve w  admissibility  it may result in solutions of lower quality than those resulting from search
+without pruning 
+    optimistic search
+korf        showed that weighted a  typically returns solutions that are better than the bound  w  
+would suggest  to take advantage of this  thayer and ruml        use an optimistic approach to
+bounded suboptimal search that works in two stages  aggressive search using a weight that is greater
+than the desired optimality bound to find an incumbent solution and then a cleanup phase to prove
+that the incumbent is indeed within the bound  the intuition behind this approach is that wa  can
+find a solution within a very tight bound  much tighter than w  g opt    then the search can continue
+looking at nodes in f order until the bound can be proved  thayer and ruml show that  indeed 
+this approach can surpass the speed of wa  for a given optimality bound  we have implemented an
+optimistic version of pbnf  opbnf  
+one of the requirements of opbnf is that it must have access to the minimum f value over all
+nodes in order to prove the bound on the incumbent solution  for the aggressive search stage  the
+open lists and the heap of free nblocks are sorted on f  instead of f so a couple of additions need to
+be made  first  each nblock has an additional priority queue containing the open search nodes sorted
+on f   we call this queue openf   the openf queue is simply maintained by adding and removing
+nodes as nodes are added and removed from the f  ordered open list of each nblock  second  a
+priority queue  called minf   of all of the nblocks is maintained  sorted on the lowest f value in each
+nblock at the time of its last release  minf is used to track a lower bound on the minimum f value
+over all nodes  this is accomplished by lazily updating minf only when an nblock is released by
+a thread  when a thread releases an nblock  it sifts the released nblock and its successors to their
+new positions in the minf queue  these are the only nblocks whose minimum f values could have
+been changed by the releasing thread  since the global minimum f value over all nodes is strictly
+increasing  assuming a consistent heuristic  we have the guarantee that the f value at the front of
+the minf queue is strictly increasing and is a lower bound on the global minimum f value at any
+given time  using this lower bound  we are able to prove whether or not an incumbent solution is
+properly bounded 
+opbnf needs to decide when to switch between the aggressive search phase and the cleanup
+phase of optimistic search  as originally proposed  optimistic search performs aggressive search
+until the first incumbent is found then it switches between cleanup  when f   n   g s   where n
+is the best node based on f  and s is the incumbent solution  and aggressive search  when f   n   
+g s   to hedge against the case when the current incumbent is not within the bound  in opbnf 
+we were left with a choice  switch between aggressive search and cleanup on a global basis or on
+a per nblock basis  we choose to switch on a per nblock basis under the assumption that some
+threads could be cleaning up areas of the search space with low f values while other threads look
+   
+
+fib urns   l emons   ruml     z hou
+
+for better solutions in areas of the search space with low f  values  in opbnf  when deciding if
+one nblock is better than another  when deciding to switch or to set an nblock to hot   the choice
+is no longer based solely on the best f  value of the given nblock  but instead it is based on the f 
+value first  then the f value to break ties of if the best f  value is out of the bound of the incumbent 
+when acquiring a new nblock  a thread takes either the free nblock with the best f  value or best f
+value depending on which nblock is better  where the notion of better is described in the previous
+sentence   finally  when expanding nodes  a thread selects aggressive search or cleanup based on
+the same criteria as standard optimistic search for the nodes within the acquired nblock 
+
+   empirical evaluation  bounded suboptimal search
+we implemented and tested weighted versions of the parallel search algorithms discussed above 
+wahda   wapra   wbfpsdd  wpbnf and opbnf  all algorithms prune nodes based on the
+w  f criterion presented in theorem   and prune entire open lists on f  as in corollary    search
+terminates when all nodes have been pruned by the incumbent solution  our experiments were
+run on the same three benchmark domains as for optimal search  grid pathfinding  the sliding tile
+puzzle  and strips planning 
+    grid pathfinding
+results presented in table   show the performance of the parallel search algorithms in terms of
+speedup over serial weighted a  on grid pathfinding problems  duplicate states that have already
+been expanded are dropped in the serial wa  algorithm  as discussed by likhachev et al         
+the rows of this table show the number of threads and different algorithms whereas the columns
+are the weights used for various domains  each entry shows the mean speedup over serial weighted
+a   we performed a wilcoxon signed rank test to determine which mean values were significantly
+different  elements that are in bold represent values that were not significantly different  p        
+from the best mean value in the given column  in general  the parallel algorithms show increased
+speedup as threads are added for low weights  and decreased speedup as the weight is increased 
+in unit cost four way movement grids  for weights of      and     the wpbnf algorithm was
+the fastest of all of the algorithms tested reaching over five times the speed of wa  at a weight of
+    at and over    x at a weight of       at a weight of     wpbnf  wbfpsdd and wahda  did
+not show a significant difference in performance at   threads  wahda  had the best speed up of
+all algorithms at a weight of      wapra  never gave the best performance in this domain 
+in eight way movement grids wpbnf gave the best performance for a weight of     and     
+although in the latter case this best performance was a decrease over the speed of wa  and it was
+achieved at   thread  wahda  was the fastest when the weight was      however  this did not scale
+as expected when the number of threads was increased  finally wapra  gave the least performance
+decrease over weighted a  at a weight of     with   thread  in this case  all algorithms were slower
+than serial weighted a  but wapra  gave the closest performance to the serial search  wbfpsdd
+never gave the best performance in this domain 
+in the life cost domain wpbnf outperformed all other algorithms for weights          and     
+at weight      wpbnfs performance quickly dropped  however and wahda  had the best results
+with more than a  x speedup over wa   although the performance appears to have been very inconsistent as it is not significantly different from much lower speedup values for the same weight 
+wapra  never gave the best performance in this domain 
+   
+
+fiwapra 
+
+wahda 
+
+threads
+
+wbfpsdd
+
+wpbnf
+
+b est f irst s earch for m ulticore m achines
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+unit four way grids
+   
+   
+   
+   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+
+weight
+unit eight way grids
+   
+   
+   
+   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+
+life four way grids
+   
+   
+   
+   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+
+table    grid pathfinding  average speedup over serial weighted a  for various numbers of
+threads 
+
+   
+
+fib urns   l emons   ruml     z hou
+
+threads
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+
+wpbnf
+   
+   
+         
+         
+         
+         
+         
+         
+         
+         
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+
+wahda 
+   
+   
+         
+         
+         
+         
+         
+         
+         
+         
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+
+threads
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+
+wbfpsdd
+   
+   
+         
+         
+         
+         
+         
+         
+         
+         
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+
+wapra 
+   
+   
+         
+         
+         
+         
+         
+         
+         
+         
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+
+table       puzzle  average speedup over serial weighted a  for various numbers of threads 
+
+opbnf
+
+threads
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+unit four way grids
+   
+   
+   
+   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+
+unit eight way grids
+   
+   
+   
+   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+
+    easy    puzzles
+   
+   
+   
+   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+                   
+
+table    average speedup over serial optimistic search for various numbers of threads 
+
+   
+
+fib est f irst s earch for m ulticore m achines
+
+overall  we see that wpbnf often had the best speedup results at eight threads and for weights
+less than      wahda   however  gave the best performance at a weight of     across all grid
+pathfinding domains  wbfpsdd often gave speedup over serial weighted a   however it was not
+quite as competitive as wpbnf or wahda   wapra  was only very rarely able to outperform
+the serial search 
+table   shows the results for the optimistic variant of the pbnf algorithm  opbnf   each cell
+in this table shows the mean speedup of opbnf over serial optimistic search  once again  the bold
+cells entries that are not significantly different from the best value in the column  for unit cost
+four way pathfinding problems opbnf gave a performance increase over optimistic search for two
+or more threads and for all weights less than      at a weight of      opbnf tended to give the
+best speedup  this may be because optimistic search performed poorly at this particular weight  in
+unit cost eight way pathfinding  we see that opbnf performs comparably to the unit cost domain
+for a weight of      however  at all higher weights the algorithm is slower than serial optimistic
+search 
+    sliding tile puzzles
+for the sliding tiles domain  we used the standard korf        puzzles  korf         results are
+presented in table    wpbnf  wahda  and wapra  tended to give comparable performance in
+the sliding tile puzzle domain each having values that are not significantly different for weights of
+    and      at a weight of      wahda  gave the least performance decrease over weighted a  at
+  threads 
+the right most column of table   shows the results for optimistic pbnf on        puzzle
+instances that were solvable by a  in fewer than   million expansions  opbnf gave its best performance at a weight of      for weights greater than     opbnf was unable to outperform its serial
+counterpart  for greater weights opbnf tended to perform better with smaller numbers of threads 
+one trend that can be seen in both the sliding tiles domain and the grid pathfinding domain is
+that the speedup of the parallel algorithms over serial suboptimal search decreases as the weight is
+increased  we suspect that the decrease in relative performance is due to the problems becoming
+sufficiently easy  in terms of node expansions  that the overhead for parallelism becomes harmful
+to overall search  in problems that require many node expansions the cost of parallelism  additional
+expansions  spawning threads  synchronization  albeit small  waiting for threads to complete  etc  
+is amortized by the search effort  in problems that require only a small number of expansions 
+however  this overhead accounts for more of the total search time and a serial algorithm could
+potentially be faster 
+to confirm our understanding of the effect of problem size on speedup  figure    shows a comparison of wpbnf to weighted a  on all of the     korf    puzzle instances using eight threads 
+each point represents a run on one instance at a particular weight  the y axis represents wpbnf
+speedup relative to serial wa   and the x axis represents the number of nodes expanded by wa  
+different glyphs represents different weight values used for both wpbnf and wa   the figure
+shows that  while wpbnf did not outperform wa  on easier problems  the benefits of wpbnf over
+wa  increased as problem difficulty increased  the speed gain for the instances that were run at
+a weight of      the lowest weight tested  leveled off just under    times faster than wa   this is
+because the machine has eight cores  there are a few instances that seem to have speedup greater
+than   x  these can be explained by the speculative expansions that wpbnf performs which may
+   
+
+fib urns   l emons   ruml     z hou
+
+sliding tiles wpbnf v s  wa 
+w
+
+log   times faster than wa  
+
+ 
+w
+
+s
+
+ww w
+w
+w
+w
+s
+ww
+w
+w
+ws s
+s w ww
+s wss w ww
+w w w ww
+ss s s
+w
+w
+w
+w
+w
+w w
+w w ww
+ss s
+s s
+w
+w
+wsw swww
+w
+ss
+ws ssw
+w
+s
+sw w
+www
+ww
+s sw
+w ww www
+s
+w
+s
+s
+w ww ww
+ss
+ss
+s s w w
+ss sssssw
+w
+s
+s
+s w
+w
+sss sw
+ws
+w
+ww
+s
+ss sss
+s
+s
+ss s w
+w
+w
+s
+s
+s
+s
+w
+w
+s
+s
+ws
+ws
+w
+s
+s s ss s
+ss ss
+w
+s
+s
+s ss
+sss ss
+ss s
+sw
+s
+w
+w
+
+ 
+
+  
+
+w
+s
+s
+
+ 
+
+ 
+
+ 
+
+w
+w
+
+w
+
+wpbnf    
+wpbnf    
+wpbnf    
+wpbnf    
+wpbnf    
+
+w
+
+s
+
+ 
+
+log   nodes expanded by wa  
+
+figure     wpbnf speedup over wa  as a function of problem difficulty 
+find a bounded solution faster than weighted a  due to the pruning of more nodes with f  values
+equal to that of the resulting solution  the poor behavior of wpbnf for easy problems is most
+likely due to the overhead described above  this effect of problem difficulty means that wpbnf
+outperformed wa  more often at low weights  where the problems required more expansions  and
+less often at higher weights  where the problems were completed more quickly 
+    strips planning
+table   shows the performance of the parallel search algorithms on strips planning problems 
+again in terms of speedup versus serial weighted a   in this table columns represent various weights
+and the rows represent different planning problems with two and seven threads  bold values represent table entries that are within     of the the best performance for the given domain  all
+algorithms had better speedup at seven threads than at two  wpbnf gave the best speedup for the
+most number of domains followed by wahda  which was the fastest for three of the domains at
+seven threads  at two threads there were a couple of domains  satellite   and freecell    where
+wbfpsdd gave the most speedup  however it never did at seven threads  wapra  was always
+slower than the three remaining algorithms  on one problem  freecell    serial weighted a  performs much worse as the weight increases  interestingly  wpbnf and wbfpsdd do not show this
+pathology  and thus record speedups of up to       times 
+    summary
+in this section  we have seen that bounded suboptimal variants of the parallel searches can give
+better performance than their serial progenitors  we have also shown that  on the sliding tile puzzle 
+parallel search gives more of an advantage over serial search as problem difficulty increases and we
+suspect that this result holds for other domains too  we suspect that this is because the overhead of
+using parallelism is not amortized by search time for very easy problems 
+   
+
+fi  threads
+
+  threads
+
+  threads
+
+  threads
+
+b est f irst s earch for m ulticore m achines
+
+logistics  
+blocks   
+gripper  
+satellite  
+elevator   
+freecell  
+depots   
+driverlog   
+gripper  
+logistics  
+blocks   
+gripper  
+satellite  
+elevator   
+freecell  
+depots   
+driverlog   
+gripper  
+
+logistics  
+blocks   
+gripper  
+satellite  
+elevator   
+freecell  
+depots   
+driverlog   
+gripper  
+logistics  
+blocks   
+gripper  
+satellite  
+elevator   
+freecell  
+depots   
+driverlog   
+gripper  
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+wapra 
+ 
+ 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+ 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+wahda 
+ 
+ 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+     
+    
+    
+    
+    
+    
+    
+
+wpbnf
+ 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+      
+    
+    
+    
+
+ 
+    
+    
+    
+    
+    
+     
+    
+    
+    
+    
+    
+    
+    
+    
+        
+    
+    
+    
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+wbfpsdd
+ 
+ 
+ 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+          
+     
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+                 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+ 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+ 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+table    speed up over serial weighted a  on strips planning problems for various weights 
+
+   
+
+fib urns   l emons   ruml     z hou
+
+   anytime search
+a popular alternative to bounded suboptimal search is anytime search  in which a highly suboptimal
+solution is returned quickly and then improved solutions are returned over time until the algorithm
+is terminated  or the incumbent solution is proved to be optimal   the two most popular anytime
+heuristic search algorithms are anytime weighted a   awa    hansen   zhou        and anytime
+repairing a   ara    likhachev  gordon    thrun         in awa  a weighted a  search is
+allowed to continue after finding its first solution  pruning when the unweighted f  n   g s  where
+s is an incumbent solution and n is a node being considered for expansion  ara  uses a weighted
+search where the weight is lowered when a solution meeting the current suboptimality bound has
+been found and a special incons list is kept that allows the search to expand a node at most once
+during the search at each weight 
+in this section we present anytime versions of the best performing parallel searches from our
+previous sections  we used the pbnf framework to implement anytime weighted pbnf  awpbnf  and anytime repairing pbnf  arpbnf   we use the pra  framework to create anytime
+weighted ahda   awahda    we also show the performance of a very simple algorithm that
+runs parallel weighted a  searches with differing weights  in the planning domain  we have implemented anytime weighted bfpsdd  awbfpsdd  for comparison as well 
+because our parallel searches inherently continue searching after their first solutions are found 
+they serve very naturally as anytime algorithms in the style of anytime weighted a   the main
+difference between the standard  optimal versions of these algorithms and their anytime variants is
+that the anytime versions will sort all open lists and the heap of free nblocks on f   n    g n   
+w  h n   in fact  in both cases the optimal search is a degenerate case of the anytime search
+where w      this approach  simply using w      is used to implement all algorithms except for
+arpbnf and multi weighted a  
+next  we will discuss the details of the arpbnf algorithm  following that  we introduce a
+new parallel anytime algorithm called multi weighted a   finally  we show the results of a set of
+comparisons that we performed on the anytime algorithms discussed in these sections 
+    anytime repairing pbnf
+arpbnf is a parallel anytime search algorithm based on ara   likhachev et al          in
+arpbnf  open lists and the heap of nblocks are sorted on f  as in awpbnf  but instead of merely
+continuing the search until the incumbent is proved optimal  arpbnf uses a weight schedule  each
+time an incumbent is found  the weight on the heuristic value is lowered by a specified amount  all
+open lists are resorted and the search continues  on the final iteration  the weight will be     and
+the optimal solution will be found 
+the following procedure is used to resort the nblocks in parallel between incumbent solutions 
+   the thread calling for a resort  the one that found a goal  becomes the leader by taking the
+lock on the nblock graph and setting the resort flag   if the flag has already been set  then
+another thread is already the leader and the current thread becomes a worker   after the flag
+is set the leader thread releases the lock on the nblock graph and waits for all nblocks to have
+ values of zero  no nblocks are acquired  
+   threads check the resort flag each expansion  if it is set then threads release their nblocks and
+become worker threads and wait for the leader to set the start flag 
+   
+
+fib est f irst s earch for m ulticore m achines
+
+   once all nblocks have       the leader re takes the lock on the nblock graph and ensures
+that all  values are still zero  if not  then it releases the lock and retries   the leader sets
+the global weight value to the next weight on the weight schedule and populates a lock free
+queue with all nblocks  once the queue has been populated  the leader sets the start flag 
+   all threads greedily dequeue nblocks and resort them until the queue is empty 
+   when all nblocks have been resorted  the leader thread clears the resort flag and the start flag
+and releases the lock on the nblock graph  all threads will now acquire new nblocks and the
+search will continue 
+we modeled this procedure in tla  and showed it to be live lock and dead lock free for up to
+  threads and   nblocks by the use of the tlc model checker  yu et al          this model is very
+simple so we do not include it in an appendix 
+    multi weighted a 
+in this section we introduce a new and simple parallel anytime algorithm called multi weighted a  
+the pbnf and pra  frameworks for parallelizing anytime algorithms can be thought of as one
+end on a spectrum of parallel anytime algorithms  in pbnf and pra  all threads are working on
+finding a single solution of a given quality  on the opposite end of the spectrum each thread would
+be working to find its own solution  to compare to an algorithm at that end of the spectrum we
+implemented an algorithm we call multi weighted a  that allocates its available threads to their own
+weighted a  searches  the thread that finishes first will generally be the thread that was searching
+at the greatest weight and therefore the solution will be of the worst quality  the next thread to
+finish will have the next greatest weight  and so on  the final thread to complete will generally be
+searching at a weight of      performing a standard a  search  and will return the optimal solution 
+the algorithm is given a schedule of weighs in decreasing order  the largest weights in the
+schedule are distributed among the available threads  the threads begin searching using wa  with
+their given weight values  when a thread finds a new solution that is better than the current one 
+it updates the incumbent that is shared between all threads to allow for pruning  when a thread
+finds a better incumbent solution  it will be w  admissible with respect to the weight the thread was
+searching with  if a thread finishes  either finding a solution or pruning its entire open list   it takes
+the highest unclaimed weight from the schedule and starts a fresh search using that weight  if there
+are no weights left in the schedule  the thread terminates  when all threads have terminated  the
+search is complete  if the final weight in the schedule is      then the last solution found will be
+optimal 
+one of the benefits of multi weighted a  is that it is a very simple algorithm to implement 
+however  as we will see below  it doesnt benefit much from added parallelism  a reason for
+this may be because  when the weight schedule is exhausted  a thread is searching with the lowest
+weight       threads that complete their searches will sit idle until the entire search terminates  since
+the final weight will take the longest  this may be a majority of the search time  a more dynamic
+schedule could be used to keep threads busy until the optimal solution is found  one could also
+attempt to use more threads at once by using some multi threaded search at each weight  such as
+wpbnf or wahda   we leave these extensions for future work 
+   
+
+fib urns   l emons   ruml     z hou
+
+solution cost  factor over optimal 
+
+   
+
+   
+
+   
+
+   
+   
+
+   
+
+   
+
+   
+
+   
+
+wt sched  
+wt sched  
+wt sched  
+wt sched  
+
+   
+
+   
+   
+
+   
+
+   
+
+   
+
+   
+
+   
+
+   
+
+   
+
+   
+
+wall time relative to serial a 
+
+wall time relative to serial a 
+
+wall time relative to serial a 
+
+grid unit four way awa  lower hull
+
+grid unit four way awpbnf    threads  lower hull
+
+grid unit four way ara  lower hull
+
+   
+
+   
+
+awa 
+solution cost  factor over optimal 
+
+solution cost  factor over optimal 
+
+grid unit four way ara  raw data
+   
+
+   
+   
+   
+   
+   
+
+   
+
+   
+
+   
+
+awpbnf   threads
+solution cost  factor over optimal 
+
+solution cost  factor over optimal 
+
+grid unit four way awpbnf    threads  raw data
+   
+
+   
+   
+   
+   
+   
+
+solution cost  factor over optimal 
+
+grid unit four way awa  raw data
+   
+
+   
+
+   
+   
+
+   
+
+   
+
+   
+
+wall time relative to serial a 
+
+   
+
+   
+
+ara 
+
+   
+
+   
+   
+
+   
+
+   
+
+   
+
+wall time relative to serial a 
+
+   
+
+   
+
+   
+
+   
+
+   
+
+wall time relative to serial a 
+
+figure     raw data profiles  top  and lower hull profiles  bottom  for awa   left   awpbnf  center   and ara   right   grid unit cost four way pathfinding 
+
+   empirical evaluation  anytime search
+the implementation and empirical setup was similar to that used for suboptimal search  for ara  
+arpbnf and multi wa  we considered four different weight schedules                           
+                                                                                                           for awa 
+and the other anytime parallel algorithms we consider weights of                     and     for grid
+pathfinding and                    and     for the sliding tiles domain  to fully evaluate anytime
+algorithms  it is necessary to consider their performance profile  i e   the expected solution quality
+as a function of time  while this can be easily plotted  it ignores the fact that the anytime algorithms
+considered in this paper all have a free parameter  namely the weight or schedule of weights used
+to accelerate the search  in order to compare algorithms  we make the assumption that  in any
+particular application  the user will attempt to find the parameter setting giving good performance
+for the timescale they are interested in  under this assumption  we can plot the performance of each
+anytime algorithm by computing  at each time point  the best performance that was achieved by any
+of the parameter settings tried for that algorithm  that is minimum solution cost over all parameter
+settings for a given algorithm up to the given time point  we refer to this concept as the lower hull
+of the profiles  because it takes the minimum over the profiles for each parameter setting 
+   
+
+   
+
+fib est f irst s earch for m ulticore m achines
+
+grid unit four way   threads
+
+grid unit four way   threads
+   
+
+ara 
+arpbnf   threads
+awa 
+multi wa    threads
+awahda    threads
+awpbnf   threads
+
+solution cost  factor over optimal 
+
+solution cost  factor over optimal 
+
+   
+
+   
+
+   
+
+ara 
+awa 
+multi wa    threads
+arpbnf   threads
+awahda    threads
+awpbnf   threads
+
+   
+
+   
+   
+
+   
+
+   
+
+   
+
+   
+
+wall time relative to serial a 
+
+   
+
+   
+
+   
+
+   
+
+   
+
+wall time relative to serial a 
+
+figure     grid unit cost four way pathfinding lower hull anytime profiles 
+the top row of figure    shows an example of the raw data for three algorithms on our
+    x     unit cost four way grid pathfinding problems  the y axis of these plots is the solution quality as a factor of optimal and the x axis is the wall clock time relative to the amount of
+time a  took to find an optimal solution  the bottom row of this figure shows the lower hull for the
+respective data displayed above  by comparing the two images on the left that display the data for
+the awa  algorithm  one can see that the three big steps in the lower hull plot is where a different weight is used in the hull because it has found a better solution for the same time bound  the
+center panel in figure    shows that the awpbnf algorithm gives a similar performance to awa  
+however it is often faster  this is not surprising since awpbnf is based on the awa  approach and
+it is running at eight threads instead of one  the final panel in figure    shows ara   which uses
+weight schedules instead of a single weight 
+figures       present the lower hulls of both serial and parallel algorithms on grid pathfinding
+and the sliding tile puzzle  in each panel  the y axis represents solution cost as a factor of the optimal
+cost  in figure    the x axis represents wall time relative to the amount of time that serial a  took to
+find an optimal solution  this allows for a comparison between the anytime algorithms and standard
+serial a   since a  is not able to solve all of korfs        puzzle instances on this machine  the
+x axis in figure    is the absolute wall time in seconds  both serial and parallel algorithms are
+plotted  the profiles start when the algorithm first returns a solution and ends when the algorithm
+has proved optimality or after a     second cutoff  since multi wa  can consume memory more
+quickly than the other algorithms  we gave it a     second cutoff on the sliding tile puzzle to prevent
+thrashing  
+    four way unit cost grids
+figure    shows the anytime performance for unit cost four way movement grid pathfinding problems  awahda  and awpbnf found the best solutions quicker than the other algorithms  both
+   
+
+fib urns   l emons   ruml     z hou
+
+korfs        puzzles   threads
+
+     
+
+     
+
+     
+
+     
+
+  
+
+  
+
+   
+
+ara 
+multi wa    threads
+arpbnf   threads
+awa 
+awpbnf   threads
+awahda    threads
+
+    
+
+solution cost  factor over optimal 
+
+ara 
+multi wa    threads
+arpbnf   threads
+awahda    threads
+awa 
+awpbnf   threads
+
+    
+
+solution cost  factor over optimal 
+
+korfs        puzzels   threads
+
+   
+
+     
+
+     
+
+     
+
+     
+
+  
+
+wall time  seconds 
+
+  
+
+   
+
+   
+
+wall time  seconds 
+
+figure     korfs        puzzles lower hull anytime profiles 
+of these algorithms improved in the amount of time taken to find better solutions as more threads
+were added  awpbnf converged more quickly as more threads were added  even at two threads
+awpbnf was the first algorithm to converge on the optimal solution in     of the time of serial a  
+the next two algorithms are multi wa  and anytime repairing pbnf  arpbnf   multi wa  converged more quickly as threads were added  but its performance on finding intermediate solutions
+did not change too much for different numbers of threads  arpbnf  on the other hand  took longer
+to find good solutions for low thread counts  but as threads were added it started to perform better 
+eventually matching multi wa  at eight threads  both of these algorithms improved the solution
+quality more steadily than awpbnf and awahda  which had large jumps in their lower hulls 
+each of these jumps corresponds to the hull switching to a different weight value  compare with the
+raw data for awpbnf in figure      all of the parallel algorithms found good solutions faster than
+serial awa  and serial ara   some parallel algorithms  however  took longer to prove optimality
+than awa  in this domain 
+    sliding tile puzzles
+figure    presents lower hulls for the anytime algorithms on korfs     instances of the    puzzle 
+in this figure  the x axes show the total wall clock time in seconds  these times are not normalized to
+a  because it is not able to solve all of the instances  in these panels  we see that awahda  tended
+to find good solutions faster than all other algorithms  awa  and awpbnf performed very similarly
+at two threads and as the number of threads increased awpbnf begun to find better solutions faster
+than awa   arpbnf took longer to find good solutions than awpbnf and awahda  but it
+was able to find better solutions faster than its serial counterpart  the simple multi wa  algorithm
+performed the worst of the parallel algorithms  increasing the number of threads used in multi wa 
+did not seem to increase the solution quality  ara  gave the worst performance in this domain  its
+profile curve can be seen at the very top of these three panels 
+   
+
+fi  threads
+
+  threads
+
+  threads
+
+  threads
+
+b est f irst s earch for m ulticore m achines
+
+logistics  
+blocks   
+gripper  
+satellite  
+elevator   
+freecell  
+depots  
+driverlog   
+gripper  
+logistics  
+blocks   
+gripper  
+satellite  
+elevator   
+freecell  
+depots  
+driverlog   
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+logistics  
+blocks   
+gripper  
+satellite  
+elevator   
+freecell  
+depots  
+driverlog   
+gripper  
+logistics  
+blocks   
+gripper  
+satellite  
+elevator   
+freecell  
+depots  
+driverlog   
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+awapra 
+ 
+ 
+    
+    
+          
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+           
+    
+    
+    
+    
+    
+    
+          
+    
+    
+    
+    
+awpbnf
+ 
+ 
+    
+    
+    
+     
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+     
+     
+    
+    
+    
+    
+    
+    
+    
+     
+    
+    
+    
+    
+
+ 
+    
+      
+    
+    
+    
+    
+    
+    
+    
+    
+       
+    
+    
+    
+    
+    
+    
+
+ 
+    
+      
+    
+    
+    
+    
+    
+    
+    
+    
+     
+    
+    
+    
+     
+     
+    
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+awahda 
+ 
+ 
+    
+    
+    
+     
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+            
+    
+    
+    
+    
+    
+    
+    
+     
+    
+    
+    
+    
+awbfpsdd
+ 
+ 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+     
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+ 
+    
+       
+    
+    
+    
+    
+    
+    
+    
+    
+       
+    
+    
+    
+     
+    
+    
+
+ 
+    
+      
+    
+    
+    
+    
+    
+    
+    
+    
+      
+    
+    
+    
+    
+    
+    
+
+table    speed up of anytime search to optimality over serial awa  on strips planning using
+various weights 
+
+    strips planning
+table   shows the speedup of the parallel anytime algorithms over serial anytime a   all algorithms
+were run until an optimal solution was proved   for a weight of    awa  ran out of memory on
+blocks     so our speedup values at that weight for that instance are lower bounds   the bold entries
+   
+
+fi  threads
+
+b urns   l emons   ruml     z hou
+
+logistics  
+blocks   
+gripper  
+satellite  
+elevator   
+freecell  
+depots  
+driverlog   
+gripper  
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+awpbnf
+ 
+ 
+         
+         
+         
+         
+         
+         
+         
+         
+         
+
+ 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+awbfpsdd
+ 
+ 
+         
+         
+         
+         
+         
+         
+         
+         
+         
+
+ 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+   
+    
+    
+    
+    
+    
+    
+m
+m
+m
+
+awapra 
+ 
+ 
+         
+         
+         
+         
+         
+         
+m
+m
+m
+m
+m
+m
+
+ 
+    
+    
+    
+    
+    
+    
+m
+m
+m
+
+table    speed up of anytime search to optimality over pbnf on strips planning problems using
+various weights 
+
+in the table represent values that are within     of the best performance for the given domain 
+for all algorithms  speedup over serial generally increased with more threads and a higher weight 
+pbnf gave the fastest performance for all except two domains  blocks    and freecell     in these
+two domains the awahda  gave the best performance by at least a factor of   x over awpbnf 
+hansen and zhou        show that awa  can lead to speedup over a  for some weight values
+in certain domains  finding a suboptimal solution quickly allows f pruning that keeps the open list
+short and quick to manipulate  resulting in faster performance even though awa  expands more
+nodes than a   we found a similar phenomenon in the corresponding parallel case  table   shows
+speedup over unweighted optimal pbnf when using various weights for the anytime algorithms  a
+significant fraction of the values are greater than    representing a speedup when using the anytime
+algorithm instead of the standard optimal parallel search  in general  speedup seems more variable
+as the weight increases  for a weight of      awpbnf always provides a speedup 
+    summary
+in this part of the paper we have shown how to create some new parallel anytime search algorithms
+based on the frameworks introduced in the previous sections  we have also created a new parallel
+anytime algorithm that simply runs many weighted a  searches with differing weights  in our
+experiments  we have seen that awpbnf and awahda  found higher quality solutions faster than
+other algorithms and that they both showed improved performance as more threads were added 
+additionally  arpbnf  a parallel algorithm that is based on ara   improved with more threads
+and tended to give a smoother increase in solution quality than the former two algorithms  although
+it did not find solutions quite as quickly and it was unable to converge on the optimal solution in
+the sliding tiles domain within the given time limit  running multiple weighted a  searches did
+not give solutions faster as the number of threads increased  and its convergence performance was
+mixed 
+
+   discussion
+we have explored a set of best first search algorithms that exploit the parallel capabilities of modern
+cpus  first we looked at parallel optimal search with  safe  pbnf  several variants of pra  and a
+   
+
+fib est f irst s earch for m ulticore m achines
+
+set of simpler previously proposed algorithms  overall  safe pbnf gave the best performance for
+optimal search  next we created a set of bounded suboptimal search algorithms based on pbnf 
+the successful variants of pra   and the bfpsdd algorithm  pbnf and pra  with asynchronous
+communication and abstraction  ahda   gave the best performance over all  with pbnf doing
+slightly better on the average  in addition  we showed some results that suggest that boundedsuboptimal pbnf has more of an advantage over serial weighted a  search as problem difficulty
+increases  finally we converted pbnf and pra  into anytime algorithms and compared them with
+some serial anytime algorithms and a new algorithm called multi weighted a   we found that
+anytime weighted pbnf and the anytime variant of ahda  gave the best anytime performance
+and were occasionally able to find solutions faster than their non anytime counterparts 
+our results show that pbnf outperforms psdd  we believe that this is because of the lack of
+layer based synchronization and a better utilization of heuristic cost to go information  the fact
+that bfpsdd got better as its f layers were widened is suggestive evidence  another less obvious
+reason why pbnf may perform better is because a best first search can have a larger frontier size
+than the breadth first heuristic search used by psdd  this larger frontier size will tend to create
+more nblocks containing open search nodes  there will be more disjoint duplicate detection scopes
+with nodes in their open lists and  therefore  more potential for increased parallelism 
+some of our results show that  even for a single thread  pbnf can outperform a serial a  search
+ see table     this may be attributed in part to the speculative behavior of the pbnf algorithm 
+since pbnf uses a minimum number of expansions before testing if it should switch to an nblock
+with better f values  it will search some sub optimal nodes that a  would not search  in order to
+get optimal solutions  pbnf acts as an anytime algorithm  it stores incumbent solutions and prunes
+until it can prove that it has an optimal solution  zhou and hansen show that this approach has the
+ability to perform better than a   hansen   zhou        because of upper bound pruning  which
+reduces the number of expansions of nodes with an f value that is equal to the optimal solution
+cost and can reduce the number of open nodes  increasing the speed of operations on the open list 
+pbnf may also give good single thread performance because it breaks up the search frontier into
+many small open lists  one for each nblock   because of this  each of the priority queue operations
+that pbnf performs can be on much smaller queues than a   which uses one big single queue  see
+section        
+    possible extensions
+while the basic guideline for creating a good abstractions in sdd  and pbnf  is to minimize the
+connectivity between abstract states  there are other aspects of abstraction that could be explored 
+for instance  discovering which features are good to include or abstract away may be helpful to
+users of pbnf  too much focus on one feature could cause good nodes to be too focused in a small
+subset of nblocks  zhou   hansen         likewise  size of the abstraction could be examined in
+more detail  although we always use a constant abstraction size in our current work for simplicity
+it seems likely that abstraction size should change when number of threads changes or perhaps even
+based on features of the domain or problem instance  if a guideline could be devised  such as a ratio
+between number of nblocks to threads or h value of the start state  a problem adaptive abstraction
+size would be much simpler in real world use  additionally  edge partitioning  zhou   hansen 
+      could allow us to reduce connectivity of the abstraction used by pbnf  but further study will
+be necessary to discover the full impact of this technique on pbnfs behavior 
+   
+
+fib urns   l emons   ruml     z hou
+
+some possible future extensions to pbnf include adaptive minimum expansion values  use of
+external memory  and extension to a distributed setting  our preliminary work on adapting minimum expansion values indicated that simply increasing or decreasing based on lock failures and
+successes had either neutral or negative effect on performance  one reason for this may be because
+the minimum expansions parameter adds speculation 
+it may be possible to combine pbnf with pra  in a distributed memory setting  this algorithm
+may use a technique based on pra  to distribute portions of the search space among different nodes
+on a cluster of work stations while using a multicore search such as pbnf on each node 
+an additional technique that was not explored in this paper is running multicore search algorithms with more threads than there are available cores  this technique has been used to improve
+the performance of parallel delayed duplicate detection  korf        korf   schultze        which
+is heavily i o intensive  using this approach  when one thread is blocked on i o another thread
+can make use of the newly available processing core  even without disk i o this technique may be
+useful if threads spend a lot of time waiting to acquire locks 
+
+    conclusions
+in this paper we have investigated algorithms for best first search on multicore machines  we have
+shown that a set of previously proposed algorithms for parallel best first search can be much slower
+than running a  serially  we have presented a novel hashing function for pra  that takes advantage
+of the locality of a search space and gives superior performance  additionally  we have verified results presented by kishimoto et al         that using asynchronous communication in pra  allows
+it to perform better than using synchronous communication  we present a new algorithm  pbnf 
+that approximates a best first search ordering while trying to keep all threads busy  we proved
+the correctness of the pbnf search framework and used it to derive new suboptimal and anytime
+algorithms 
+we have performed a comprehensive empirical comparison with optimal  suboptimal and anytime variations of parallel best first search algorithms  our results demonstrate that using a good
+abstraction to distribute nodes in pra  can be more beneficial than asynchronous communication 
+but that these two techniques can be used together  yielding ahda    we also found that the original breadth first psdd algorithm does not give competitive behavior without a tight upper bound
+for pruning  we implemented a novel extension to psdd  bfpsdd  that gives reasonable performance on all domains we tested  our experiments  however  demonstrate that the new pbnf and
+ahda  algorithms outperformed all of the other algorithms  pbnf performs best for optimal and
+bounded suboptimal search and both pbnf and ahda  gave competitive anytime performance 
+
+acknowledgments
+we gratefully acknowledge support from nsf  grant iis           the darpa cssg program
+ grant hr                and helpful suggestions from jordan thayer  some of these results
+were previously reported by burns  lemons  zhou  and ruml      b  and burns  lemons  ruml 
+and zhou      a  
+   
+
+fib est f irst s earch for m ulticore m achines
+
+appendix a  pseudo code for safe pbnf
+in the following pseudo code there are three global structures  the first is a pointer to the current
+incumbent solution  incumbent  the second is a done flag that is set to true when a thread recognizes
+that the search is complete and the third is the nblock graph  the nblock graph structure contains
+the list of free nblocks  freelist along with the  and h values for each nblock  for simplicity  this
+code uses a single lock to access either structure  each thread also has a local exp count  the best
+function on a set of nblocks results in the nblock containing the open node with the lowest f value 
+s earch   initial node  
+   insert initial node into open
+   for each p  processors  t hread s earch  
+   while threads are still running  wait  
+   return incumbent
+t hread s earch   
+   b  null
+   while done
+  
+b  n ext n block b 
+  
+exp   
+  
+while s hould s witch b  exp 
+  
+m  best open node in b
+  
+if m   incumbent then prune m
+  
+if m is a goal then
+  
+if m   incumbent then
+   
+lock  incumbent  m  unlock
+   
+else if m is not a duplicate then
+   
+children  expand m 
+   
+for each child  children
+   
+insert child into open of appropriate nblock
+   
+exp  exp    
+s hould s witch   b   exp  
+   if b is empty then return true
+   if exp   min expansions then return false
+   exp   
+   if best freelist    b or best interferencescope b     b then
+  
+if best interferencescope b     best freelist  then
+  
+s et h ot best interferencescope b   
+  
+return true
+   lock
+   for each b   interferencescope b 
+   
+if hot b    then s et c old b   
+    unlock
+    return false
+
+   
+
+fib urns   l emons   ruml     z hou
+
+s et h ot   b  
+   lock
+   if hot b  and  b     
+  
+and i  interferencescope b    i   b  hot i   then
+  
+hot b   true
+  
+for each m   interferencescope b 
+  
+if hot m    then s et c old m   
+  
+if  m        and h  m       
+  
+and m  is not empty then
+  
+freelist  freelist    m   
+   
+h  m     h  m       
+    unlock
+s et c old   b  
+   hot b   false
+   for each m   interferencescope b 
+  
+h  m     h  m      
+  
+if  m        and h  m        and m  is not empty then
+  
+if hot m    then
+  
+s et c old m   
+  
+freelist  freelist   m   
+  
+wake all sleeping threads
+r elease   b  
+   for each b   interferencescope b 
+  
+ b      b      
+  
+if  b        and h  b        and b  is not empty then
+  
+if hot b    then
+  
+s et c old b   
+  
+freelist  freelist   b   
+  
+wake all sleeping threads
+n ext n block   b  
+   if b has no open nodes or b was just set to hot then lock
+   else if trylock   fails then return b
+   if b    null then
+  
+bestscope  best interferencescope b  
+  
+if b   bestscope and b   best freelist  then
+  
+unlock  return b
+  
+r elease b 
+   if  l  nblocks    l        and freelist is empty then
+  
+done  true
+   
+wake all sleeping threads
+    while freelist is empty and done  sleep
+    if done then n  null
+   
+
+fib est f irst s earch for m ulticore m achines
+
+    else
+   
+m  best freelist 
+   
+for each b   interferencescope m 
+   
+ b      b       
+    unlock
+    return m
+
+   
+
+fib urns   l emons   ruml     z hou
+
+appendix b  tla  model  hot n blocks
+here we present the model used to show that safe pbnf is live lock free  refer to section       
+module hotnblocks
+finitesets  naturals
+constants nnblocks  nprocs  search  nextblock   none
+variables state  acquired   ishot  succs
+
+vars   hstate  acquired   ishot  succsi
+
+states    search  nextblock  
+
+nblocks         nnblocks   
+
+procs         nprocs   
+assume nnblocks  nprocs  nprocs      nnblocks      none 
+  nblocks  cardinality states     
+
+preds x      y  nblocks   x  succs y   set of predecessors to nblock x
+
+intscope x     preds x    union  preds y    y  succs x    the interference scope of x
+
+intby x      y  nblocks   x  intscope y   set of nblocks which x interferes 
+
+busy a    a  union  succs x     x  a  set of nblocks which are busy given the set of acquired nblocks
+
+overlap x   a    a  intscope x   set of busy nblocks overlapping the successors of x
+
+hot a     x  nblocks   ishot x    overlap x   a         set of all hot nblocks given the set of acquired nblocks
+
+hotinterference a    union  intscope x     x  hot a   set of nblocks in interference scopes of hot nblocks
+
+free a     x  nblocks   overlap x   a        x 
+  hotinterference a   free nblocks
+
+acquired    acquired  x     x  procs     none  set of nblocks which are currently acquired
+
+overlapamt x     cardinality overlap x   acquired    the number of nblocks overlapping x  
+
+donextblock  x      unchanged hsuccsi
+ state x     nextblock  acquired  x     none  free acquired        
+ if free acquired    acquired  x           then
+  y  free acquired    acquired  x       acquired     acquired except    x     y 
+ state     state except    x     search 
+ ishot     y  nblocks   if y  free acquired    acquired  x    
+then false else ishot y  
+else  acquired     acquired except   x     none 
+ ishot     y  nblocks   if y  free acquired   
+then false else ishot y  
+ unchanged hstatei
+
+dosearch x      unchanged hacquired   succsi
+ state x     search  state     state except   x     nextblock  
+  unchanged hishoti
+  y  intby acquired  x       ishot y 
+ intscope y   hot acquired       
+y 
+  hotinterference acquired  
+ ishot     ishot except   y    true 
+
+init    state    x  procs   nextblock    acquired    x  procs   none 
+ ishot    x  nblocks   false 
+extends
+
+this is a basic graph where each nblock is connected to its neighbors forming a loop 
+
+ succs    x  nblocks  
+
+x     then  nnblocks     x     
+x   nnblocks    then     x     else  x     x      
+
+next    x  procs    donextblock  x    dosearch x   
+
+fairness    x  procs   wfvars  donextblock  x    dosearch x   
+
+prog   init    next vars  fairness
+
+hotnblocks    x  nblocks   ishot x     ishot x   the property to prove
+if
+
+else if
+
+   
+
+fib est f irst s earch for m ulticore m achines
+
+references
+burns  e   lemons  s   ruml  w     zhou  r       a   suboptimal and anytime heuristic search on
+multi core machines  in proceedings of the seventeenth international conference on automated planning and scheduling  icaps     
+burns  e   lemons  s   zhou  r     ruml  w       b   best first heuristic search for multi core
+machines  in proceedings of the   th international joint conference on artificial intelligence
+ ijcai     
+cushing  w   bentor  j     kambhampati  s          cost based search considered harmful  in the
+     international symposium on combinatorial search  socs     
+dai  p     hansen  e  a          prioritizing bellman backups without a priority queue  in proceedings of the nineteenth international conference on automated planning and scheduling
+ icaps     
+davis  h  w   bramanti gregor  a     wang  j          the advantages of using depth and breadth
+components in heuristic search  in methodologies for intelligent systems    pp       
+edelkamp  s     schrodl  s          localizing a   in proceedings of the seventeenth national
+conference on artificial intelligence  aaai      pp          aaai press 
+edelkamp  s     sulewski  d          gpu exploration of two player games with perfect hash
+functions  in the      international symposium on combinatorial search  socs     
+evans  j          a scalable concurrent malloc    implementation for freebsd  in proceedings of
+bsdcan      
+evett  m   hendler  j   mahanti  a     nau  d          pra    massively parallel heuristic search 
+journal of parallel and distributed computing                
+felner  a   kraus  s     korf  r          kbfs  k best first search  annals of mathematics and
+artificial intelligence                
+ferguson  c     korf  r  e          distributed tree search and its applications to alpha beta pruning  in proceedings of the seventh national conference on artificial intelligence  aaai     
+hansen  e  a     zhou  r          anytime heuristic search  journal of artificial intelligence
+research             
+harris  t  l          a pragmatic implementation of non blocking linked lists  in lecture notes in
+computer science  vol             pp          springer berlin   heidelberg 
+hart  p  e   nilsson  n  j     raphael  b          a formal basis for the heuristic determination
+of minimum cost paths  ieee transactions of systems science and cybernetics  ssc      
+       
+haslum  p     geffner  h          admissible heuristics for optimal planning  in proceedings of
+the fifth internationas conference on artificial intelligence planning and scheduling systems
+ aips      pp         
+holzmann  g  j     bosnacki  d          the design of a multicore extension of the spin model
+checker  ieee transactions on software engineering                 
+   
+
+fib urns   l emons   ruml     z hou
+
+jabbar  s     edelkamp  s          parallel external directed model checking with linear i o  in
+emerson  e     namjoshi  k   eds    verification  model checking  and abstract interpretation  vol       of lecture notes in computer science  pp          springer berlin   heidelberg 
+kishimoto  a   fukunaga  a     botea  a          scalable  parallel best first search for optimal
+sequential planning  in proceedings of the nineteenth international conference on automated
+planning and scheduling  icaps     
+korf  r  e          iterative deepening a   an optimal admissible tree search  in proceedings of
+the international joint conference on artificial intelligence  ijcai      pp           
+korf  r  e          linear space best first search  artificial intelligence              
+korf  r  e          delayed duplicate detection  extended abstract  in proceedings of the eighteenth
+international joint conference on articial intelligence  ijcai      pp           
+korf  r  e     schultze  p          large scale parallel breadth first search  in proceedings of the
+twentieth national conference on articial intelligence  aaai      pp           
+kumar  v   ramesh  k     rao  v  n          parallel best first search of state space graphs  a summary of results  in proceedings of the seventh national conference on artificial intelligence
+ aaai      pp         
+lamport  l          specifying systems  the tla  language and tools for hardware and software
+engineers  addison wesley 
+likhachev  m   gordon  g     thrun  s          ara   anytime a  with provable bounds on
+sub optimality  in proceedings of the seventeenth annual conference on neural information
+porcessing systems  nips     
+likhachev  m   gordon  g     thrun  s          ara   formal analysis  tech  rep  cmu cs        carnegie mellon university school of computer science 
+niewiadomski  r   amaral  j     holte  r       a   a parallel external memory frontier breadthfirst traversal algorithm for clusters of workstations  in proceedings of the      international
+conference on parallel processing  icpp      pp         
+niewiadomski  r   amaral  j  n     holte  r  c       b   sequential and parallel algorithms for
+frontier a  with delayed duplicate detection  in proceedings of the   st national conference
+on artificial intelligence  aaai      pp            aaai press 
+nilsson  n  j          principles of artificial intelligence  tioga publishing co 
+pohl  i          heuristic search viewed as path finding in a graph  artificial intelligence        
+    
+powley  c     korf  r  e          single agent parallel window search  ieee transactions pattern
+analysis machine intelligence                
+richter  s     westphal  m          the lama planner  guiding cost based anytime planning with
+landmarks  journal of artificial intelligence research     
+ruml  w     do  m  b          best first utility guided search  in proceedings of ijcai     pp 
+         
+   
+
+fib est f irst s earch for m ulticore m achines
+
+snir  m     otto  s          mpi the complete reference  the mpi core  mit press  cambridge 
+ma  usa 
+stern  u     dill  d  l          using magnetic disk instead of main memory in the mur  verifier 
+in computer aided verification  pp          springer 
+sundell  h     tsigas  p          fast and lock free concurrent priority queues for multi thread
+systems  parallel and distributed processing symposium  international                
+thayer  j  t     ruml  w          faster than weighted a   an optimistic approach to bounded
+suboptimal search  in proceedings of the eighteenth international conference on automated
+planning and scheduling  icaps     
+valois  j  d          lock free data structures  ph d  thesis  rensselaer polytechnic institute 
+yu  y   manolios  p     lamport  l          model checking tla  specifications  in correct
+hardware design and verification methods  pp        springer berlin   heidlberg 
+zhou  r     hansen  e          domain independent structured duplicate detection  in proceedings
+of the twenty first national conference on artificial intelligence  aaai      pp           
+zhou  r     hansen  e          edge partitioning in external memory graph search  in proceedings
+of the twentieth international joint conference on artificial intelligence  ijcai     
+zhou  r     hansen  e          dynamic state space partitioning in external memory graph search 
+in the      international symposium on combinatorial search  socs     
+zhou  r     hansen  e  a          structured duplicate detection in external memory graph search 
+in proceedings of the nineteenth national conference on artificial intelligence  aaai     
+zhou  r     hansen  e  a          breadth first heuristic search  artificial intelligence          
+       
+zhou  r     hansen  e  a          parallel structured duplicate detection  in proceedings of the
+twenty second conference on artificial intelligence  aaai     
+
+   
+
+fi

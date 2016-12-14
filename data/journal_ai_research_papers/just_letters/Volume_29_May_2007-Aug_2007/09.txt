@@ -1,0 +1,2545 @@
+journal of artificial intelligence research                  
+
+submitted       published     
+
+learning symbolic models of stochastic domains
+hanna m  pasula
+luke s  zettlemoyer
+leslie pack kaelbling
+
+pasula csail mit edu
+lsz csail mit edu
+lpk csail mit edu
+
+mit csail
+cambridge  ma      
+
+abstract
+in this article  we work towards the goal of developing agents that can learn to act in
+complex worlds  we develop a probabilistic  relational planning rule representation that
+compactly models noisy  nondeterministic action effects  and show how such rules can be
+effectively learned  through experiments in simple planning domains and a  d simulated
+blocks world with realistic physics  we demonstrate that this learning algorithm allows
+agents to effectively model world dynamics 
+
+   introduction
+one of the goals of artificial intelligence is to build systems that can act in complex environments as effectively as humans do  to perform everyday human tasks  like making breakfast
+or unpacking and putting away the contents of an office  many of these tasks involve manipulating objects  we pile things up  put objects in boxes and drawers  and arrange them
+on shelves  doing so requires an understanding of how the world works  depending on how
+the objects in a pile are arranged and what they are made of  a pile sometimes slips or falls
+over  pulling on a drawer usually opens it  but sometimes the drawer sticks  moving a box
+does not typically break the items inside it 
+building agents to perform these common tasks is a challenging problem  in this work 
+we approach the problem by developing a rule based representation that such agents can use
+to model  and learn  the effects of acting on their environment  learning allows the agents
+to adapt to new environments without requiring humans to hand craft models  something
+humans are notoriously bad at  especially when numeric parametrization is required  the
+representation we use is both probabilistic and relational  and includes additional logical
+concepts  we present a supervised learning algorithm that uses this representation language
+to build a model of action effects given a set of example action executions  by optimizing the
+tradeoff between maximizing the likelihood of these examples and minimizing the complexity
+of the current hypothesis  this algorithm effectively selects a relational model structure  a
+set of model parameters  and a language of new relational concepts that together provide a
+compact  yet highly accurate description of action effects 
+any agent that hopes to act in the real world must be an integrated system that perceives
+the environment  understands  and commands motors to effect changes to it  unfortunately 
+the current state of the art in reasoning  planning  learning  perception  locomotion  and
+manipulation is so far removed from human level abilities  that we cannot yet contemplate
+c
+    
+ai access foundation  all rights reserved 
+
+fipasula  zettlemoyer    pack kaelbling
+
+figure    a three dimensional blocks world simulation  the world consists of a table  several cubes
+of roughly uniform density but of varying size  and a robotic gripper that is moved by
+simulated motors 
+
+working in an actual domain of interest  instead  we choose to work in domains that are its
+almost ridiculously simplified proxies  
+one popular such proxy  used since the beginning of work in ai planning  fikes  
+nilsson        is a world of stacking blocks  it is typically formalized in some version of
+logic  using predicates such as on a  b  and clear  a  to describe the relationships of the blocks
+to one another  blocks are always very neatly stacked  they dont fall into jumbles  in this
+article  we present our work in the context of a slightly less ridiculous version of the blocks
+world  one constructed using a three dimensional rigid body dynamics simulator  ode 
+       an example world configuration is shown in figure    in this simulated blocks
+world  blocks vary in size and colour  piles are not always tidy  and may sometimes fall
+over  and the gripper works only on medium sized blocks  and is unreliable even there 
+any approach capable of enabling effective behavior in this domain must handle its noisy 
+nondeterministic nature  and nontrivial dynamics  and so should then be able to handle
+other domains with similar characteristics 
+one strategy for formulating such an approach is to learn models of the worlds dynamics
+and then use them for planning different courses of action based on goals that may change
+over time  another strategy is to assume a fixed goal or reward function  and to learn a
+policy that optimizes that reward function  in worlds of the complexity we are imagining 
+it would be impossible to establish  in advance  an appropriate reaction to every possible
+situation  in addition  we expect an agent to have an overall control architecture that is
+hierarchical  and for which an individual level in the hierarchy will have changing goals 
+for these reasons  we learn a model of the world dynamics  and then use it to make plans
+to achieve the goals at hand 
+we begin this paper by describing the assumptions that underlie our modeling decisions 
+we then describe the syntax and semantics of our modeling language and give an algorithm
+   there is a very reasonable alternative approach  advocated by brooks         of working in the real world 
+with all its natural complexity  but solving problems that are almost ridiculously simplified proxies for
+the problems of interest 
+
+   
+
+filearning symbolic models of stochastic world dynamics
+
+for learning models in that language  to validate our models  we introduce a simple planning
+algorithm and then provide empirical results demonstrating the utility of the learned models
+by showing that we can plan with them  finally  we survey relevant previous work  and
+draw our conclusions 
+
+   structured stochastic worlds
+an agent introduced into a novel world must find the best possible explanation for the
+worlds dynamics within the space of possible models it can represent  which is defined by
+the agents representation language  the ideal language would be able to compactly model
+every action effect the agent might encounter  and no others  any extra modeling capacity
+is wasted and will complicate learning  since the agent will have to consider a larger space of
+possible models  and be more likely to overfit its experience  choosing a good representation
+language provides a strong bias for any algorithm that will learn models in that language 
+most languages that have been used to describe deterministic planning models are  at
+least on the surface  first order  that is  they abstract over the particular identities of objects  describing the effects of actions in terms of the properties of and relations among
+these objects   they accomplish this by letting an action take arguments  and representing
+these arguments as variables   this representational capacity is crucial for reasons of compactness and generalization  it is usually grossly inefficient to have to describe the behavior
+of individual objects 
+much of the original work on probabilistic planning uses the formalism of markov decision processes  which represents the states of the world individually and atomically  puterman         more recently  propositional  factored  representations of dynamics have been
+employed  boyen   koller        guestrin  koller  parr    venkataraman         and some
+first order representations have been developed  including probabilistic rules  blum   langford         equivalence classes  draper  hanks    weld         and the situation calculus
+approach of boutilier  reiter  and price         these representations also make it easy to
+articulate and take direct advantage of two useful assumptions about world dynamics  the
+frame assumption  which states that  when an agent takes an action in the world  anything
+not explicitly changed stays the same  and the outcome assumption  which states that each
+action affects the world in a small number of distinct ways  where each possible effect causes
+a set of changes to the world that happen together as a single outcome 
+we take as our point of departure these probabilistic first order representations of world
+dynamics  these representations have traditionally been applied to domains such as logistics
+planning or the traditional  abstract blocks world  which are idealized symbolic abstractions
+of an underlying domain  our goal is to learn models of more realistic worlds  which requires
+us to adapt the modeling language to accommodate additional uncertainty and complexity 
+we do this by 
+ allowing rules to refer to objects not mentioned in the argument list of the action 
+ relaxing the frame assumption  allowing unmodeled noise changes in the world 
+ extending the language  allowing more complex forms of quantification and the construction of new concepts 
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+action parameterization in traditional representations of action dynamics  any objects
+whose properties may be changed as the result of an action must be named in the argument
+list of the action  instead  we define actions so that their parameters describe only those
+objects that are free parameters of the action  for example  the block to be picked up  and
+the object on which the currently held block is to be placed  however  actions can change
+the properties of other objects  ones that are not in their parameter list  and our models
+should have some way of determining which objects can be affected  in this paper  we
+introduce the use of deictic references to identify these objects  deictic references  agre
+  chapman        identify objects relative to the agent or action being performed  for
+example  they can refer to objects such as the thing under the block to be picked up  the
+currently held object  or the table that the block accidentally falls onto  we use deictic
+references as a mechanism for adding new logical variables to our models  in much the same
+way as benson        
+modeling noise in complex domains  actions affect the world in a variety of ways  we
+must learn to model not only the circumstances under which they have reasonable effects 
+but also their behavior in unusual situations  this complicates the dynamics  and makes
+learning more difficult  also  because these actions are executed in a physical world  they
+are not guaranteed to have a small number of simple effects  and as a result they may violate
+the outcomes assumption  in the blocks world this can happen  for example  when a stack
+is knocked over  we develop a simple noise mechanism that allows us to partially model
+action effects  ignoring ones that are rare or too complicated to model explicitly 
+language extension in traditional symbolic domains  rules are constructed using a
+predefined set of observable predicates  however  it is sometimes useful to define additional
+predicates whose truth values can be computed based on the predefined ones  this has
+been found to be essential for modeling certain advanced planning domains  edelkamp  
+hoffman        
+in traditional blocks worlds  for example  the usual set of predicates contains on  clear
+and inhand  when working in our more realistic  noisy blocks world  we found that these
+predicates would not be sufficient to allow the agent to learn an accurate model  for
+example  it would be difficult to state that putting a block on a tall stack is likely to cause
+the stack to topple without having some concept of stack height  or to state that attempting
+to pick up a block that is not clear usually picks up the block on the top of its stack without
+having some way of describing the block on top of a stack 
+while we could simply add those additional predicates that seem useful to the perceptual
+language  hand engineering an appropriate language every time we tackle a new problem is
+difficult  time consuming  and error prone  state of the art planning representations such
+as pddl  edelkamp   hoffman        use a concept language to define new predicates or
+concepts in terms of previous  simpler ones  in this paper  we show that concepts can be
+learned  much like predicates can be invented in ilp  khan  muggleton    parson        
+as we will see  all of the traditional blocks world predicates  including inhand and clear  as
+well as other useful concepts such as height  are easily defined in terms of on given a simple
+concept language  yoon  fern    givan        
+   
+
+filearning symbolic models of stochastic world dynamics
+
+   state and action representation
+our goal is to learn a model of the state transition dynamics of the world  to do so  we need
+to be able to represent the set s of possible states of the world and the set a of possible
+actions the agent can take  we represent both of these components using a subset of a
+relatively standard first order logic with equality  the representation of states and actions
+is ground during inference  learning  and planning 
+we begin by defining a primitive language which includes a set of constants c  a set of
+predicates   and a set of functions   there are three types of functions in   traditional
+functions  which range over objects  discrete valued functions  which range over a predefined
+discrete set of values  and integer valued functions  which range over a finite subset of the
+integers  all of these primitives can be observed directly in the world   in this work  we
+assume that the environment is completely observable  that is  that the agent is able to
+perceive an unambiguous and correct description of the current state     the constants in
+c can be assumed to have intrinsic meaning  or can be viewed as meaningless markers
+assigned by the perceptual system  as described in detail below 
+    state representation
+states describe all the possible different configurations of the properties of and relations
+between objects  each state describes a particular configuration of these values for all
+of the objects in the world  where those individual objects are denoted using constants 
+there is no limit on the number of objects in a world configuration  though in our current
+formalism there is no mechanism for the creation or deletion of objects as a result of the
+world dynamics 
+formally  the state descriptions are conjunctive sentences of the form 
+ 
+
+ 
+
+ tg c m   
+
+ 
+
+   t  
+
+ 
+
+ t      
+
+ tg c m   
+
+where m x  is the arity of predicate or function x  c is the set c        cn of constants  g x  a 
+is the set of all length a lists of elements from x     indicates that the predicates may
+be optionally negated  and  indicates that functions can be assigned to any value in their
+range  in this manner  states list the truth values for all of the possible groundings of the
+predicates and functions with the terms  such a sentence gives a complete specification  in
+the vocabulary of  and   of the properties and interrelations of the  c  objects present
+in the world   note that predicate and function arguments are always constants  and never
+terms made using function symbols  so these descriptions are always finite given a finite
+language  
+in the rest of this section  we describe the two approaches to denoting objects using the
+constants in c  and illustrate them with example conjunctive state sentences 
+      intrinsic constants
+the first approach to state descriptions refers to objects using intrinsic constants  each
+intrinsic constant is associated with a particular object and consistently used to denote that
+   this is a very strong  and ultimately indefensible assumption  one of our highest priorities for future
+work is to extend this to the case when the environment is partially observable 
+
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+same object  such constants are useful when the perceptual system has some unique way
+to identify perceived objects independent of their attributes and relations to one another 
+for example  an internet software agent might have access to universal identifiers that
+distinguish the objects it perceives 
+as an example  let us consider representing the states of a simple blocks world  using a
+language that contains the predicates on  clear  inhand  inhand nil  block  and table  and the
+integer valued function height  the objects in this world include blocks block a and block b 
+a table table  and a gripper  blocks can be on other blocks or on the table  a block that
+has nothing on it is clear  the gripper can hold one block or be empty  the sentence
+inhand nil  on block a  block b   on block b  table   on block b  block a 
+on block a  table   on table  block a   on table  block b   on table  table 
+on block a  block a   on block b  block b   table table   table block a 
+   
+table block b   block block a   block block b   block table   clear block a 
+clear block b   clear table   inhand block a   inhand block b 
+inhand table   height block a       height block b       height table     
+represents a blocks world where the gripper holds nothing and the two blocks are in a single
+stack on the table  block block a is on top of the stack  while block b is below block a and
+on the table table 
+under this encoding  the sentence contains meaningful information about the objects
+identities  which can then be used when learning about world dynamics 
+      skolem constants
+alternatively  states can also denote objects using skolem constants  skolem constants are
+arbitrary identifiers that are associated with objects in the world but have no inherent
+meaning beyond how they are used in a state description   such constants are useful
+when the perceptual system has no way of assigning meaningful identifiers to the objects it
+observes  as an example  consider how a robot might build a state description of the room
+it finds itself in  we assume that this robot can observe the objects that are present  their
+properties  and their relationships to each other  however  when naming the objects  it has
+no reason to choose any particular name for any specific object  instead  it just creates
+arbitrary identifiers  skolem constants  and uses them to build the state 
+using skolem constants  we can rewrite sentence   as 
+inhand nil  on c     c      on c     c      on c     c    
+on c     c      on c     c      on c     c      on c     c    
+on c     c      on c     c      table c      table c    
+table c      block c      block c      block c      clear c    
+clear c      clear c      inhand c      inhand c    
+inhand c      height c          height c          height c        
+here  the perceptual system describes the table and the two blocks using the arbitrary
+constants c     c     and c    
+   skolem constants can be interpreted as skolemizations of existential variables 
+
+   
+
+filearning symbolic models of stochastic world dynamics
+
+from this perspective  states of the world are not isomorphic to interpretations of the
+logical language  since there might be many interpretations that satisfy a particular statespecification sentence  these interpretations will be the same up to permutation of the
+objects the constants refer to  this occurs because objects are only distinguishable based
+on their properties and relations to other objects 
+the techniques we develop in this paper are generally applicable to representing and
+learning the dynamics of worlds with intrinsic constants or skolem constants  we will
+highlight the few cases where this is not true as they are presented  we will also see that
+the use of skolem constants is not only more perceptually plausible but also forces us to
+create new learning algorithms that abstract object identity more aggressively than previous
+work and can improve the quality of learned models 
+    action representation
+actions are represented as positive literals whose predicates are drawn from a special set   
+and whose terms are drawn from the set of constants c associated with the world s where
+the action is to be executed 
+for example  in the simulated blocks world   contains pickup    an action for picking up
+blocks  and puton    an action for putting down blocks  the action literal pickup block a 
+could represent the action where the gripper attempts to pickup the block block a in the
+state represented in sentence   
+
+   world dynamics representation
+we are learning the probabilistic transition dynamics of the world  which can be viewed as
+the conditional probability distribution pr s   s  a   where s  s   s and a  a  we represent
+these dynamics with rules constructed from the basic logic described in section    using
+logical variables to abstract the identities of particular objects in the world 
+in this section  we begin by describing a traditional representation of deterministic world
+dynamics  next  we present the probabilistic case  finally  we extend it in the ways we
+mentioned in section    by permitting the rules to refer to objects not mentioned in the
+action description  by adding in noise  and by extending the language to allow for the
+construction of new concepts 
+a dynamic rule for action z has the form
+x  x   z x      x   
+meaning that  for any vector of terms x such that the context  holds of them at the
+current time step  taking action z x  will cause the formula   to hold of those same terms
+in the next step  the action z x  must contain every xi  x  we constrain  and   to
+be conjunctions of literals constructed from primitive predicates and terms xi  x  or from
+functions applied to these terms and set equal to a value in their range  in addition   is
+allowed to contain literals constructed from integer valued functions of a term related to an
+integer in their range by greater than or less than predicates 
+we will say that a rule covers a state s and action a if there exists a substitution 
+mapping the variables in x to c  note that there may be fewer variables in x than constants
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+in c  such that s      x   and a   z  x    that is  there is a substitution of constants
+for variables that  when it is applied to the context  x   grounds it so that it is entailed
+by the state s and  when applied to the rule action z x   makes it equal to the action a 
+now  given that the rule covers s and a  what can we say of the subsequent state s   
+first  the rule directly specifies that     x   holds at the next step  but this may be only
+an incomplete specification of the state  we will use the frame assumption to fill in the rest 
+s        x   
+
+ 
+
+ 
+
+l s     x  
+
+    t  tg c m    pos     x    
+
+
+
+ 
+
+ 
+
+l s     x    
+
+    t  tg c m    funct     x    
+
+where l s  y  t  stands for the literal in s that has predicate or function y and argument
+list t  pos     is the set of literals in   with negations ignored  and funct     is the set of
+ground functions in   extracted from their equality assignments  this is all to say that
+every literal that would be needed to make a complete description of the state but is not
+included in     x   is retrieved  with its associated truth value or equality assignment 
+from s 
+in general we will have a set of rules for each action  but we will require their contexts to
+be mutually exclusive  so that any given state action pair is covered by at most one rule  if
+it is covered by none  then we will assume that nothing changes    as an example  consider
+a small set of rules for picking up blocks 
+pickup x  y    inhand nil  on x  y   block y   height y      
+ inhand x   on x  y   clear y  
+pickup x  y    inhand nil  on x  y   table y 
+ inhand x   on x  y  
+the top line of each rule shows the action followed by context  the next line describes the
+effects  or the outcome  according to these two rules  executing pickup x  y  changes the
+world only when the hand is empty and when x is on y  the exact set of changes depends
+on whether y is the table  or a block of height nine or less 
+    probabilistic rules
+the deterministic dynamics rules described above allow generalization over objects and
+exploitation of the frame assumption  but they are not very well suited for use in highly
+stochastic domains  in order to apply them to such domains we will have to extend them to
+describe the probability distribution over resulting states  pr s   s  a   probabilistic strips
+operators  blum   langford        model how an agents actions affect the world around it
+by describing how these actions alter the properties of and the relationships between objects
+in the world  each rule specifies a small number of simple action outcomessets of changes
+that occur in tandem 
+   without this restriction  we would need to define some method of choosing between the possibly conflicting predictions of the different covering rules  the simplest way to do so would involve picking one
+of the rules  perhaps the most specific one  or the one we are most confident of   rule confidence scores
+would have to be estimated  
+
+   
+
+filearning symbolic models of stochastic world dynamics
+
+we can see such probabilistic rules as having the form
+
+
+ p 
+
+    x 
+x  x   z x               
+
+ p
+ 
+n n  x 
+
+ 
+
+where p        pn are positive numbers summing to    representing a probability distribution  and           n are formulas describing the subsequent state  s   
+given a state s and action a  we can compute coverage as we did in the deterministic
+case  now  however  given a covering substitution  x   probabilistic rules no longer predict
+a unique successor state  instead  each           n can be used to construct a new state  just
+as we did with the single   in the deterministic case  there are n such possible subsequent
+states  s i   each of which will occur with associated probability pi  
+the probability that a rule r assigns to moving from state s to state s  when action a
+is taken  pr s   s  a  r   can be calculated as 
+
+p  s   s  a  r   
+
+x
+
+p  s     i  s  a  r 
+
+ i r
+
+ 
+
+x
+
+p  s    i   s  a  r p   i  s  a  r 
+
+   
+
+ i r
+
+where p   i  s  a  r  is pi   and the outcome distribution p  s    i   s  a  r  is a deterministic
+distribution that assigns all of its mass to the relevant s    if p  s    i   s  a  r         that is 
+if s  is the state that would be constructed given that rule and outcome  we say that the
+outcome  i covers s   
+in general  it is possible  in this representation  for a subsequent state s  to be covered
+by more than one of the rules outcomes  in that case  the probability of s  occurring is the
+sum of the probabilities of the relevant outcomes  consider a rule for painting blocks 
+
+paint x    inhand x   block x 
+ 
+
+
+
+     painted x   wet
+     no change 
+
+when this rule is used to model the transition caused by the action paint a  in an initial
+state that contains wet and painted a   there is only one possible successor state  the one
+where no change occurs  so that wet and painted a  remain true  both the outcomes describe
+this one successor state  and so we must sum their probabilities to recover that states total
+probability 
+a set of rules specifies a complete conditional probability distribution pr s   s  a  in the
+following way  if the current state s and action a are covered by exactly one rule  then the
+distribution over subsequent states is that prescribed by the rule  if not  then s  is predicted
+to be the same as s with probability     
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+as an example  a probabilistic set of rules for picking up blocks might look as follows 
+pickup x  y    inhand nil  on x  y   block y   height y      
+ 
+
+
+
+     inhand x   on x  y   clear y 
+     no change
+
+pickup x  y    inhand nil  on x  y   table y 
+ 
+
+
+
+     inhand x   on x  y 
+     no change
+
+the top line of each rule still shows the action followed by the context  the bracket surrounds
+the outcomes and their distribution  the outcomes are the same as before  only now there
+is a small chance that they will not occur 
+    deictic reference
+in standard relational representations of action dynamics  a variable denoting an object
+whose properties may be changed as the result of an action must be named in the argument
+list of the action  this can result in awkwardness even in deterministic situations  for example  the abstract action of picking up a block must take two arguments  in pickup x  y  
+x is the block to be picked up and y is the block from which it is to be picked up  this
+relationship is encoded by an added condition on x  y  in the rules context  that condition does not restrict the applicability of the rule  it exists to guarantee that y is bound
+to the appropriate object  this restriction has been adopted because it means that  given
+a grounding of the action  all the variables in the rule are bound  and it is not necessary to
+search over all substitutions  that would allow a rule to cover a state  however  it can complicate planning because  in many cases  all ground instances of an operator are considered 
+even though most of them are eventually rejected due to violations of the preconditions  in
+our example  we would reject all instances violating the on x  y  relation in the context 
+in more complex domains  this requirement is even more awkward  depending on the
+circumstances  taking an action may affect different  varied sets of objects  in blocks worlds
+where a block may be on several others  the pickup action may affect the properties of each
+of those blocks  to model this without an additional mechanism for referring to objects 
+we might have to increase  or even vary  the number of arguments pickup takes 
+to handle this more gracefully  we extend the rule formalism to include deictic references
+to objects  each rule may be augmented with a list  d  of deictic references  each deictic
+reference consists of a variable vi and restriction i which is a set of literals that define
+vi with respect to the variables x in the action and the other vj such that j   i  these
+restrictions are supposed to pick out a single  unique object  if they do notif they pick out
+several  or nonethe rule fails to apply  so  to handle the pickup action described above 
+the action would have a single argument  pickup x   and the rule would contain a deictic
+variable v with the constraint that on x  v  
+to use rules with deictic references  we must extend our procedure for computing rule
+coverage to ensure that all of the deictic references can be resolved  the deictic variables
+may be bound simply by starting with bindings for x and working sequentially through the
+deictic variables  using their restrictions to determine their unique bindings  if at any point
+   
+
+filearning symbolic models of stochastic world dynamics
+
+the binding for a deictic variable is not unique  it fails to refer  and the rule fails to cover
+the stateaction pair 
+this formulation means that extra variables need not be included in the action specification  which reduces the number of operator instances  and yet  because of the requirement
+for unique designation  a substitution can still be quickly discovered while testing coverage 
+so  for example  to denote the red block on the table as v   assuming that there were
+only one table and one such block  we would use the following deictic references 
+v    table v   
+v    color  v      red  block  v     on v    v     
+if there were several  or no  tables in the world  then  under our rule semantics  the first
+reference would fail  similarly  the second reference would fail if the number of red blocks
+on the unique table represented by v  were not one 
+to give a more action oriented example  when denoting the block on top of the block
+i touched  where touch z  was the action  we would use the following deictic reference 
+v    on v    z   block  v     
+a set of deictic probabilistic rules for picking up blocks might look as follows 
+pickup x   
+
+n
+
+y   inhand y   z   table z 
+
+o
+
+empty context
+ 
+
+
+
+     inhand nil  inhand y   on y  z 
+     no change
+
+pickup x   
+
+n
+
+y   block y   on x  y 
+
+o
+
+inhand nil  height y      
+ 
+
+
+
+     inhand x   on x  y   clear y 
+     no change
+
+pickup x   
+
+n
+
+y   table y   on x  y 
+
+o
+
+inhand nil
+ 
+     inhand x   on x  y 
+
+     no change
+the top line of each rule now shows the action followed by the deictic variables  where each
+variable is annotated with its restriction  the next line is the context  and the outcomes
+and their distribution follow  the first rule applies in situations where there is something in
+the gripper  and states that there is a probability of     that action will cause the gripped
+object to fall to the table  and that nothing will change otherwise  the second rule applies
+in situations where the object to be picked up is on another block  and states that the
+probability of success is      the third rule applies in situations where the object to be
+picked up is on the table and describes a slightly higher success probability       note that
+different objects are affected  depending on the state of the world 
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+    adding noise
+probability models of the type we have seen thus far  ones with a small set of possible
+outcomes  are not sufficiently flexible to handle the noise of the real world  there may be a
+large number of possible outcomes that are highly unlikely  and reasonably hard to model 
+for example  all the configurations that may result when a tall stack of blocks topples  it
+would be inappropriate to model such outcomes as impossible  but we dont have the space
+or inclination to model each of them as an individual outcome 
+so  we will allow our rule representation to account for some results as noise  by definition  noise will be able to represent the outcomes whose probability we havent quantified 
+thus  by allowing noise  we will lose the precision of having a true probability distribution
+over next states 
+to handle noise  we must change our rules in two ways  first  each rule will have an
+additional noise outcome  noise   with an associated probability p   noise  s  a  r   now  the
+set of outcome probabilities that must sum to     will include p   noise  s  a  r  as well as
+p      s  a  r        p   n  s  a  r   however   noise will not have an associated list of literals 
+since we are declining to model in detail what happens to the world in such cases 
+second  we will create an additional default rule  with an empty context and two outcomes  an empty outcome  which  in combination with the frame assumption  models the
+situations where nothing changes   and  again  a noise outcome  modeling all other situations   this rule allows noise to occur in situations where no other specific rule applies  the
+probability assigned to the noise outcome in the default rule specifies a kind of background
+noise level 
+since we are not explicitly modeling the effects of noise  we can no longer calculate
+the transition probability pr s   s  a  r  using equation    we lack the required distribution
+p  s    i   s  a  r  for the noise outcome  instead  we substitute a worst case constant bound
+pmin  p  s    noise   s  a  r   this allows us to bound the transition probability as
+p  s   s  a  r    pmin p   noise  s  a  r   
+
+x
+
+p  s    i   s  a  r p   i  s  a  r 
+
+ i r
+
+ p  s   s  a  r  
+
+   
+
+intuitively  pmin assigns a small amount of probability mass to every possible next state
+note that it can take a value higher than the true minimum  it is an approximation 
+however  to ensure that the probability model remains well defined  pmin times the number
+of possible states should not exceed     
+in this way  we create a partial model that allows us to ignore unlikely or overly complex
+state transitions while still learning and acting effectively   
+since these rules include noise and deictic references  we call them noisy deictic rules
+ ndrs   in a rather stochastic world  the set of ndrs for picking up blocks might now
+s   
+
+   p  s    noise   s  a  r  could be modeled using any well defined probability distribution describing the noise
+of the world  which would give us a full distribution over the next states  the premise here is that
+it might be difficult to specify such a distributionin our domain  we would have to ensure that this
+distribution does not assign probability to worlds that are impossible  such as worlds where some blocks
+are floating in midair  as long as these events are unlikely enough that we would not want to consider
+them while planning  it is reasonable to not model them directly 
+
+   
+
+filearning symbolic models of stochastic world dynamics
+
+look as follows 
+pickup x   
+
+n
+
+y   inhand y   z   table z 
+
+o
+
+empty context
+
+
+      inhand nil  inhand y   on y  z 
+     no change
+
+
+      noise
+pickup x   
+
+n
+
+y   block y   on x  y 
+
+o
+
+inhand nil  height y      
+
+
+
+
+      inhand x   on x  y   clear y 
+
+     no change
+
+
+      noise
+n
+
+pickup x   
+
+y   table y   on x  y 
+
+o
+
+inhand nil
+
+
+      inhand x   on x  y 
+     no change
+
+
+      noise
+default  rule 
+     no change
+
+     noise
+the format of the rules is the same as before  in section      except that each rule now
+includes an explicit noise outcome  the first three rules are very similar to their old versions 
+the only difference being that they model noise  the final rule is the default rule  it states
+that  if no other rule applies  the probability of observing a change is     
+together these rules provide a complete example of the type of rule set that we will learn
+in section      however  they were written with a fixed modeling language of functions and
+predicates  the next section describes how concepts can be used to extend this language 
+    concept definitions
+in addition to the observed primitive predicates  it is often useful to have background
+knowledge that defines additional predicates whose truth values can be computed based
+on the observations  this has been found to be essential for modeling certain planning
+domains  edelkamp   hoffman        
+this background knowledge consists of definitions for additional concept predicates
+and functions  in this work  we express concept definitions using a concept language
+that includes conjunction  existential quantification  universal quantification  transitive closure  and counting  quantification is used for defining concepts such as inhand x    
+block x   y on x  y    transitive closure is included in the language via the kleene star
+operator and defines concepts such as above x  y      on  x  y    finally  counting is included using a special quantifier   which returns the number of objects for which a formula is
+true  it is useful for defining integer valued functions such as height x      y above x  y   
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+once defined  concepts enable us to simplify the context and the deictic variable definitions  as well as to restrict them in ways that cannot be described using simple conjunctions 
+note  however  that there is no need to track concept values in the outcomes  since they can
+always be computed from the primitives  therefore  only the rule contexts use a language
+enriched by concepts  the outcomes contain primitives 
+as an example  here is a deictic noisy rule for attempting to pick up block x  side by
+side with the background knowledge necessary when the only primitive predicates are on
+and table 
+
+pickup x   
+
+
+
+
+ y   topstack y  x   
+
+
+z   on y  z  
+
+ t   table t 
+
+
+
+
+inhand nil  height y     
+
+
+      on y  z 
+
+
+       on y  z   on y  t 
+
+
+      no change
+
+
+
+      noise
+
+clear x 
+
+   y on y  x 
+
+inhand x     block x   y on x  y 
+inhand nil    y inhand y 
+above x  y 
+
+   on  x  y 
+
+   
+
+topstack x  y     clear x   above x  y 
+height x      y above x  y 
+
+the rule is more complicated than the example rules given thus far  it deals with the
+situation where the block to be picked up  x  is in the middle of a stack  the deictic variable
+y identifies the  unique  block on top of the stack  the deictic variable zthe object under
+y   and the deictic variable tthe table  as might be expected  the gripper succeeds in
+lifting y with a high probability 
+the concept definitions include clear x   defined as there exists no object that is on
+x  inhand x   defined as x is a block that is not on any object  inhand nil  defined as
+there exists no object such that it is in the hand  above x  y   defined as the transitive
+closure of on x  y   topstack x  y   defined as x is above y  and clear  and height x  
+defined as the number of objects that can are below x using a chain of ons  as explained
+above  these concepts are used only in the context and the deictic variable definitions  while
+outcomes track only the primitive predicates  in fact  only on appears in the outcomes  since
+the value of the table predicates never changes 
+    action models
+we combine a set of concept definitions and a set of rules to define an action model  our
+best action models will represent the rule set using ndrs  but  for comparison purposes 
+some of our experiments will involve rule sets that use simpler representations  without
+noise or deictic references  moreover  the rule sets will differ in whether they are allowed
+to contain constants  the rules presented so far have contained none  neither in their
+context nor in the outcomes  this is the only reasonable setup when states contain skolem
+constants  as these constants have no inherent meaning and the names they are assigned
+will not in general be repeated  however  when states have intrinsic constants  it is perfectly
+acceptable to include constants in action models  after all  these constants can be used to
+uniquely identify objects in the world 
+as we develop a learning algorithm in the next section  we will assume in general that
+constants are allowed in the action model  but we will show how simple restrictions within
+   
+
+filearning symbolic models of stochastic world dynamics
+
+the algorithm can ensure that the learned models do not contain any  we also show  in
+section    that learning action models which are restricted to be free of constants provides
+a useful bias that can improve generalization when training with small data sets 
+
+   learning action models
+now that we have defined rule action models  we will describe how they may be constructed
+using a learning algorithm that attempts to return the action model that best explains a set
+of example actions and their results  more formally  this algorithm takes a training set e 
+where each example is a  s  a  s    triple  and searches for an action model a that maximizes
+the likelihood of the action effects seen in e  subject to a penalty on complexity 
+finding a involves two distinct problems  defining a set of concept predicates  and
+constructing a rule set r using a language that contains these predicates together with the
+directly observable primitive predicates  in this section  we first discuss the second problem 
+rule set learning  assuming some fixed set of predicates is provided to the learner  then 
+we present a simple algorithm that discovers new  useful concept predicates 
+    learning rule sets
+the problem of learning rule sets is  in general  np hard  zettlemoyer  pasula    kaelbling 
+       here  we address this problem by using greedy search  we structure the search
+hierarchically by identifying two self contained subproblems  outcome learning  which is a
+subproblem of the general rule set search  and parameter estimation  which is a subproblem
+of outcome learning  thus  the overall algorithm involves three levels of greedy search 
+an outermost level  learnrules  which searches through the space of rule sets  often by
+constructing new rules  or altering existing ones  a middle level  induceoutcomes which 
+given an incomplete rule consisting of a context  an action  and a set of deictic references  fills
+in the rest of the rule  and an innermost level  learnparameters  which takes a slightly more
+complete rule  now lacking only a distribution over the outcomes  and finds the distribution
+that optimizes the likelihood of the examples covered by this rule  we present these three
+levels starting from the inside out  so that each subroutine is described before the one that
+depends on it  since all three subroutines attempt to maximize the same scoring metric 
+we begin by introducing this metric 
+      the scoring metric
+a greedy search algorithm must judge which parts of the search space are the most desirable 
+here  this is done with the help of a scoring metric over rule sets 
+s r   
+
+x
+
+log p  s   s  a  r s a      
+
+ s a s   e
+
+x
+
+p en  r 
+
+   
+
+rr
+
+where r s a  is the rule governing the transition occurring when a is performed in s   is
+a scaling parameter  and p en  r  is a complexity penalty applied to rule r  thus  s r 
+favors rule sets that maximize the likelihood bound on the data and penalizes rule sets that
+are overly complex 
+ideally  p would be the likelihood of the example  however  rules with noise outcomes
+cannot assign an exact likelihood so  in their case  we use the lower bound defined in equa   
+
+fipasula  zettlemoyer    pack kaelbling
+
+tion   instead  p en  r  is defined simply as the total number of literals in r  we chose this
+penalty for its simplicity  and also because it performed no worse than any other penalty
+term we tested in informal experiments  the scaling parameter  is set to     in our experiments  but it could also be set using cross validation on a hold out dataset or some other
+principled technique  this metric puts pressure on the model to explain examples using
+non noise outcomes  which increases p   but also has opposing pressure on complexity  via
+p en  r  
+if we assume that each state action pair  s  a  is covered by at most one rule  which  for
+any finite set of examples  can be enforced simply by ensuring that each examples stateaction pair is covered by at most one rule  we can rewrite the metric in terms of rules rather
+than examples  to give
+s r   
+
+x
+
+x
+
+rr
+
+ s a s   er
+
+log p  s   s  a  r    p en  r 
+
+   
+
+where er is the set of examples covered by r  thus  each rules contribution to s r  can
+be calculated independently of the others 
+      learning parameters
+the first of the algorithms described in this section  learnparameters  takes an incomplete
+rule r consisting of an action  a set of deictic references  a context  and a set of outcomes 
+and learns the distribution p that maximizes rs score on the examples er covered by it 
+since the procedure is not allowed to alter the number of literals in the rule  and therefore
+cannot affect the complexity penalty term  the optimal distribution is simply the one that
+maximizes the log likelihood of er   in the case of rules with noise outcomes this will be
+log p  s   s  a  r  
+
+x
+
+l  
+
+ s a s   er
+
+
+
+ 
+
+
+
+log pmin p   noise  s  a  r   
+
+x
+
+x
+
+p  s    i   s  a  r p   i  s  a  r   
+
+   
+
+ i r
+
+ s a s   er
+
+for each non noise outcome  p  s    i   s  a  r  is one if  i covers  s  a  s    and zero otherwise 
+ in the case of rules without noise outcomes  the sum will be slightly simpler  with the
+pmin p   noise  s  a  r  term missing  
+when every example is covered by a unique outcome  ls maximum can be expressed
+in a closed form  let the set of examples covered by an outcome   be e    if we add a
+lagrange multiplier to enforce the constraint that the p   i  s  a  r  distributions must sum
+to      we will get
+
+
+l  
+
+x
+ s a s   er
+
+ 
+
+x
+e 
+
+log 
+
+
+x
+
+p  s    i   s  a  r p   i  s  a  r     
+
+x
+
+ i r
+
+ i
+
+ e    log p   i  s  a  r     
+
+
+x
+
+p   i  s  a  r         
+
+ i
+
+   
+
+p   i  s  a  r       
+
+filearning symbolic models of stochastic world dynamics
+
+then  the partial derivative of l with respect to p   i  s  a  r  will be  e    p   i  s  a  r 
+ and     e   so that p   i  s  a  r     e i    e   thus  the parameters can be estimated
+by calculating the percentage of the examples that each outcome covers 
+however  as we have seen in section      it is possible for each example to be covered by
+more than one outcome  indeed  when we have a noise outcome  which covers all examples 
+this will always be the case  in this situation  the sum over examples cannot be rewritten as
+a simple sum of terms each representing a different outcomes and containing only a single
+relevant probability  the probabilities of overlapping outcomes remain tied together  no
+general closed form solution exists  and estimating the maximum likelihood parameters is a
+nonlinear programming problem  fortunately  it is an instance of the well studied problem
+of maximizing a concave function  the log likelihood presented in equation    over a probability simplex  several gradient ascent algorithms are known for this problem  bertsekas 
+       since the function is concave  they are guaranteed to converge to the global maximum 
+learnparameters uses the conditional gradient method  which works by  at each iteration 
+moving along the parameter axis with the maximal partial derivative  the step sizes are
+chosen using the armijo rule  with the parameters s                and           the
+search converges when the improvement in l is very small  less than       we chose this
+algorithm because it was easy to implement and converged quickly for all of the experiments
+that we tried  however  if problems are found where this method converges too slowly  one
+of the many other nonlinear optimization methods  such as a constrained newtons method 
+could be directly applied 
+      inducing outcomes
+given learnparameters  an algorithm for learning a distribution over outcomes  we can
+now consider the problem of taking an incomplete rule r consisting of a context  an action 
+and perhaps a set of deictic references  and finding the optimal way to fill in the rest of
+the rulethat is  the set of outcomes            n   and the associated distribution p that
+maximize the score
+s r   
+
+x
+
+log p  s   s  a  r    p eno  r  
+
+ s a s   er
+
+where er is the set of examples covered by r  and p eno  r  is the total number of literals in
+the outcomes of r   s r  is that factor of the scoring metric in equation   which is due to
+rule r  without those aspects of p en  r  which are fixed for the purposes of this subroutine 
+the number of literals in the context  
+in general  outcome induction is np hard  zettlemoyer  pasula    kaelbling         induceoutcomes uses greedy search through a restricted subset of possible outcome sets  those
+that are proper on the training examples  where an outcome set is proper if every outcome
+covers at least one training example  two operators  described below  move through this
+space until there are no more immediate moves that improve the rule score  for each set of
+outcomes it considers  induceoutcomes calls learnparameters to supply the best p it can 
+the initial set of outcomes is created by  for each example  writing down the set of
+atoms that changed truth values as a result of the action  and then creating an outcome to
+describe every set of changes observed in this way 
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+e 
+e 
+e 
+e 
+
+  
+  
+  
+  
+
+  t c    h c    h c    h c  
+  h c    t c    h c    h c  
+  h c    h c    t c    t c  
+  h c    h c    h c    h c  
+ a 
+
+   h c   
+   h c   
+   t c    t c   
+   no change 
+ b 
+
+figure     a  possible training data for learning a set of outcomes   b  the initial set of
+outcomes that would be created from the data in  a  by picking the smallest
+outcome that describes each change 
+
+as an example  consider the coins domain  each coins world contains n coins  which
+can be showing either heads or tails  the action flip coupled  which takes no arguments 
+flips all of the coins  half of the time to heads  and otherwise to tails  a set of training
+data for learning outcomes with two coins might look like part  a  of figure   where h c 
+stands for heads c   t c  stands for heads c   and s  s  is part of an  s  a  s    example
+where a   flip coupled  now suppose that we have suggested a rule for flip coupled that
+has no context or deictic references  given our data  the initial set of outcomes has the four
+entries in part  b  of figure   
+if our rule contained variables  either as abstract action arguments or in the deictic
+references  induceoutcomes would introduce those variables into the appropriate places in
+the outcome set  this variable introduction is achieved by applying the inverse of the action
+substitution to each examples set of changes while computing the initial set of outcomes   
+so  given a deictic reference c   red c  which was always found to refer to c   the only red
+coin  our example set of outcomes would contain c wherever it currently contains c  
+finally  if we disallow the use of constants in our rules  variables become the only way for
+outcomes to refer to the objects whose properties have changed  then  changes containing a
+constant which is not referred to by any variable cannot be expressed  and the corresponding
+example will have to be covered by the noise outcome 
+outcome search operators
+
+induceoutcomes uses two search operators  the first is an add operator  which picks
+a pair of non contradictory outcomes in the set and creates a new outcome that is their
+conjunction  for example  it might pick    and    and combine them  adding a new
+outcome       h c    h c    to the set  the second is a remove operator that drops an
+outcome from the set  outcomes can only be dropped if they were overlapping with other
+outcomes on every example they cover  otherwise the outcome set would not remain proper 
+ of course  if the outcome set contains a noise outcome  then every other outcome can be
+dropped  since all of its examples are covered by the noise outcome   whenever an operator
+adds or removes an outcome  learnparameters is called to find the optimal distribution
+   thus  induceoutcomes introduces variables aggressively wherever possible  based on the intuition that
+if any of the corresponding objects would be better described by a constant  this will become apparent
+through some other training example 
+
+   
+
+filearning symbolic models of stochastic world dynamics
+
+over the new outcome set  which can then be used to calculate the maximum log likelihood
+of the data with respect to the new outcome set 
+sometimes  learnparameters will return zero probabilities for some of the outcomes 
+such outcomes are removed from the outcome set  since they contribute nothing to the
+likelihood  and only add to the complexity  this optimization improves the efficiency of the
+search 
+in the outcomes of figure       can be dropped since it covers only e    which is also
+covered by both    and      the only new outcome that can be created by conjoining the
+existing ones is       h c    h c     which covers e    e    and e    thus  if    is added  then
+   and    can be dropped  adding    and dropping           and    creates the outcome
+set             which is the optimal set of outcomes for the training examples in figure   
+notice that an outcome is always equal to the union of the sets of literals that change in
+the training examples it covers  this fact ensures that every proper outcome can be made
+by merging outcomes from the initial outcome set  induceoutcomes can  in theory  find any
+set of outcomes 
+      learning rules
+now that we know how to fill in incomplete rules  we will describe learnrules  the outermost
+level of our learning algorithm  which takes a set of examples e and a fixed language of
+primitive and derived predicates  and performs a greedy search through the space of rule
+sets  more precisely  it searches through the space of proper rule sets  where a rule set r
+is defined as proper with respect to a data set e if it includes at most one rule that is
+applicable to every example e  e in which some change occurs  and if it does not include
+any rules that are applicable to no examples 
+the search proceeds as described in the pseudocode in figure    it starts with a rule set
+that contains only the default rule  at every step  it takes the current rule set and applies
+all its search operators to it to obtain a set of new rule sets  it then selects the rule set r
+that maximizes the scoring metric s r  as defined in equation    ties in s r  are broken
+randomly 
+we will begin by explaining how the search is initialized  then go on to describe the
+operators used  and finish by working through a simple example that shows learnrules in
+action 
+rule set search initialization
+
+learnrules can be initialized with any proper rule set  in this paper  we always initialize
+the set with only the noisy default rule  this treats all action effects in the training set as
+noise  as the search progresses  the search operators will introduce rules to explain action
+effects explicitly  we chose this initial starting point for its simplicity  and because it worked
+well in informal experiments  another strategy would be to start with a very specific rule
+set  describing in detail all the examples  such bottom up methods have the advantage
+of being data driven  which can help search reach good parts of the search space more
+easily  however  as we will show  several of the search operators used by the algorithm
+presented here are guided by the training examples  so the algorithm already has this
+desirable property  moreover  this bottom up method has bad complexity properties in
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+learnruleset e 
+inputs 
+training examples e
+computation 
+initialize rule set r to contain only the default rule
+while better rules sets are found
+for each search operator o
+create new rule sets with o  ro   o r  e 
+for each rule set r   ro
+if the score improves  s r      s r  
+update the new best rule set  r   r 
+output 
+the final rule set r
+
+figure    learnruleset pseudocode  this algorithm performs greedy search through the space of
+rule sets  at each step a set of search operators each propose a set of new rule sets  the
+highest scoring rule set is selected and used in the next iteration 
+
+situations where a large data set can be described using a relatively simple set of rules 
+which is the case we are most interested in 
+rule set search operators
+
+during rule set search  learnrules repeatedly finds and applies the operator that will
+increase the score of the current rule set the most 
+most of the search operators work by creating a new rule or set of rules  usually by
+altering an existing rule  and then integrating these new rules into the rule set in a way
+that ensures the rule set remains proper  rule creation involves picking an action z  a
+set of deictic references d  and a context   and then calling on the induceoutcomes
+learning algorithm to complete the rule by filling in the  i s and pi s   if the new rule covers
+no examples  the attempt is abandoned  since adding such a rule cannot help the scoring
+metric   integration into a rule set involves not just adding the new rules  but also removing
+the old rules that cover any of the same examples  this can increase the number of examples
+covered by the default rule 
+      search operators
+each search operator o takes as input a rule set r and a set of training examples e  and
+creates a set of new rule sets ro to be evaluated by the greedy search loop  there are eleven
+search operators  we first describe the most complex operator  explainexamples  followed
+by the most simple one  droprules  then  we present the remaining nine operators  which
+all share the common computational framework outlined in figure   
+together  these operators provide many different ways of moving through the space of
+possible rule sets  the algorithm can be adapted to learn different types of rule sets  for
+example  with and without constants  by restricting the set of search operators used 
+   
+
+filearning symbolic models of stochastic world dynamics
+
+operatortemplate r  e 
+inputs 
+rule set r
+training examples e
+computation 
+repeatedly select a rule r  r
+create a copy of the input rule set r    r
+create a new set of rules  n   by making changes to r
+for each new rule r   n that covers some examples
+estimate new outcomes for r  with induceoutcomes
+add r  to r  and remove any rules in r  that cover any
+examples r  covers
+recompute the set of examples that the default rule in r 
+covers and the parameters of this default rule
+add r  to the return rule sets ro
+output 
+the set of rules sets  ro
+
+figure    operatortemplate pseudocode  this algorithm is the basic framework that is used by
+six different search operators  each operator repeatedly selects a rule  uses it to make n
+new rules  and integrates those rules into the original rule set to create a new rule set 
+
+ explainexamples takes as input a training set e and a rule set r and creates new 
+alternative rule sets that contain additional rules modeling the training examples
+that were covered by the default rule in r  figure   shows the pseudocode for this
+algorithm  which considers each training example e that was covered by the default
+rule in r  and executes a three step procedure  the first step builds a large and
+specific rule r  that describes this example  the second step attempts to trim this rule 
+and so generalize it so as to maximize its score  while still ensuring that it covers e 
+and the third step creates a new rule set r  by copying r and integrating the new
+rule r  into this new rule set 
+as an illustration  let us consider how steps   and   of explainexamples might be
+applied to the training example  s  a  s        on a  t   on b  a    pickup b    on a  t    
+when the background knowledge is as defined for rule   in section     and constants
+are not allowed 
+step   builds a rule r  it creates a new variable x to represent the object b in the
+action  then  the action substitution becomes     x  b   and the action of r is
+set to pickup x   the context of r is set to the conjunction inhand nil  inhand x  
+clear x   height x       on x  x   above x  x   topstack x  x   then  in step
+     explainexamples attempts to create deictic references that name the constants
+whose properties changed in the example  but which are not already in the action substitution  in this case  the only changed literal is on b  a   and b is in the substitution 
+so c    a   a new deictic variable y is created and restricted  and  is extended to
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+explainexamples r  e 
+inputs 
+a rule set r
+a training set e
+computation 
+for each example  s  a  s     e covered by the default rule in r
+step    create a new rule r
+step      create an action and context for r
+create new variables to represent the arguments of a
+use them to create a new action substitution 
+set rs action to be     a 
+set rs context to be the conjunction of boolean and equality literals that can
+be formed using the variables and the available functions and predicates
+ primitive and derived  and that are entailed by s
+step      create deictic references for r
+collect the set of constants c whose properties changed from s to s    but
+which are not in 
+for each c  c
+create a new variable v and extend  to map v to c
+create   the conjunction of literals containing v that can be formed using
+the available variables  functions  and predicates  and that are entailed by s
+create deictic reference d with variable v and restriction      
+if d uniquely refers to c in s  add it to r
+step      complete the rule
+call induceoutcomes to create the rules outcomes 
+step    trim literals from r
+create a rule set r  containing r and the default rule
+greedily trim literals from r  ensuring that r still covers  s  a  s    and filling in the
+outcomes using induceoutcomes until r  s score stops improving
+step    create a new rule set containing r
+create a new rule set r    r
+add r to r  and remove any rules in r  that cover any examples r covers
+recompute the set of examples that the default rule in r  covers and the parameters
+of this default rule
+add r  to the return rule sets ro
+output 
+a set of rule sets  ro
+
+figure    explainexamples pseudocode  this algorithm attempts to augment the rule set with new
+rules covering examples currently handled by the default rule 
+
+   
+
+filearning symbolic models of stochastic world dynamics
+
+be  x  b  y  a   finally  in step      the outcome set is created  assuming that
+of the examples for which context applies  nine out of ten end with x being lifted 
+and the rest with it falling onto the table  the resulting rule r  looks as follows 
+
+
+inhand y    clear y   on x  y   table y  
+
+pickup x    y   above x  y   topstack x  y   above y  y 
+
+
+topstack y  y   on y  y   height y     
+inhand nil  inhand x   clear x   table x   height x       on x  x  
+above x 
+x   topstack x  x 
+
+      on x  y 
+
+      noise
+
+ the falls on table outcome is modeled as noise  since in the absence of constants
+the rule has no way of referring to the table  
+in step    explainexamples trims this rule to remove the literals that are always true
+in the training examples  like on x  x   and the table  s  and the redundant ones 
+like inhand    clear y   and perhaps one of the heights  to give
+
+ 
+pickup x    y   on x  y 
+inhand nil 
+clear x   height x     
+
+      on x  y 
+
+      noise
+
+this rules context describes the starting example concisely  explain examples will
+consider dropping some of the remaining literals  and thereby generalizing the rule so
+it applies to examples with different starting states  however  such generalizations do
+not necessarily improve the score  while they have smaller contexts  they might end
+up creating more outcomes to describe the new examples  so the penalty term is not
+guaranteed to improve  the change in the likelihood term will depend on whether the
+new examples have higher likelihood under the new rule than under the default rule 
+and on whether the old examples have higher likelihood under the old distribution
+than under the new one  quite frequently  the need to cover the new examples will
+give the new rule a distribution that is closer to random than before  which will usually
+lead to a decrease in likelihood too large to be overcome by the improvement in the
+penalty  given the likelihood penalty trade off 
+let us assume that  in this case  no predicate can be dropped without worsening the
+likelihood  the rule will then be integrated into the rule set as is 
+ droprules cycles through all the rules in the current rule set  and removes each one
+in turn from the set  it returns a set of rule sets  each one missing a different rule 
+the remaining operators create new rule sets from the input rule set r by repeatedly
+choosing a rule r  r and making changes to it to create one or more new rules  these new
+rules are then integrated into r  just as in explainexamples  to create a new rule set r   
+figure   shows the the general pseudocode for how this is done  the operators vary in the
+way they select rules and the changes they make to them  these variations are described
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+for each operator below   note that some of the operators  those that deal with deictic
+references and constants  are only applicable when the action model representation allows
+these features  
+ droplits selects every rule r  r n times  where n is the number of literals in the
+context of r  in other words  it selects each r once for each literal in its context  it
+then creates a new rule r  by removing that literal from rs context  n of figure   is
+simply the set containing r   
+so  the example pickup rule created by explainexamples would be selected three times 
+once for inhand nil  once for clear x   and one for height x       and so would create
+three new rules  each with a different literal missing   three singleton n sets  and
+three candidate new rule sets r    since the newly created r  are generalizations of r 
+they are certain to cover all of rs examples  and so r will be removed from each of
+the r  s 
+the changes suggested by droplits are therefore exactly the same as those suggested by the trimming search in explainexamples  but there is one crucial difference 
+droplits attempts to integrate the new rule into the full rule set  instead of just making a quick comparison to the default rule as in step   of explainexamples  this is
+because explainexamples used the trimming search only as a relatively cheap  local
+heuristic allowing it to decide on a rule size  while droplits uses it to search globally
+through the space of rule sets  comparing the contributions of various conflicting rules 
+ droprefs is an operator used only when deictic references are permitted  it selects
+each rule r  r once for each deictic reference in r  it then creates a new rule r  by
+removing that deictic reference from r  n is  again  the set containing only r   
+when applying this operator  the pickup rule would be selected once  for the reference
+describing y   and only one new rule set would be returned  one containing the rule
+without y  
+ generalizeequality selects each rule r  r twice for each equality literal in the context
+to create two new rules  one where the equality is replaced by a   and one where
+it is replaced by a   each rule will then be integrated into the rule set r  and the
+resulting two r  s returned  again  these generalized rules are certain to cover all of
+rs examples  and so the r  s will not contain r 
+the context of our pickup rule contains one equality literal  height x       generalizeequality will attempt to replace this literal with height x     and height x     
+in a domain containing more than two blocks  this would be likely to yield interesting
+generalizations 
+ changeranges selects each rule r  r n times for each equality or inequality literal in
+the context  where n is the total number of values in the range of each literal  each
+time it selects r it creates a new rule r  by replacing the numeric value of the chosen
+ in equality with another possible value from the range  note that it is quite possible
+that some of these new rules will cover no examples  and so will be abandoned  the
+remaining rules will be integrated into new copies of the rule set as usual 
+   
+
+filearning symbolic models of stochastic world dynamics
+
+thus  if f    ranges over          n   changerange would  when applied to a rule containing the inequality f      i  construct rule sets in which i is replaced by all other
+integers in          n  
+our pickup rule contains one equality literal  height x       in the two block domain
+from which our  s  a  s    example was drawn  height   can take on the values       and   
+so the rule will  again  be selected thrice  and new rules will be created containing the
+new equalities  since the rule constrains x to be on something  the new rule containing
+height x      can never cover any examples and will certainly be abandoned 
+ splitonlits selects each rule r  r n times  where n is the number of literals that
+are absent from the rules context and deictic references   the set of absent literals
+is obtained by applying the available functions and predicatesboth primitive and
+derivedto the terms present in the rule  and removing the literals already present in
+the rule from the resulting set   it then constructs a set of new rules  in the case of
+predicate and inequality literals  it creates one rule in which the positive version of the
+literal is inserted into the context  and one in which it is the negative version  in the
+case of equality literals  it constructs a rule for every possible value the equality could
+take  in either case  rules that cover no examples will be dropped  any remaining
+rules corresponding to the one literal are placed in n   and they are then integrated
+into the rule set simultaneously 
+note that the newly created rules will  between them  cover all the examples that
+start out covered by the original rule and no others  and that these examples will be
+split between them 
+the list of literals that may be added to the pickup rule consists of inhand x  
+inhand y   table x   table y   clear y   on y  x   on y  y   on x  x   height y     
+and all possible applications of above and topstack  these literals do not make for
+very interesting examples  adding them to the context will create rules that either
+cover no examples at all  and so will be abandoned  or that cover the same set of
+examples as the original rule  and so will be rejected for having the same likelihood
+but a worse penalty  however  just to illustrate the process  attempting to add in the
+height y     predicate will result in the creation of three new rules with height y    n
+in the context  one for each n             these rules would be added to the rule set
+all at once 
+ addlits selects each rule r  r  n times  where n is the number of predicate based
+literals that are absent from the rules context and deictic references  and the   reflects the fact that each literal may be considered in its positive or negative form  it
+constructs a new rule for each literal by inserting that literal into the earliest place
+in the rule in which its variables are all well defined  if the literal contains no deictic
+variables  this will be the context  otherwise this will be the restriction of the last
+deictic variable mentioned in the literal   so  if v  and v  are deictic variables and v 
+appears first  on v    v    would be inserted into the restriction of v     the resulting
+rule is then integrated into the rule set 
+the list of literals that may be added to the pickup rule is much as for splitonlits  only
+without height y      again  this process will not lead to anything very interesting
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+in our example  for the same reason  just as an illustration  inhand y  would be
+chosen twice  once as inhand y   and added to the context in each case  since the
+context already contains inhand nil  adding inhand y  will be redundant  and adding
+inhand y  will produce a contradiction  so neither rule will be seriously considered 
+ addrefs is an operator used only when deictic references are permitted  it selects
+each rule r  r n times  where n is the number of literals that can be constructed
+using the available predicates  the variables in r  and a new variable v  in each case  it
+creates a new deictic reference for v  using the current literal to define the restriction 
+and adds this deictic reference to the antecendent of r to construct a new rule  which
+will then be integrated into the rule set 
+supposing v is the new variable  the list of literals that would be constructed with the
+pickup rule consists of inhand v   clear v   on v  x   on x  v   table v   on v  y  
+on y  v   on v  v   and all possible applications of above and topstack  which will
+mirror those for on   they will be used to create deictic references like v   table v  
+ a useful reference here  as it allows the rule to describe the falls on table outcomes
+explicitly  this operator is very likely to be accepted at some point in the search  
+ raiseconstants is an operator used only when constants are permitted  it selects each
+rule r  r n times  where n is the number of constants among the arguments of rs
+action  for each constant c  it constructs a new rule by creating a new variable and
+replacing every occurrence of c with it  it then integrates this new rule into the rule
+set 
+ splitvariables is an operator used only when constants are permitted  it selects each
+rule r  r n times  where n is the number of variables among the arguments of rs
+action  for each variable v  it goes through the examples covered by the rule r and
+collects the constants v binds to  then  it creates a rule for each of these constants by
+replacing every occurrence of v with that constant  the rules corresponding to one
+variable v are combined in the set n and integrated into the old rule set together 
+we have found that all of these operators are consistently used during learning  while
+this set of operators is heuristic  it is complete in the sense that every rule set can be
+constructed from the initial rule setalthough  of course  there is no guarantee that the
+scoring metric will lead the greedy search to the global maximum 
+learnruless search strategy has one large drawback  the set of learned rules is only
+guaranteed to be proper on the training set and not on testing data  new test examples
+could be covered by more than one rule  when this happens  we employ an alternative
+rule selection semantics  and return the default rule to model the situation  in this way 
+we are essentially saying that we dont know what will happen  however  this is not a
+significant problem  the problematic test examples can always be added to a future training
+set and used to learn better models  given a sufficiently large training set  these failures
+should be rare 
+
+   
+
+filearning symbolic models of stochastic world dynamics
+
+e  
+
+b 
+
+b 
+b 
+
+puton b  
+
+b 
+b 
+
+puton b  
+
+b 
+b 
+
+b 
+
+e  
+
+r   
+
+r   
+
+puton x 
+ 
+ 
+ 
+y   inhand y 
+t   table t 
+empty
+ context
+
+        on y  t 
+       on y  x 
+
+
+        noise
+
+r   
+
+puton x 
+ 
+n
+o
+y   inhand y 
+clear x 
+n
+       on y  x 
+
+b 
+
+b 
+
+e  
+
+b 
+
+puton x 
+ 
+ 
+ 
+y   inhand y 
+z   on z  x 
+empty
+  context
+      on y  z 
+
+      noise
+
+b 
+
+b 
+puton b  
+
+b  b 
+
+b 
+b  b 
+
+figure    three training examples in a three blocks world  each example is paired with an initial
+rule that explainexamples might create to model it  in each example  the agent is trying
+to put block b  onto block b  
+
+an example of rule set learning
+
+as an example  consider how learnruleset might learn a set of rules to model the three
+training examples in figure    given the settings of the complexity penalty and noise bound
+later used in our experiments         and pmin              this pmin is very low for the
+three block domain  since it only has    different states  but we use it for consistency 
+at initialization  the rule set contains only the default rule  all the changes that occur
+in these examples are modeled as noise  since all examples include change  the default rule
+will have a noise probability of      we now describe the path the greedy search takes 
+during the first round of search the explainexamples operator suggests adding in new
+rules to describe these examples  in general  explainexamples tries to construct rules that
+are compact  that cover many examples  and that assign a relatively high probability to
+each covered example   the latter means that noise outcomes are to be avoided whenever
+possible   one reasonable set of rules to be suggested is shown on the right hand side
+of figure    notice that r  is deterministic  and so high probability and relatively compact 
+e  has a unique initial state  and explainexamples can take advantage of this  meanwhile 
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+e  and e  have the same starting state  and so the rules explaining them must cover each
+others examples  thus  noise outcomes are unavoidable in both rules  since they lack the
+necessary deictic references   deictic variables are created only to describe the objects
+whose state changes in the example being explained  
+now  consider adding one of these rules  there is no guarantee that doing so will
+constitute an improvement  since a very high complexity penalty  would make any rule
+look bad  while a high pmin would make the default rule look good  to determine what
+the best move is  the algorithm compares the scores of the rule sets containing each of the
+proposed rules to the score of the initial rule set containing only the default rule  let us
+calculate these scores for the example  starting with the rule set consisting of the rule r   
+which covers e  and e    and the default rule rd   which covers the remaining example  and
+which therefore has a noise probability of      we will use equation    and let a rules
+complexity be the number of literals in its body  so  in the case of r    three  we get 
+s r    rd    
+
+x
+
+log p  s   s  a  r s a      
+
+ s a s   e
+
+x
+
+p en  r 
+
+rr
+
+  log            pmin     log      pmin     log pmin    p en  r     p en  rd  
+  log               log               log                           
+                      
+        
+so  the rule set containing r  has a score of         similar calculations show that the
+rule sets containing r  and r  have scores of        and      respectively  since the
+initial rule set has a score of     all of these new rule sets are improvements  but the one
+containing r  is best  and will be picked by the greedy search  the new rule set is now 
+
+ 
+puton x    y   inhand y   t   table t 
+empty context
+
+        on y  t 
+       on y  x 
+
+
+       noise
+default 
+rule 
+      no change
+
+      noise
+
+notice that all the training examples are covered by a non default rule  in this situation 
+the default rule does not cover any examples and has no probability assigned to the noise
+outcome 
+at the next step  the search has to decide between altering an existing rule  and introducing another rule to describe an example currently covered by the default rule  since the
+default rule covers no examples  altering the single rule in the rule set is the only option 
+the operators most likely to score highly are those that can get rid of that noise outcome 
+which is there because the rule has no means of referring to the block above x in e    the
+appropriate operator is therefore addrefs  which can introduce a new deictic reference describing that block  of course  this increases the size of the rule  and so its complexity 
+   
+
+filearning symbolic models of stochastic world dynamics
+
+and in addition it means that the rule no longer applies to e    leaving that example to
+be handled by the default rule  however  the new rule set raises the probabilities of all
+the examples enough to compensate for the increase in complexity  and so it ends up with
+a score of         which is a clear improvement on         this is the highest score
+obtainable at this step  so the algorithm alters the rule set to get 
+puton x   
+
+
+
+y   inhand y   t   table t   z   on z  x 
+
+ 
+
+empty context
+
+      on y  z 
+
+      on y  t 
+default 
+rule 
+      no change
+
+      noise
+
+now that the default rule covers e    explainexamples has something to work with again 
+adding in r  will get rid of all noise  and yield a much improved score of        again 
+this is the biggest improvement that can be made  and the rule set becomes 
+puton x   
+
+
+
+y   inhand y   t   table t   z   on z  x 
+
+ 
+
+empty context
+
+      on y  z 
+
+      on y  t 
+
+ 
+puton x    y   inhand y 
+clear x 
+
+       on y  x 
+default 
+rule 
+      no change
+
+      noise
+
+note that this rule could not have been added earlier because e  was also covered by the
+first rule added  r    before it was specialized  thus  adding r  to the rule set containing r 
+would have knocked r  out  and caused examples e  and e  to be explained as noise by the
+default rule  which would have reduced the overall score   it is  however  possible for a rule
+to knock out another and yet improve the score  it just requires a more complicated set of
+examples  
+learning continues with more search  attempts to apply the rule altering operators to
+the current rules will either make them bigger without changing the likelihood  or will lead
+to the creation of some noise outcomes  dropping either rule will add noise probability to
+the default rule and lower the score  since there are no extra examples to be explained 
+no operator can improve the score  and the search stops at this rule set  it seems like a
+reasonable rule set for this domain  one rule covers what happens when we try to puton a
+clear block  and one describes when we try to puton a block that has another block on it 
+ideally  we would like the first rule to generalize to blocks that have something above them 
+instead of just on  but to notice that we would need examples containing higher stacks 
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+      different versions of the algorithm
+by making small variations in the learnruleset algorithm  we can learn different types of
+rule sets  this will be important for evaluating the algorithm 
+to explore the effects of constants in the rules  we will evaluate three different versions
+of rule learning  propositional  relational  and deictic  for propositional rule learning  explainexamples creates initial trimmed rules with constants but never introduces variables 
+none of the search operators that introduce variables are used  thus  the learned rules
+are guaranteed to be propositionalthey cannot generalize across the identities of specific
+objects  for relational rule learning  variables are allowed in rule action arguments but the
+search operators are not allowed to introduce deictic references  explainexamples creates
+rules with constants that name objects  as long as those constants do not already have a
+variable in the action argument list mapped to them  finally  for deictic rule learning  no
+constants are allowed  we will see that deictic learning provides a strong bias that can
+improve generalization 
+to demonstrate that the addition of noise and deictic references can result in better
+rules  we will learn action models that do not have these enhancements  again  this can
+be done by changing the algorithm in minor ways  to disallow noise  we set the rule noise
+probability to zero  which means that we must then constrain outcome sets to contain
+an outcome for every example where change was observed  rules that cannot express all
+the changes are abandoned  to disallow deictic references  we disable the operators that
+introduce them  and have explainexamples create an empty deictic reference set 
+    learning concepts
+the contexts and deictic references of ndrs can make use of concept predicates and functions as well as primitive ones  these concepts can be specified by hand  or learned using
+a rather simple algorithm  learnconcepts  which uses learnruleset as a subprocedure for
+testing concept usefulness  the algorithm works by constructing increasingly complex concepts  and then running learnruleset and checking what concepts appear in the learned
+rules  the first set is created by applying the operators in figure   to literals built with
+the original language  subsequent sets of concepts are constructed using the literals that
+proved useful on the latest run  concepts that have been tried before  or that are always
+true or always false across all examples  are discarded  the search ends when none of the
+new concepts prove useful 
+as an example  consider the predicate topstack in a simple blocks world  which could be
+discovered as follows  in the first round of learning  the literal on x    x    is used to define
+the new predicate n y    y       on  y    y     which is true when y  is stacked above y   
+assuming this new predicate appears in the learned rules  it can then be used in the second
+round of learning  to define  among others  m z    z       n z    z     clear z     by ensuring
+that z  is clear  this predicate will be true only when z  is the highest block in the stack
+containing z    this notion of topstack can be used to determining what will happen with
+the gripper tries to pick up z    because it descends from above  it will likely grasp the
+block on the top of the stack instead 
+since our concept language is quite rich  overfitting  e g   by learning concepts that can
+be used to identify individual examples  can be a serious problem  we handle this in the
+   
+
+filearning symbolic models of stochastic world dynamics
+
+p x   n    qy p y  
+p x    x     n y       qy   p y    y   
+p x    x     n y       qy   p y    y   
+p x    x     n y    y       p  y    y   
+p x    x     n y    y       p   y    y   
+p   x     p   x     n y       p   y     p   y   
+p   x     p   x    x     n y    y       p   y     p   y    y   
+p   x     p   x    x     n y    y       p   y     p   y    y   
+p   x    x     p   x    x     n y    y       p   y    y     p   y    y   
+p   x    x     p   x    x     n y    y       p   y    y     p   y    y   
+p   x    x     p   x    x     n y    y       p   y    y     p   y    y   
+p   x    x     p   x    x     n y    y       p   y    y     p   y    y   
+f  x    c  n       y f  y     c
+f  x   c  n       y f  y    c
+f  x   c  n       y f  y    c
+figure    operators used to invent a new predicate n  each operator takes as input one or more
+literals  listed on the left  the ps represent old predicates  f represents an old function 
+q can refer to  or   and c is a numerical constant  each operator takes a literal and
+returns a concept definition  these operators are applied to all of the literals used in
+rules in a rule set to create new predicates 
+
+expected way  by introducing a penalty term    c r   to create a new scoring metric
+s    r    s r     c r 
+where c r  is the number of distinct concepts used in the rule set r and   is a scaling
+parameter  this new metric s   is now used by learnruleset  it avoids overfitting by favoring
+rule sets that use fewer derived predicates   note that the fact that s   cannot be factored by
+rule  as s was  does not matter  since the factoring was used only by induceoutcomes and
+learnparameters  neither of which can change the number of concepts used in the relevant
+rule  outcomes contain only primitive predicates  
+    discussion
+the rule set learning challenge addressed in this section is complicated by the need to learn
+the structure of the rules  the numeric parameters associated with the outcome distributions 
+and the definitions of derived predicates for the modeling language  the learnconcepts
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+algorithm is conceptually simple  and performs this simultaneous learning effectively  as we
+will see in the experiments in section     
+the large number of possible search operators might cause concern about the overall
+computational complexity of the learnruleset algorithm  although this algorithm is expensive  the set of search operators were designed to control this complexity by attempting
+keep the number of rules in the current set as small as possible 
+at each step of search  the number of new rule sets that are considered depends on the
+current set of rules  the explainexamples operator creates d new rule sets  where d is the
+number of examples covered by the default rule  since the search starts with a rule set
+containing only the default rule  d is initially equal to the number of training examples 
+however  explainexamples was designed to introduce rules that cover many examples  and
+in practice d grows small quickly  all of the other operators can create o rm  new rule sets 
+where r is the number of rules in the current set and m depends on the specific operator 
+for example  m could be the number of literals that can be dropped from the context of a
+rule by the droplits operator  although m can be large  r stays small in practice because
+the search starts with only the default rule and the complexity penalty favors small rule
+sets 
+because we ensure that the score increases at each search step  the algorithm is guaranteed to converge to a  usually local  optimum  there is not  however  any guarantee about
+how quickly it will get there  in practice  we found that the algorithm converged quickly
+in the test domains  the learnruleset algorithm never took more that    steps and the
+learnconcepts outer loop never cycled more than   times  the entire algorithm never took
+more than six hours to run on a single processor  although significant effort was made to
+cache intermediate computations in the final implementation 
+in spite of this  we realize that  as we scale up to more complex domains  this approach
+will eventually become prohibitively expensive  we plan to handle this problem by developing new algorithms that learn concepts  rules  and rule parameters in an online manner 
+with more directed search operators  however  we leave this more complex approach to
+future work 
+
+   planning
+some of the experiments in section     involve learning models of complex actions where
+true models of the dynamics  at the level of relational rules  are not available for evaluation 
+instead  the learned models are evaluated by planning and executing actions  there are
+many possible ways to plan  in this work  we explore mdp planning 
+a mdp  puterman        is a   tuple  s  a  t  r   s is the set of possible states  a
+is a set of possible actions  and t is a distribution that encodes the transition dynamics of
+the world  t  s   s  a   finally  r is a reward signal that maps every state to a real value 
+a policy or plan  is a  possibly stochastic  mapping from states to actions  the expected
+amount of reward that can be achieved by executing  starting in s is called the value of s
+p
+i
+and defined as v  s    e  
+i    r si      where the si are the states that can be reached
+by  at time i  the discount factor         favors more immediate rewards  the goal
+of mdp planning is to find the policy   that will achieve the most reward over time  this
+   
+
+filearning symbolic models of stochastic world dynamics
+
+optimal policy can be found by solving the set of bellman equations 
+s  v  s    r s    
+
+x
+
+t  s   s   a  v  s    
+
+   
+
+s  s
+
+in our application  the action set a and the state set s are defined by the world we are
+modeling  a rule set r defines the transition model t and the reward function r is defined
+by hand 
+because we will be planning in large domains  it will be difficult to solve the bellman
+equations exactly  as an approximation  we implemented a simple planner based on the
+sparse sampling algorithm  kearns  mansour    ng         given a state s  it creates a tree
+of states  of predefined depth and branching factor  by sampling forward using a transition
+model  computes the value of each node using the bellman equation  and selects the action
+that has the highest value 
+we adapt the algorithm to handle noisy outcomes  which do not predict the next state 
+by estimating the value of the unknown next state as a fraction of the value of staying in
+the same state  i e   we sample forward as if we had stayed in the same state and then scale
+down the value we obtain  our scaling factor was       and our depth and branching factor
+were both four 
+this scaling method is only a guess at what the value of the unknown next state might
+be  because noisy rules are partial models  there is no way to compute the value explicitly 
+in the future  we would like to explore methods that learn to associate values with noise
+outcomes  for example  the value of the outcome where a tower of blocks falls over is
+different if the goal is to build a tall stack of blocks than if the goal is to put all of the
+blocks on the table 
+while this algorithm will not solve hard combinatorial planning problems  it will allow
+us to choose actions that maximize relatively simple reward functions  as we will see in
+the next section  this is enough to distinguish good models from poor ones  moreover  the
+development of first order planning techniques is an active field of research  aips        
+
+   evaluation
+in this section  we demonstrate that the rule learning algorithm is robust on a variety of lownoise domains  and then show that it works in our intrinsically noisy simulated blocks world
+domain  we begin by describing our test domains  and then report a series of experiments 
+    domains
+the experiments we performed involve learning rules for the domains which are briefly
+described in the following sections 
+      slippery gripper
+the slippery gripper domain  inspired by the work of draper et al          is an abstract 
+symbolic blocks world with a simulated robotic arm  which can be used to move the blocks
+around on a table  and a nozzle  which can be used to paint the blocks  painting a block
+might cause the gripper to become wet  which makes it more likely that it will fail to
+manipulate the blocks successfully  fortunately  a wet gripper can be dried 
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+pickup x  y     on x  y    clear x  
+inhand nil  block x   block y    wet 
+
+
+
+pickup x  y     on x  y    clear x  
+inhand nil  block x   block y    wet
+
+
+
+
+inhand x   clear x   inhand nil 
+
+     
+on x  y    clear y  
+
+
+      on x  table   on x  y  
+     no change
+
+inhand x   clear x   inhand nil 
+
+      
+on x  y    clear y  
+
+
+       on x  table   on x  y  
+      no change
+
+pickup x  y     on x  y    clear x  
+inhand nil  block x   table y    wet
+pickup x  y     on x  y    clear x  
+inhand nil  block x   table y    wet
+
+ 
+
+
+ 
+
+
+inhand x   clear x   inhand nil 
+on x  y  
+     no change
+
+    
+
+inhand x   clear x   inhand nil 
+on x  y  
+     no change
+
+    
+
+
+inhand nil  clear y   inhand x  
+
+
+    
+
+
+on x  y   clear x 
+
+puton x  y    clear y   inhand x  
+on x  table   clear x   inhand nil 
+
+block y 
+
+      inhand x 
+
+
+     no change
+
+ 
+puton x  table    inhand x  
+
+ 
+
+     painted x 
+     painted x   wet
+     no change
+
+
+
+     wet
+     no change
+
+paint x    block x  
+
+dry   no context 
+
+on x  table   clear x   inhand nil 
+inhand x 
+     no change
+    
+
+figure    eight relational planning rules that model the slippery gripper domain 
+
+figure   shows the set of rules that model this domain  individual states represent
+world objects as intrinsic constants and experimental data is generated by sampling from
+the rules  in section        we will explore how the learning algorithms of section   compare
+as the number of training examples is scaled in a single complex world 
+      trucks and drivers
+trucks and drivers is a logistics domain  adapted from the      aips international planning
+competition  aips         there are four types of constants  trucks  drivers  locations 
+and objects  trucks  drivers and objects can all be at any of the locations  the locations
+are connected with paths and links  drivers can board trucks  exit trucks  and drive trucks
+between locations that are linked  drivers can also walk  without a truck  between locations
+that are connected by paths  finally  objects can be loaded and unloaded from trucks 
+a set of rules is shown in figure    most of the actions are simple rules which succeed or
+fail to change the world  however  the walk action has an interesting twist  when drivers
+try to walk from one location to another  they succeed most of the time  but some of the
+   
+
+filearning symbolic models of stochastic world dynamics
+
+load o  t  l   
+
+at t  l   at o  l 
+
+
+
+     at o  l   in o  t  
+     no change
+
+unload o  t  l   
+
+in o  t    at t  l 
+
+
+
+     at o  l   in o  t  
+     no change
+
+board d  t  l   
+
+at t  l   at d  l   empty t  
+
+
+
+     at d  l   driving d  t    empty t  
+     no change
+
+disembark d  t  l   
+
+at t  l   driving d  t  
+
+
+
+     driving d  t    at d  l   empty t  
+     no change
+
+drive t  f l  t l  d   
+
+driving d  t    at t  f l   link f l  t l 
+
+
+
+     at t  t l   at t  f l 
+     no change
+
+
+      at d  t l   at d  f l 
+
+walk d  f l  t l   
+
+at d  f l   path f l  t l 
+      pick x s t  path f l  x 
+at d  x   at d  f l 
+
+figure    six rules that encode the world dynamics for the trucks and drivers domain 
+time they arrive at a randomly chosen location that is connected by some path to their
+origin location 
+the representation presented here cannot encode this action efficiently  the best rule
+set has a rule for each origin location  with outcomes for every location that the origin is
+linked to  extending the representation to allow actions like walk to be represented as a
+single rule is an interesting area for future work 
+like in the slippery gripper domain  individual states represent world objects as intrinsic
+constants and experimental data is generated by sampling from the rules  the trucks and
+drivers dynamics is more difficult to learn but  as we will see in section        can be learned
+with enough training data 
+      simulated blocks world
+to validate the rule extensions in this paper  section     presents experiments in a rigid
+body  simulated physics blocks world  this section describes the logical interface to the
+simulated world  a description of the extra complexities inherent in learning the dynamics
+of this world was presented in section   
+we now define the interface between the symbolic representation that we use to describe
+action dynamics and a physical domain such as the simulated blocks world  the perceptual
+system produces states that contain skolem constants  the logical language includes the
+binary predicate on x  y   which is defined as x exerts a downward force on y and obtained
+by querying the internal state of the simulator  and unary typing predicates table and block 
+the actuation system translates actions into sequences of motor commands in the simulator 
+actions always execute  regardless of the state of the world  we define two actions  both
+have parameters that allow the agent to specify which objects it intends to manipulate  the
+pickup x  action centers the gripper above x  lowers it until it hits something  grasps  and
+raises the gripper  analogously  the puton x  action centers the gripper above x  lowers
+until it encounters pressure  opens it  and raises it 
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+by using a simulator we are sidestepping the difficult pixels to predicates problem that
+occurs whenever an agent has to map domain observations into an internal representation 
+primitive predicates defined in terms of the internal state of the simulation are simpler and
+cleaner than observations of the real world would be  they also make the domain completely
+observable  a prerequisite for our learning and planning algorithms  choosing the set of
+predicates to observe is important  it can make the rule learning problem very easy or very
+hard  and the difficulty of making this choice is magnified in richer settings  the limited
+language described above balances these extremes by providing on  which would be difficult
+to derive by other means  but not providing predicates such as inhand and clear  that can
+be learned 
+    experiments
+this section describes two sets of experiments  first  we compare the learning of deictic 
+relational  and propositional rules on the slippery gripper and trucks and drivers data  these
+domains are modeled by planning rules  contain intrinsic constants  and are not noisy  and
+thus allow us to explore the effect of deictic references and constants in the rules directly 
+then  we describe a set of experiments that learns rules to model data from the simulated
+blocks world  this data is inherently noisy and contains skolem constants  as a result  we
+focus on evaluating the full algorithm by performing ablation studies that demonstrate that
+deictic references  noise outcomes  and concepts are all required for effective learning 
+all of the experiments use examples   s  a  s     e  generated by randomly constructing
+a state s  randomly picking the arguments of the action a  and then executing the action in
+the state to generate s    the distribution used to construct s is biased to guarantee that 
+in approximately half of the examples  a has a chance to change the state  this method
+of data generation is designed to ensure that the learning algorithms will always have data
+which is representative of the entire model that they should learn  thus  these experiments
+ignore the problems an agent would face if it had to generate data by exploring the world 
+      learning rule sets with no noise
+when we know the model used to generate the data  we can evaluate our model with respect
+to a set of similarly generated test examples e by calculating the average variational distance
+between the true model p and the estimate p  
+v d p  p    
+
+  x
+ p  e   p  e    
+ e  ee
+
+variational distance is a suitable measure because it clearly favors similar distributions 
+and yet is well defined when a zero probability event is observed   as can happen when
+a non noisy rule is learned from sparse data and does not have as many outcomes as it
+should  
+these comparisons are performed for four actions  the first two  paint and pickup 
+are from the slippery gripper domain  while the second two  drive and walk  are from the
+trucks and drivers domain  each action presents different challenges for learning  paint
+is a simple action where more than one outcome can lead to the same successor state  as
+described in section       pickup is a complex action that must be represented by more
+   
+
+filearning symbolic models of stochastic world dynamics
+
+the paint action
+   
+    
+
+the pickup action
+    
+
+propositional
+relational
+deictic
+
+variational distance
+
+variational distance
+
+    
+
+   
+    
+   
+    
+ 
+
+   
+    
+   
+    
+   
+    
+ 
+
+                                       
+training set size
+
+                                       
+training set size
+
+the walk action
+   
+    
+
+the drive action
+   
+
+propositional
+relational
+deictic
+
+variational distance
+
+variational distance
+
+    
+
+propositional
+relational
+deictic
+
+   
+    
+   
+    
+ 
+
+    
+
+propositional
+relational
+deictic
+
+   
+    
+ 
+
+                                   
+training set size
+
+                                   
+training set size
+
+figure     variational distance as a function of the number of training examples for propositional  relational  and deictic rules  the results are averaged over ten trials of
+the experiment  the test set size was     examples 
+
+than one planning rule  drive is a simple action that has four arguments  finally  walk
+is a complicated action uses the path connectivity of the world in its noise model for lost
+pedestrians  the slippery gripper actions were performed in a world with four blocks  the
+trucks and driver actions were performed in a world with two trucks  two drivers  two
+objects  and four locations 
+we compare three versions of the algorithm  deictic  which includes the full rules language and does not allow constants  relational  which allows variables and constants but
+no deictic references  and propositional  which has constants but no variables  figure   
+shows the results  the relational learning consistently outperforms propositional learning 
+this implies that the variable abstractions are useful  in all cases except for the walk action 
+the deictic learner outperforms the relational learner  this result implies that forcing the
+rules to only contain variables is preventing overfitting and learning better models  the
+results on the walk action are more interesting  here  the deictic learner cannot actually
+represent the optimal rule  it requires a noise model that is too complex  the deictic learner
+quickly learns the best rule it can  but the relational and propositional learners eventually
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+learning in the simulated blocksworld
+  
+
+learned concepts
+hand engineered concepts
+without noise outcomes
+with a restricted language
+
+total reward
+
+  
+  
+  
+  
+ 
+ 
+   
+
+   
+
+   
+
+   
+   
+   
+training set size
+
+   
+
+   
+
+    
+
+figure     the performance of various action model variants as a function of the number of training
+examples  all data points were averaged over five planning trials for each of the three
+rule sets learned from different training data sets  for comparison  the average reward
+for performing no actions is      and the reward obtained when a human directed the
+gripper averaged      
+
+learn better rule sets because they can use constants to more accurately model the walkers
+moving to random locations 
+in these experiments  we see that variable abstraction helps to learn from less data  and
+that deictic rules  which abstract the most aggressively  perform the best  as long as they
+can represent the model to be learned  in the next section  we will only consider deictic
+rules  since we will be working in a domain with simulated perception that does not have
+access to objects identities and names them using skolem constants 
+      learning in the blocks world simulator
+our final experiment demonstrates that both noise outcomes and complicated concepts are
+necessary to learn good action models for the blocks world simulator 
+when the true model is not known  we evaluate the learned model by using it to plan
+and estimating the average reward it gets  the reward function we used in simulated blocks
+world was the average height of the blocks in the world  and the breadth and depth of the
+search for the sampling planner were both four  during learning  we set  to     and pmin
+to           
+we tested four action model variants  varying the training set size  the results are
+shown in figure     the curve labeled learned concepts represents the full algorithm as
+presented in this paper  its performance approaches that obtained by a human expert 
+and is comparable to that of the algorithm labeled hand engineered concepts that did not
+   
+
+filearning symbolic models of stochastic world dynamics
+
+do concept learning  but was  instead  provided with hand coded versions of the concepts
+clear  inhand  inhand nil  above  topstack  and height  the concept learner discovered all of
+these  as well as other useful predicates  e g   p x  y     clear y   on y  x   which we will
+call onclear  this could be why its action models outperformed the hand engineered ones
+slightly on small training sets  in domains less well studied than the blocks world  it might
+be less obvious what the useful concepts are  the concept discovery technique presented here
+should prove helpful 
+the remaining two model variants obtained rewards comparable to the reward for doing
+nothing at all   the planner did attempt to act during these experiments  it just did a
+poor job   in one variant  we used the same full set of predefined concepts but the rules
+could not have noise outcomes  the requirement that they explain every action effect led
+to significant overfitting and a decrease in performance  the other rule set was given the
+traditional blocks world language  which does not include above  topstack  or height  and
+allowed to learn rules with noise outcomes  we also tried a full language variant where noise
+outcomes were allowed  but deictic references were not  the resulting rule sets contained only
+a few very noisy rules  and the planner did not attempt to act at all  the poor performance
+of these ablated versions of our representation shows that all three of our extensions are
+essential for modeling the simulated blocks world domain 
+a human agent commanding the gripper to solve the same problem received an average
+total reward of       which was below the theoretical maximum due to unexpected action
+outcomes  thus  the nd rules are performing at near human levels  suggesting that this
+representation is a reasonable one for this problem  it also suggests that our planning
+approximations and learning bounds are not limiting performance  traditional rules  which
+face the challenge of modeling all the transitions seen in the data  have a much larger
+hypothesis space to consider while learning  it is not surprising that they generalize poorly
+and are consistently out performed by the ndrs 
+informally  we can also report that ndr algorithms execute significantly faster than the
+traditional ones  on one standard desktop pc  learning ndrs takes minutes while learning
+traditional rules can take hours  because noisy deictic action models are generally more
+compact than traditional ones  they contain fewer rules with fewer outcomes  planning is
+much faster as well 
+to get a better feel for the types of rules learned  here are two interesting rules produced
+by the full algorithm 
+
+pickup x   
+
+y   onclear x  y   z   on y  z  
+t   table t 
+
+
+
+inhand nil  size x     
+
+       on y  z 
+      on x  y 
+
+
+      on x  y   on y  t   on y  z 
+
+this rule applies when the empty gripper is asked to pick up a small block x that sits on
+top of another block y  the gripper grabs both with a high probability 
+
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+
+puton x   
+
+y   topstack y  x   z   inhand z  
+t   table t 
+
+size y     
+
+
+      
+
+     
+
+     
+
+
+
+     
+
+
+
+on z  y 
+on z  t 
+on z  t   on y  t   on y  x 
+noise
+
+this rule applies when the gripper is asked to put its contents  z  on a block x which is
+inside a stack topped by a small block y  because placing things on a small block is chancy 
+there is a reasonable probability that z will fall to the table  and a small probability that
+y will follow 
+
+   discussion
+in this paper  we developed a probabilistic action model representation that is rich enough
+to be used to learn models for planning in a physically simulated blocks world  this is a
+first step towards defining representations and algorithms that will enable learning in more
+complex worlds 
+    related work
+the problem of learning deterministic action models is well studied  most work in this
+area  shen   simon        gil              wang        has focused on incrementally
+learning planning operators by interacting with simulated worlds  however  all of this work
+assumes that the learned models are completely deterministic 
+oates and cohen        did the earliest work on learning probabilistic planning operators  their rules are factored and can apply in parallel  however  their representation
+is strictly propositional  and allows each rule to contain only a single outcome  in our
+previous work  we developed algorithms for learning probabilistic relational planning operators  pasula  zettlemoyer    kaelbling         unfortunately  neither of these probabilistic
+algorithms are robust enough to learn in complex  noisy environments like the simulated
+blocks world 
+one previous system that comes close to this goal is the trail learner  benson        
+trail learns an extended version of horn clauses in noisy environments by applying inductive logic programming  ilp  learning techniques that are robust to noise  trail
+introduced deictic references that name objects based on their functional relationships to
+arguments of the actions  our deictic references  with their exists unique quantification
+semantics  are a generalization of bensons original work  moreover  trail models continuous actions and real valued fluents  which allows it to represent some of the most complex
+models to date  including the knowledge required to pilot a realistic flight simulator  however  the rules that trail learns are in a limited probabilistic representation that can not
+represent all possible transition distributions  trail also does not include any mechanisms
+for learning new predicates 
+   
+
+filearning symbolic models of stochastic world dynamics
+
+all of this work on action model learning has used different versions of greedy search for
+rule structure learning  which is closely related to and inspired by the learning with version
+spaces of mitchell        and later ilp work  lavrac   dzeroski         in this paper 
+we also explore  for the first time  a new way of moving through the space of rule sets by
+using the noise rule as an initial rule set  we have found that this approach works well in
+practice  avoiding the need for a hand selected initial rule set and allowing our algorithm
+to learn in significantly more complex environments 
+as far as we know  no work on learning action models has explored learning concepts 
+in the ilp literature  recent work  assche  vens  blockeel    dzeroski        has shown
+that adding concept learning to decision tree learning algorithms improves classification
+performance 
+outside of action learning  there exists much related research on learning probabilistic
+models with relational or logical structure  a complete discussion is beyond the scope
+of this paper  but we present a few highlights  some work learns representations that are
+relational extension of bayesian networks  for a comprehensive example  see work by getoor
+        other work extends research in ilp by incorporating probabilistic dependencies 
+for example  see the wide range of techniques presented by kersting         additionally 
+there is recent work on learning markov logic networks  richardson   domingos        kok
+  domingos         which are log linear models with features that are defined by first order
+logical formulae  the action models and action model learning algorithms in this paper are
+designed to represent action effects  a special case of the more general approaches listed
+above  as we have discussed in section    by tailoring the representation to match the
+model to be learnt  we simplify learning 
+finally  let us consider work related to the ndr action model representation  the most
+relevant approach is ppddl  a representation language for probabilistic planning operators
+and problem domains  younes   littman         the ndr representation was partially
+inspired by ppddl operators but includes restrictions to make it easier to learn and extensions  such as noise outcomes  that are required to effectively model the simulated blocks
+world  in the future  the algorithms in this paper could be extended to learn full ppddl
+rules  also  ppddl planning algorithms  for examples  see the papers from recent planning
+competitions  could be adapted to improve the simple planning presented in section    in a
+more general sense  ndrs are related to all the other probabilistic relational representations
+that are designed to model dependencies across time  for examples  see work on relational
+dynamic bayesian networks  sanghai  domingos    weld         which are a specialization of prms  and logical hidden markov models  kersting  raedt    raiko         which
+come from the ilp research tradition  these approaches make a different set of modeling
+assumptions that are not as closely tied to the planning representations that ndr models
+extend 
+    future and ongoing work
+there remains much to be done in the context of learning probabilistic planning rules 
+first of all  it is very likely that when this work is applied to additional domains  such as
+more realistic robotic applications or dialogue systems  the representation will need to be
+adapted  and the search operators adjusted accordingly  some possible changes mentioned
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+in this article include allowing the rules to apply in parallel  so different rules could apply to
+different aspects of the state  and extending the outcomes to include quantifiers  so actions
+like walk  from the trucks and drivers domain in section        could be described using a
+single rule  a more significant change we intend to pursue is expanding this approach to
+handle partial observability  possibly by incorporating some of the techniques from work on
+deterministic learning  amir         we also hope to make some changes that will make
+using the rules easier  such as associating values with the noise outcomes to help a planner
+decide whether they should be avoided 
+a second research direction involves the development of new algorithms that learn probabilistic operators in an incremental  online manner  similar to the learning setup in the
+deterministic case  shen   simon        gil        wang         this has the potential to
+scale our approach to larger domains  and will make it applicable even in situations where it
+is difficult to obtain a set of training examples that contains a reasonable sampling of worlds
+that are likely to be relevant to the agent  this line of work will require the development
+of techniques for effectively exploring the world while learning a model  much as is done in
+reinforcement learning  in the longer term  we would like these online algorithms to learn
+not only operators and concept predicates  but also useful primitive predicates and motor
+actions 
+
+acknowledgments
+this material is based upon work supported in part by the defense advanced research
+projects agency  darpa   through the department of the interior  nbc  acquisition
+services division  under contract no  nbchd        and in part by darpa grant no 
+hr                
+
+references
+agre  p     chapman  d          pengi  an implementation of a theory of activity  in
+proceedings of the sixth national conference on artificial intelligence  aaai  
+aips         international planning competition  http   www dur ac uk d p long competition html 
+aips         international planning competition  http   www ldc usb ve bonet ipc   
+amir  e          learning partially observable deterministic action models  in proceedings
+of the nineteenth international joint conference on artificial intelligence  ijcai  
+assche  a  v   vens  c   blockeel  h     dzeroski  s          a random forest approach to
+relational learning  in proceedings of the icml workshop on statistical relational
+learning and its connections to other fields 
+benson  s          learning action models for reactive autonomous agents  ph d  thesis 
+stanford university 
+bertsekas  d  p          nonlinear programming  athena scientific 
+blum  a     langford  j          probabilistic planning in the graphplan framework  in
+proceedings of the fifth european conference on planning  ecp  
+   
+
+filearning symbolic models of stochastic world dynamics
+
+boutilier  c   reiter  r     price  b          symbolic dynamic programming for first order
+mdps  in proceedings of the seventeenth international joint conference on artificial
+intelligence  ijcai  
+boyen  x     koller  d          tractable inference for complex stochastic processes  in
+proceedings of the fourteenth annual conference on uncertainty in ai  uai  
+brooks  r  a          intelligence without representation  artificial intelligence     
+draper  d   hanks  s     weld  d          probabilistic planning with information gathering
+and contingent execution  in proceedings of the second international conference on
+ai planning systems  aips  
+edelkamp  s     hoffman  j          pddl     the language for the classical part of the  th
+international planning competition  technical report      albert ludwigs universitat 
+freiburg  germany 
+fikes  r  e     nilsson  n  j          strips  a new approach to the application of theorem
+proving to problem solving  artificial intelligence       
+getoor  l          learning statistical models from relational data  ph d  thesis  stanford 
+gil  y          efficient domain independent experimentation  in proceedings of the tenth
+international conference on machine learning  icml  
+gil  y          learning by experimentation  incremental refinement of incomplete planning domains  in proceedings of the eleventh international conference on machine
+learning  icml  
+guestrin  c   koller  d   parr  r     venkataraman  s          efficient solution algorithms
+for factored mdps  journal of artificial intelligence research  jair      
+kearns  m   mansour  y     ng  a          a sparse sampling algorithm for near optimal
+planning in large markov decision processes  machine learning  ml         
+kersting  k          an inductive logic programming approach to statistical relational
+learning  ios press 
+kersting  k   raedt  l  d     raiko  t          logical hidden markov models  journal of
+artificial intelligence research  jair      
+khan  k   muggleton  s     parson  r          repeat learning using predicate invention 
+in international workshop on inductive logic programming  ilp  
+kok  s     domingos  p          learning the structure of markov logic networks  in proceedings of the twenty second international conference on machine learning  icml  
+lavrac  n     dzeroski  s          inductive logic programming techniques and applications  ellis horwood 
+mitchell  t  m          generalization as search  artificial intelligence        
+oates  t     cohen  p  r          searching for planning operators with context dependent
+and probabilistic effects  in proceedings of the thirteenth national conference on
+artificial intelligence  aaai  
+ode         open dynamics engine toolkit   http   opende sourceforge net 
+   
+
+fipasula  zettlemoyer    pack kaelbling
+
+pasula  h   zettlemoyer  l     kaelbling  l          learning probabilistic relational planning rules  in proceedings of the fourteenth international conference on automated
+planning and scheduling  icaps  
+puterman  m  l          markov decision processes  john wiley and sons  new york 
+richardson  m     domingos  p          markov logic networks  machine learning  ml  
+   
+sanghai  s   domingos  p     weld  d          relational dynamic bayesian networks 
+journal of artificial intelligence research  jair      
+shen  w  m     simon  h  a          rule creation and rule learning through environmental exploration  in proceedings of the eleventh international joint conference on
+artificial intelligence  ijcai  
+wang  x          learning by observation and practice  an incremental approach for planning operator acquisition  in proceedings of the twelfth international conference on
+machine learning  icml  
+yoon  s   fern  a     givan  r          inductive policy selection for first order markov
+decision processes  in proceedings of the eighteenth conference on uncertainty in
+artificial intelligence  uai  
+younes  h  l  s     littman  m  l          ppddl     an extension to pddl for expressing
+planning domains with probabilistic effects  school of computer science  carnegie
+mellon university  technical report cmu cs        
+zettlemoyer  l   pasula  h     kaelbling  l          learning probabilistic relational planning rules  mit tech report 
+
+   
+
+fi

@@ -1,0 +1,1702 @@
+journal of artificial intelligence research                  
+
+submitted        published      
+
+modelling observation correlations for active exploration and
+robust object detection
+javier velez
+garrett hemann
+albert s  huang
+
+velezj at mit edu
+ghemann at alum mit edu
+ashuang at mit edu
+
+mit computer science and artificial intelligence laboratory
+cambridge  ma  usa
+
+ingmar posner
+
+ingmar at robots ox ac uk
+
+mobile robotics group
+dept  of engineering science  oxford university
+oxford  uk
+
+nicholas roy
+
+nickroy at csail mit edu
+
+mit computer science and artificial intelligence laboratory
+cambridge  ma  usa
+
+abstract
+today  mobile robots are expected to carry out increasingly complex tasks in multifarious  realworld environments  often  the tasks require a certain semantic understanding of the workspace 
+consider  for example  spoken instructions from a human collaborator referring to objects of interest  the robot must be able to accurately detect these objects to correctly understand the instructions 
+however  existing object detection  while competent  is not perfect  in particular  the performance
+of detection algorithms is commonly sensitive to the position of the sensor relative to the objects in
+the scene 
+this paper presents an online planning algorithm which learns an explicit model of the spatial
+dependence of object detection and generates plans which maximize the expected performance of
+the detection  and by extension the overall plan performance  crucially  the learned sensor model
+incorporates spatial correlations between measurements  capturing the fact that successive measurements taken at the same or nearby locations are not independent  we show how this sensor
+model can be incorporated into an efficient forward search algorithm in the information space of
+detected objects  allowing the robot to generate motion plans efficiently  we investigate the performance of our approach by addressing the tasks of door and text detection in indoor environments
+and demonstrate significant improvement in detection performance during task execution over alternative methods in simulated and real robot experiments 
+
+   introduction
+years of steady progress in mapping and navigation techniques for mobile robots have made it
+possible for autonomous agents to construct accurate geometric and topological maps of relatively
+complex environments and to robustly navigate within them  e g   newman  sibley  smith  cummins  harrison  mei  posner  shade  schroeter  murphy  churchill  cole    reid         lately 
+mobile robots have also begun to perform high level tasks such as the following of natural language
+instructions or an interaction with a particular object  requiring a relatively sophisticated interpretation by an agent of its workspace  some of the recent literature therefore focuses on augmenting
+c
+    
+ai access foundation  all rights reserved 
+
+fiv elez   h emann   h uang   p osner   roy
+
+ a 
+
+ b 
+
+figure    a traditional geometric environment map  a  represented as a simple two dimensional
+occupancy grid with regions that are free space  cyan  and not  red  useful for navigation
+and localization   b  the geometric map augmented with semantic information about the
+identity  structure and location of objects in the world allowing for richer interactions
+between agent and workspace 
+
+metric maps with higher order semantic information such as the location and identity of objects in
+the workspace  see fig     
+to this end  advances in both vision  and laser based object detection and recognition have
+been leveraged to extract semantic information from raw sensor data  e g   posner  cummins   
+newman        douillard  fox    ramos        martinez mozos  stachniss    burgard       
+anguelov  koller  parker    thrun         commonly  the output of such a detection system is
+accepted prima facie  possibly with some threshold on the estimated sensor error  a consequence
+of directly using the results of an object detector is that the quality of the resulting map strongly
+depends on the shortcomings of the object detector  vision based object detection  for example  is
+oftentimes plagued by significant performance degradation caused by a variety of factors including
+a change of aspect compared to that encountered in the training data  changes in illumination and  of
+course  occlusion  e g   coates   ng        mittal   davis         both aspect and occlusions can
+be addressed naturally by a mobile robot  the robot can choose the location of its sensors carefully
+before acquiring the data and performing object detection  thereby improving the robustness of the
+detection process by specifically counteracting known detector issues  rather than placing the burden of providing perfect detections on the detector itself  the robot can act to improve its perception 
+rarely  however  is this ability of a mobile robot actually exploited when building a semantic map 
+in this paper  we present an online planning algorithm for robot motion that explicitly incorporates a model of the performance of an object detector  we primarily address the problem in the
+context of a robot exploring an unknown environment with the goal of building a map accurately
+labeled with the location of semantic objects of interest  here  in particular  we consider doors
+and textual signs  however  our approach can be applied to any problem where the robot must plan
+trajectories that depend on the location of objects and landmarks of interest in an environment  we
+show how our planning approach weighs the benefit of increasing its confidence about a potential
+semantic entity against the cost of taking a detour to a succession of more suitable vantage point 
+fig    gives a cartoon illustration of the problem  where a robot encounters a possible new object
+   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+ a 
+
+ b 
+
+ c 
+
+figure    a conceptual illustration of  a  the robot at viewpoint x while following the original
+trajectory  bold line  towards the goal  red star    b  the perception field for a particular
+object detector centered around an object hypothesis  and  c  an alternative path  bold
+dash dotted line  along a more informative route  cell shadings indicate the relative value
+of observations taken from each cell in terms of mutual information  lighter values
+indicate lower mutual information and therefore desirable vantage points  the challenge
+is not only learning how the mutual information varies spatially  but also capturing how
+the mutual information at each cell changes with each new measurement 
+
+while executing a path to a goal  based on the expected information available from possible vantage
+points  the robot may decide that the original path provided an accurate model of the object  or it
+may choose to modify its path to reduce the possibility of errors in the object model 
+we make two primary contributions in this paper  firstly  we describe a new sensor model
+that uses a mixture of gaussian processes not only to model the performance of the object detection system as a function of the robots relative position to the detected features but to also learn
+online a model of how sensor measurements are spatially correlated  typical estimation and planning algorithms assume that sensor measurements are conditionally independent of each other given
+knowledge of the robots position  but this assumption is clearly incorrect  properties of the environment introduce a strong correlation between sensor measurements  rather than estimate all
+possible hidden variables that capture the full sensor model to preserve conditional independence 
+we explicitly model spatial correlation of measurements and use this correlation model to estimate the mutual information between measurements taken at different locations  we then use the
+mutual information both to bias the random sampling strategy during trajectory generation and to
+evaluate the expected cost of each sampled trajectory  secondly  we show how to incorporate the
+learned sensor model into a forward search process using the posterior belief distribution  pbd 
+algorithm  he  brunskill    roy              to perform computationally efficient deep trajectory
+planning  the pbd approximation allows us to compute the expected costs of sensing trajectories
+without explicitly integrating over the possible sensor measurements 
+while our work is not the first result in actively controlling a sensor to improve its accuracy 
+previous work has largely ignored motion cost and has typically assumed observations are conditionally independent given the sensor position  inspired by recent progress in forward search for
+planning under uncertainty  we demonstrate a system which allows us to efficiently find robust observation plans  this paper builds on our previous work presented at icaps       velez  hemann 
+huang  posner    roy        and provides several substantial extensions  specifically  we describe
+a significantly richer sensor model  extend the approach to an improved planning algorithm and ad   
+
+fiv elez   h emann   h uang   p osner   roy
+
+dress an additional object of interest  human readable text  we demonstrate our overall approach
+using a real robot as well as simulation studies 
+our exposition begins with the problem formulation of planning trajectories to improve object
+detection in section    in section   we describe the specific sensor model and how to characterize
+sensor models using mutual information  section   then gives two different approaches to learning
+how the sensor models vary spatially  and how observations are correlated spatially  we describe
+our planning algorithm and how the sensor model is incorporated into the system in section    we
+follow with a description of the implementation for efficient planning using our sensor models in
+section    section   describes the object detectors used for our results  section   shows simulation
+results of how our approach improves object detection compared to other approaches and section  
+shows the performance of our system in real world trials  in sections    and    we conclude with a
+discussion of related work and future directions 
+
+   problem formulation
+consider a robot following a particular trajectory towards a goal in an environment with objects of
+interest at unknown locations  for example  a rescue robot looking for people in a first responder
+scenario  traditionally  an object detector can be used at waypoints along the trajectory where a
+detection is either accepted into the map or rejected based on simple detector thresholds  however 
+the lack of introspection of this approach regarding both the confidence of the object detector and
+the quality of the data gathered can lead to an unnecessary acceptance of spurious detections  most
+systems simply discard lower confidence detections and have no way to improve the estimate with
+further  targeted measurements  in contrast  we would like the robot to modify its motion to both
+minimize total travel cost and the cost of errors when deciding whether or not to add newly observed
+objects to the map 
+let us represent the robot as a point x  r   so     where so    denotes the special orthogonal group representing orientation and r  represents the location in  d euclidean space  without
+loss of generality  we can express a robot trajectory as a set of waypoints x  k   with an associated
+motion cost cmot  x  k   for the sum total travel between waypoints x  and xk   if the robot has a
+prior map of the environment and is planning a path to some pre specified goal  then computing a
+minimum cost path x  k is a well understood motion planning problem 
+as the robot moves  it receives output from its object detector that gives rise to a belief over
+whether a detected object truly exists at the location indicated    we can model the presence of the
+ith object at some location  ui   vi   with the random variable yi   object  no object   as the system
+runs  the object detector will fire and give rise to objects yi at given locations which our system
+must then reason about and qualify as being either genuine objects or false firings from the object
+detector 
+let us define a decision action ai   accept  reject   where the detected object is either accepted
+into the map  the detection is determined to correspond to a real object  or rejected  the detection is
+determined to be spurious   let us also define a cost dec     accept  reject  object  no object    
+r for a correct or incorrect accept or reject decision  we cannot know the true cost of the decisions
+ ai   because we ultimately do not know the true state of objects in the environment  we therefore
+   we assume the robot knows its own location  and has a sufficiently well calibrated camera to determine the location
+of the object in the map  in this work  the uncertainty is whether or not an object of a specific type is present at a
+given location  u  v  
+
+   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+infer a distribution over the state of each object p y  and generate a plan to minimize the expected
+cost e dec   of individual decision actions given the distribution over objects 
+we formulate the planning problem as choosing a plan   comprised of a sequence of waypoints
+and decision actions      x  k  a  q   for a path of length k and q hypothesized objects to
+minimize the total travel cost along the trajectory and the expected costs of the decision actions at
+the end of the trajectory  such that the optimal plan   is given by
+
+    arg min cmot  x  k     cdet  x  k   a   
+   
+x  k  a
+
+where
+
+cdet  x  k   a    ey x  k dec  a  y   
+
+   
+
+where ey x  k    denotes the expectation with respect to the robots knowledge regarding the object 
+y  after having executed path x  k   the number of hypothesized objects  q  is the number of possible objects the detector fired on after traversing the entire trajectory and is not known beforehand 
+note that the planning problem of computing   is often formulated as a partially observable
+markov decision process or pomdp  sondik        kaelbling  littman    cassandra         but
+the pomdp representation will grow with combinatorial complexity in the presence of multiple
+detections  furthermore  pomdp solutions assume stationary and markov model parameters  our
+sensor model is non stationary and explicitly non markov because we do not want to represent the
+environmental features that are needed to support a non markov sensor model  since our approach
+uses a sensor model that adapts with each successive observation  a new pomdp model would
+need to be constructed and solved after each observation  lastly  an explicit pomdp model would
+require the plan to take into account all possible observations the robot might encounter as it carries
+out the motion trajectory  more precisely  the expected cost of the plan must be computed with respect to all possible observations and objects  rather than just the object distributions  we avoid the
+resulting computational complexity by using a forward search algorithm similar to forward search
+approximation techniques for solving pomdps  ross  pineau  paquet    chaib draa         which
+are known to scale well in the presence of complex representations  we also avoid explicitly computing the observation distribution during planning through the use of an approximation technique
+known as the posterior belief distribution  pbd  algorithm  adapted to our sensor model 
+
+   a sensor model for object detection
+in order to compute the expected cost of decision actions  we must estimate the probability of objects existing in the world given the observations we might see while executing the motion plan 
+we therefore require a probabilistic model of the object detector that allows us to infer the distribution over the object given measurements  p y z   we know that sensor characteristics vary as the
+robot moves around the object because of interactions with the environment  hence we make this
+relationship explicit by writing the posterior as p y z  x  to include the viewpoint x 
+furthermore  a measurement  z  taken from a particular viewpoint x consists of the output
+of the object detector  assumed to be a real number indicating the confidence of the detector that
+an object exists  the distribution over the range of confidence measurements is dependent on a
+particular object detector and is captured by the random variable z defined over the continuous
+range  zmin   zmax    at every waypoint x the posterior distribution over y can be expressed as
+p y z  x    r
+
+p z y  x p y 
+ 
+yy p z y  x p y 
+   
+
+   
+
+fiv elez   h emann   h uang   p osner   roy
+
+ a 
+
+ b 
+
+ c 
+
+figure    different graphical models representing the observation function   a  a naive bayes
+approximation which assumes every observation z is conditionally independent given
+knowledge of the object y   b  the true model which assumes observations are independent given knowledge of both the environment  and the object y   c  the model
+employed here  in which the correlations are approximated by way of a mixture model in
+the input space of waypoints  x  r   so      equ     
+
+where p z y  x  denotes the likelihood  for every possible state of y   of observing a particular
+detector confidence at x   the expression would seem to require p y x   but y is independent of the
+waypoint until measurement z is received  
+    the observation model
+observations z that are directly produced by a physical device  such as a camera  are often treated
+as conditionally independent given the state of the robot  see fig   a   however  the observations
+are not independent given knowledge only of the current state  but in fact are independent given
+both the state y and environment  as shown in fig    b   if one  or both  of these variables are
+unknown  then the measurements are no longer first order markov but are in fact correlated  this
+can be seen more intuitively by noting that if the robot were stationary  aimed at a static scene  we
+would not expect the response of the object detector on successive images to be independent  we
+anticipate observations from the object detector to be extremely correlated  with the expectation that
+no new information would be gained after more than a handful of images 
+to correct our observation model we maintain a history of observations  as more waypoints are
+visited  knowledge regarding an object can be integrated recursively  let t k denote a trajectory of
+k waypoint observation pairs obtained in sequence such that t k     x    z       x    z               xk   z k    
+knowledge gained at each step along the trajectory can be integrated into the posterior distribution
+over y such that
+
+k
+
+t k    xk   z k    t k   
+
+   
+
+k
+
+   
+
+k
+
+k
+
+p y z   x      p y z   x   t
+ 
+
+k 
+
+  
+
+p z k  y  xk   t k   p y t k   
+ 
+p z k  xk   t k   
+
+   
+
+where z k is the k th observation  which depends not only on the current waypoint but also on the
+history of measurements and waypoints t k    the denominator in equ    serves to moderate the
+   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+influence of the measurement likelihood on the posterior based on any correlations existing between
+observations taken along the trajectory 
+the difficulty with the model in equ    is that the sensor model p z k  y  xk   t k    is difficult
+to arrive at  depending as it does on the history of measurements  furthermore  k can be arbitrarily
+large  so we need a model that predicts observations given an infinite history of observations  we
+will describe this new sensor model in section   
+    perception fields
+before developing a new sensor model  we first need a way to examine how any sensor model
+captures the effect of measurements on our posterior belief of the object y  and we use the reduction
+in uncertainty relative to the current belief from the next observation  given a waypoint xk and the
+trajectory t k  visited thus far  the reduction in uncertainty is captured by the mutual information
+between the object state y and the observation z k received at xk such that
+i y  z k   xk   t k     
+h y   t k     h y  z k   xk   t k    
+
+   
+
+where h y   t k    and h y  z k   xk   t k    denote the entropy and the conditional entropy  respectively  we drop the xk from the entropy since the distribution of y is independent of the robot
+being at xk without the corresponding observation z k    thus  h y   t k    expresses the certainty of the current belief over whether the object exists given the trajectory thus far  unswayed by
+any new measurements  at every time step  this term is constant for every waypoint considered and
+is therefore disregarded  the conditional entropy in equ    can be expanded in terms of the posterior over the state of the hidden variable y given the previous trajectory t k  and an additional
+measurement taken at xk   p y z k   xk   t k     c f  equs    and     and the likelihood of z k taking
+a particular value conditioned on the trajectory thus far and whether an object viewed from xk is
+present or not  p z k  xk   t k    
+h y  z k   xzk   t k     
+
+
+
+p z xk   t k   h y  z  xk   t k     
+
+   
+
+z
+
+ z  xk   t k    is computed using the sensor model p y z k   xk   t k    given in equ    
+
+where h y
+which is a function of our belief over y after traversing waypoint observation trajectory t k   the
+expected reduction in uncertainty given by the conditional entropy values for all waypoints in the
+robots workspace form the perception field  for a particular object hypothesis  see fig    b    we
+will use the perception field induces by a sensor model in two ways  firstly as a bias in the search
+for informative path  and secondly as part of the evaluation of the expected cost of each path 
+
+   correlation models
+as described previously  conventional first order markov sensor models do not correctly represent
+the effect of successive observations that are implicitly correlated by unmodelled environmental
+   the reduction in position uncertainty from robot observations across an environment is sometimes known as the
+sensor uncertainty field  takeda   latombe        in active localization  since our application is object detection 
+we use the term perception field to avoid confusion with the localization problem  but the concepts are otherwise
+identical 
+
+   
+
+fiv elez   h emann   h uang   p osner   roy
+
+variables  the images used by our object detector are not conditionally independent but correlated
+through the environment   if the robot position and the scene are stationary  then the probability of
+individual pixel values in successive images will be strongly correlated by the shared environmental
+representation and robot position  varying only by sensor noise  subsequently  the object detector
+responses will also be strongly correlated  however  correctly representing observations in this way
+requires an environmental model sufficient to capture the image generation process  an intractable
+computational and modeling burden  image based object detectors are not the only detectors which
+exhibit a dependence on the environment  any object detector which utilizes properties of the
+environment  geometric or otherwise  to generate detections cannot a priori be treated as producing
+conditionally independent observations given only the state of the robot  correctly representing the
+full generative model of object detection which takes into account all environmental properties used
+by a detector is frequently an intractable task 
+to overcome this difficulty  we approximate the real process of object detection with a simplistic
+model of how the images are correlated  we replace the influence of the environment  on correlations between observations with a convex combination of a fully independent model that does
+not depend on the history of observations  and a correlated observation model that does depend on
+the history of observations  we treat whether a particular observation is correlated to any previous
+observation as a random variable  the new posterior belief over the state of the world is computed
+as
+k
+p z k  y  xk   t k      p z k  t k   p zind
+ y  xk  
+k
+      p z k  t k    p zcorr
+ y  xk   t k    
+
+   
+
+where we have marginalized over whether the observation z k is actually independent from any
+previous observation or not  we use the notation a  b to represent event a is independent
+of b  factorizing the likelihood in this way  equ     will allow us to capture the intuition that
+repeated observations from the similar waypoints add little to the robots knowledge about the state
+of the world and should be treated as correlated  observations from further afield  however  become
+increasingly independent   has less of a correlating effect 
+in order to have a complete sensor model which uses the factorization in equ     we need to construct the model for the independent and correlated likelihoods as well as model the probability of a
+particular detection being independent of any previous detections  the following sections describe
+two different approaches to modeling the likelihood functions and the probability of independent
+detections 
+    the static disc model
+our first sensor model is called the static disc sensor model  and is very coarse  assuming that
+measurements are drawn according to either a learned first order markov model or according to the
+nearest previous observation 
+k  y  xk is approximated using a histogramthe distribution over the independent detections zind
+based detector performance on labeled training data  that is  training data is collected by placing
+the robot at each waypoint in a grid around a training object facing the object  the robot collects
+a series of images at each waypoint  and generates a histogram of object detection confidences for
+each waypoint from the collected images  where the histogram gives the probability of a measurement z k from a specific  relative  waypoint xk   in contrast  the correlated detection model assumes
+   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+ a  perception field before observations
+
+ b  perception field after one observation  disc model
+
+figure    perception field for a possible door using the static disc sensor model  the unknown
+object is at the center  blue  looking towards the right  brighter regions correspond to
+waypoints more likely to result in higher confidence posterior beliefs  observations are
+taken with the robot at the denoted location  magenta  and oriented to point the sensor
+directly at the object 
+
+that measurements are fully correlated and always equal to the closest  in x  previously seen observation  as described in equ    we treat the probability of observation independence as a mixing
+parameter  disc and express it as a truncated linear function of the euclidean distance  d  between
+two viewpoints  the distribution is normalized with respect to a maximum distance dmax   beyond
+which observations are treated as fully independent  thus 
+ d
+k
+k 
+dmax  d   dmax
+    
+p z 
+t
+    disc  
+ 
+ d  dmax
+in other words  no information is gained by taking additional measurements at the same waypoint
+and the information content of observations increases linearly with distance from previous ones 
+with reference to equ     this model results in the belief update 
+
+
+k  y  xk  
+p zind
+k
+p y t     disc
+    disc   p y t k    
+    
+k  xk  
+p zind
+   
+
+fiv elez   h emann   h uang   p osner   roy
+
+fig    shows two example perception fields for an object detector trained on doors  see section  
+for the training process   in fig    a   we see that the highly informative measurements are directly
+in front of the door  between  m and   m  in fig    b   we see the change to the perception field
+after an observation  the mixture parameter for our static disc model  disc   has a dmax value
+empirically chosen to be   meters 
+    the dynamic time varying correlation model
+the static disc model shown in the previous section does not allow for the sensor model to change
+according to the data actively seen during a trajectory  our purpose in introducing a correlation
+model is to capture the effect of the environment  on our object detector  an object detectors
+response to individual object appearances is captured by the dependence on   for example  a door
+detector may have a different behavior when detecting highly reflective glass doors versus solid oak
+doors   however  the static disc model assumes a fixed correlation model and sensor model for
+all objects of a particular class  regardless of changes in the detectors response across individual
+instances of object from the same class  the previous model also assumes a strong  truncated 
+linear relationship between the probability of two observations being correlated and the distance
+between two observations  we would like to relax this assumption in order to better model a broad
+range of object detectors  our second sensor model solves both the aforementioned issues with the
+static disc model  and also allows for time varying correlations as more observations are taken of
+an object  both sensor models make use of the factorization in equ     but differ in the models
+k  y  xk   and p z k  y  xk   t k    as well as the structure of
+used for the detection likelihoods p zind
+corr
+p z k  t k    
+what we would like is a mechanism for learning a correlation between the measurements that
+can depend on a potentially infinite number of previous measurements  and we use a gaussian
+process  gp  to model both the independent and correlated sensor models  a gaussian process is a
+collection of random variables  any finite number of which have a joint gaussian distribution  and is
+completely specified by a mean function and a covariance function  rasmussen   williams        
+we use gp regression in our likelihood models and always use the zero mean function   and the
+squared exponential  se  variance function with the following structure 
+  t  scalei    xx     
+
+se x  x      sigma  e xx  
+
+ 
+
+    
+
+we use the notation sei  x    to mean that kernel sei is a function of x and is parameterized by
+ 
+      i ndependent and c orrelated l ikelihood m odels
+in order to model independent observations we use a gaussian process  gp ind   with zero mean function and squared exponential covariance function as described above  the kernel parameters  ind  
+are learned from training data pairs of waypoints x and observations z as described in section       
+the gp takes as input a particular waypoint x and predicts the detector output z at that waypoint 
+letting t train be the set of labeled waypoint observation pairs used in gp ind   the observation model
+for independent observation becomes
+k
+k
+zind
+ y  xk   t k    zind
+ y  xk
+
+ gp ind     seind  t train   xk   ind    
+   
+
+    
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+where we see that the model depends solely on the training data to provide a prediction 
+similar to the independent model we use a gaussian process  gp corr   with zero mean function and learned se kernel for the correlated observation model  equ      trained to model nonindependent observations from the object detector  the kernel parameters  corr   are learned from
+training data as described in section        let t corr train be the set of waypoint observations pairs
+used to train gp corr   but  gp corr uses the training data only to learn the kernel parameters and makes
+predictions only from the data acquired during current trajectory t k  so far  which results in the
+following correlated observation model 
+k
+zcorr
+ y  xk   t k   gp corr     secorr  t k    xk   corr    
+
+    
+
+unlike our independent model gp which predicts using only training data  equ       our correlated
+model gps predictions are based solely on data observations taken for the current object rather
+k  y  xk   t k  using
+than observation histories from other objects  predicting the likelihood of zcorr
+the gp regression by marginalizing out all but the previous trajectory of observations results in a
+normal distribution 
+k
+ 
+zcorr
+ y  xk   t k   n  corr k   corr k
+  
+
+    
+
+the choice to model both independent and correlated observations using gps results in our
+overall observation model simplifying to a mixture of two gaussian distributions 
+ 
+  
+z k  y  xk   t k   n  obs   obs
+
+    
+
+      m ixture parameter as p roxy for i ndependence
+the reason to factor our likelihood into an independent model and a correlated model is to capture the intuition that nearby observations are correlated and are therefore less informative  but
+we require some baseline model of observations in the remaining robot waypoints  we model the
+probability of an observation being independent  p z k  t k    in equ     by treating it as a
+time varying spatial mixture parameter   the mixing parameter is chosen to be a function of the
+variance of the correlation model estimate 
+ 
+
+p z k 
+ t k      p z k 
+ t k   xk   t k       xk   t k         ecorr k  
+
+    
+
+because we are using an se kernel function for gp corr   we know the variance in the prediction
+corr k is a function of the input space distance and is independent of the actual prediction value
+ rasmussen   williams         note that gp corr is a function of the current trajectory in the
+world  t k    and the current waypoint xk but is not a function of the training data t corr train  
+the variance in the estimate from gp corr is a function of the distance between the waypoints of
+observations taken so far for a particular object  and encodes our intuition that observations from
+similar waypoints are correlated  in fact  as the current waypoint approaches any of the previous
+k  y  xk   t k  approaches         which means we
+observation waypoints  the variance of zcorr
+trust our correlated observation model more than our independent model  similarly  as the distance
+between the current waypoint and any previous observation waypoint becomes large      and
+we trust our independent observation model almost exclusively  in other words  little information
+is gained by taking additional measurements at the same waypoint and the information content of
+observations increases with distance from previous ones 
+   
+
+fiv elez   h emann   h uang   p osner   roy
+
+as shown in fig    c   we remove  and add a dependency between previous waypoints and
+the current observation z k   we use a pair of gps to model the spatial time varying properties of
+correlations in the observation sequence from an object detector 
+
+ a  learned perception field for the first
+observation 
+
+ b  learned perception field for the third
+observation 
+
+figure    learned perception field for door detector for the  a  first observation and  b  third observation  in  b   the previous observations  shown in magenta  shift where we expect
+informative vantage points to be  in both panels  the unknown object is centered at the
+origin facing the right  brighter regions correspond to waypoints more likely to result in
+higher confidence posterior beliefs  observations are taken with the robot at the denoted
+location  magenta  and oriented to point the sensor directly at the object 
+
+      t raining the s ensor m odels
+our dynamic time varying observation model consist of a mixture of two gaussians  see equ      
+each of which is modeled using two gaussian processes  gp ind and gp corr   for every object hypothesis  each gaussian process maps from locations  x  to the resulting object detection score
+z  every object detector in our system has its own observation model  the independent observation likelihood gps were trained using all the available training data  each labeled tuple
+ z  x  y    object  no object   was used as if it were an independent sample and fed to the independent gp corresponding to the labeled object state   object  no object    these same training
+samples were used to learn the se kernel for the independent gp models  in this way we learn
+the model of detector output likelihood for the cases when an object truly existed or not  assuming independent observations  these two gps are shared across all objects and is constant for all
+measurements 
+the correlated observation model gps have the same learned se kernel as each other but use
+different data  the se kernel is trained only with data from the same object since we are trying
+to learn the model for correlated detections  we split the training data set into subsets which cor   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+ a  learned perception field for the first
+observation 
+
+ b  learned perception field for the third
+observation 
+
+figure    learned perception field for text detector for the  a  first observation and  b  third observation  in  b   the previous observations  shown in magenta  shift where we expect
+informative vantage points to be  in both panels  the unknown object is centered at the
+origin facing the right  brighter regions correspond to waypoints more likely to result in
+higher confidence posterior beliefs  observations are taken with the robot at the denoted
+location  magenta  and oriented to point the sensor directly at the object 
+
+respond to the same objects  the se kernel parameters are chosen to be the maximal likelihood
+parameters for the set of subsets  however  once the kernel parameters have been learned  the correlated model gps are initially devoid of data  these two correlated model gps are instantiated on
+a per object basis and are not shared across objects  samples are added during runtime while the
+robot actively observes detector outputs from the world  as such  the correlated model gps track
+the current set of waypoints observed for a particular object  whereas the independent model gps
+track all of the training samples since they are treated as independent 
+using the learned dynamic time varying sensor model we derived the initial perception field
+about a door shown in fig    a   fig    b  shows the perception field after several observations
+have been taken around the door  notice that the expected amount of information has significantly
+decreased around the observed points but farther waypoints may still yield useful observations 
+the initial perception field shows the areas of high expected information gain for an observation
+according to the training samples for a particular object detector  since there are not previous
+observations  the initial perception field shows use the learned independent gaussian process for a
+object detector 
+the derived perception field about a text sign is shown in fig    a   experimentally  we truncated
+the text perception field for waypoints that had an aspect of more than    degrees to the object for
+   
+
+fiv elez   h emann   h uang   p osner   roy
+
+computational efficiency  given that our detector did not fire when viewing signs at more obtuse
+angles in the training data  fig    b  shows the perception field after several observations have
+been taken around the object  notice that our text detector has a significantly different perception
+field that our door detector  both in initial shape as well as in response to observations  we see
+that the door detector has peaks within the perception field  signifying regions with relatively high
+information gain  the text detector  on the other hand  has a very smooth perception field which
+drops off mainly as a function of depth 
+
+   planning to perceive
+given the sensor model described in the previous section  we now describe a planning algorithm
+that trades off the necessity of gaining additional information about an object hypothesis against the
+operational cost of obtaining this information  in particular  when an object is first detected  a new
+path to the original goal is planned based on the total cost function which includes both the motion
+cost cmot along the path and the value of measurements from waypoints along the path expressed
+as a reduction in the expected cost of decision actions  recall that the cost function consists of two
+terms  the motion cost cmot  x  k   and the decision cost cdet  x  k   a   such that the optimal plan
+  is given by equ     which we reproduce here 
+
+    arg min cmot  x  k     cdet  x  k   a   
+x  k  a
+
+where
+
+cdet  x  k   a    ey x  k dec  a  y   
+
+where ey x  k    denotes the expectation with respect to the robots knowledge regarding the object 
+after having executed path x  k  
+    motion cost
+the path cost  cmot  x  k    encompasses operational considerations such as power expended and
+time taken when moving along a particular trajectory and is typically proportional to the length of
+the trajectory 
+    decision cost
+the decision cost  cdet  x  k   a   not only captures the expected cost of accepting  or rejecting  a
+potential object detection  but it also captures the expected yield in information from observations
+along path x  k   the trajectory affects the cost of the decision actions in terms of changing the
+expectation  rather than the decision actions themselves  in effect allowing the algorithm to decide
+if more observations are needed 
+note that the decision actions can be treated independently of each other and also independently
+of the robot motion  which allows us to compute the expected decision costs very efficiently  we
+take advantage of this efficiency to move the minimization over decision actions directly inside the
+cost function  abusing notation for cdec   we have
+cdet  x  k     arg min cdet  x  k   a 
+
+    
+
+a
+
+  arg min ey x  k dec  a  y   
+a
+
+   
+
+    
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+next  we can write the plan in terms of x  k  
+
+    arg min cmot  x  k     cdet  x  k    
+
+    
+
+x  k
+
+dec  accept    and dec  reject    are the costs associated with declaring that the object exists or
+not  respectively  after measuring z at xk following traversal of waypoint observation trajectory
+t k    these costs include the penalties imposed when accepting a true positive detection and
+when accepting a false positive detection  respectively  and are chosen by the user of the system to
+reflect the value penalty of decision for a particular domain 
+the expectation inside equ     relies on a model of y conditioned on the trajectory x  k   as
+can be seen in fig    c   y and x  k are correlated through z k   during planning  the actual z k that
+will be received cannot be known ahead of time  so to evaluate the expectation exactly  it must be
+taken with respect to both the object state y and the received observations  as in
+ey x  k  
+ a  y    
+
+z dec
+k
+k 
+p z x   t
+ ey z x  k   dec  a  y    
+
+    
+
+z
+
+where p z xk   t k    denotes the probability of obtaining a particular detector confidence value
+when observing the object from x given a previous trajectory t k    and is computed akin to the
+posterior in equ     in section     we show how we can efficiently approximate this expectation
+over the observation sequence by treating our belief as normally distributed 
+the planning process proceeds by searching over sequences of x  k   evaluating paths by approximating the expectations with respect to both the observation sequences and the object state 
+the paths with the lowest decision cost will tend to be those leading to the lowest posterior entropy 
+avoiding the large penalty for false positives or negatives 
+    multiple objects
+we formally define a vantage point relative to an object y  vy  rm   as a vector in an m dimensional feature space describing the configuration of the robot relative to the potential object 
+we also define a mapping f   r   so     y   rm between a robot waypoint x and its corresponding vantage point vy   f  x  y   in principle  a vantage point need not be restricted to spatial
+coordinates but may incorporate additional information such as  for example  the degree of occlusion experienced or image contrast  for an appearance based detector   in this work  however  only
+the range  r  and aspect    relative to the object with the robot oriented to directly face the object
+are considered such that vy  r  so     see fig   a   it is important to note that the system must
+be able to accurately compute a vantage point  for this paper a stereo camera is used to estimate
+the distance and orientation of a potential object  the planning approach described so far can be
+extended to planning in an environment with q object hypotheses by considering a modified cost
+function which simply adds the cost for each object  we also augment our dec  a  y   dec  a  y  i 
+to be able to provide different decision costs for different object types  or even different object instances   the augmentation allows us to specify the relative importance of different objects types
+in our algorithm  in this work we consider an objects existence to be independent of other objects
+hence the individual object perception fields are additive for a particular waypoint x  we also restrict
+ourselves to waypoints which correspond to the robot facing a particular hypothesized object 
+   
+
+fiv elez   h emann   h uang   p osner   roy
+
+given no prior information about object locations  we do not hypothesize how many objects
+there are in the world  we initially let q     and run the object detector during the robot motion 
+after each image is processed by the object detector  the system judges whether the detection belongs to an object hypothesis already being considered or not  e g   using the distance between the
+hypothesized object and the detection   if the detector determines that the probability of an object
+at some new location is above a threshold and it does not belong to any hypothesis objects  the
+number of object hypotheses q is increased and the robot replans  if the detection is determined to
+correspond to a particular object hypothesis  the system updates the belief and replans 
+    multi step planning
+a simple approach for planning considers every possible trajectory to the goal and weights each
+by the cost of taking the trajectory  choosing the minimum cost trajectory as the plan  this simple
+algorithm scales approximately exponentially in the length of the planning horizon t and thus
+rapidly becomes intractable as more observations are considered  we adopt a roadmap scheme in
+which a fixed number of waypoints are sampled every time a new waypoint is to be added to the
+current trajectory  a graph is built between the sampled poses  with straight line edges between
+samples 
+the sampling scheme is biased towards waypoints more likely to lead to useful observations
+using the perception field  see section       due to the correlations between individual observations
+made over a trajectory of waypoints  the perception field changes as new observations are added  in
+particular  the correlation model imposed in this work  equs     and   for the dynamic time varying
+model or equ     for the static disc model  forces
+lim
+
+  obs  at xk 
+
+i y  z k   xk   t k       
+
+when considering measurements from waypoints already visited  in other words  the robot will
+prefer to observe the putative object from different waypoints over taking repeated measurements
+at the same place 
+algorithm r eplan o n n ew d etection  fig     summarizes the planned waypoints approach
+of sampling and evaluating trajectories to balance increased confidence with motion costs  the
+algorithm uses the posterior belief distribution framework if able to quickly sample trajectories
+with many observations  then selects the best of those as the current plan according to our cost
+metric 
+figure   details the stages of our algorithm on an example run where a single door is detected
+while going towards a goal 
+
+   efficient perception field computation
+our planning algorithm needs to calculate the perception field for deep planning horizons  t     
+the variant of our algorithm which uses our static disc sensor model must evaluate the expected
+change in our belief over y for every potential future waypoint  and must carry that belief thought
+each level of our search tree over future trajectories xk   k t   however  when using the dynamic
+time varying sensor model we can treat our belief over y as normally distributed  under the normal
+distribution approximation  in the limit of an infinite number of observations  the mean of the normal
+distribution will converge to either   or    depending on whether the object is present or not   with
+   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+algorithm r eplan o n n ew d etection
+input  an object detection z at vantage point x
+   step    update our belief
+   if using static disc sensor model then
+  
+dmin   arg min  x  xi  
+  
+
+  
+  
+  
+  
+  
+  
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+
+disc  
+
+xi t k 
+dmin
+dm ax
+k  y t k  
+disc p z
+p z k  t k  
+
+equ   
+
+    disc   p y t k   
+
+p y  
+else
+n  corr k   corr k    predict gp corr   x 
+ 
+     ecorr k
+n  n    kn  zn  w  n    
+n   n    gn bn gtn   
+   step    sample trajectories
+t    
+while sampling time remains do
+traj    
+if using static disc sensor model then
+y   y
+for i      t do
+pi  compute   perception   field yi   
+xi  pi    sample vantage point
+p yi    ez    p z    xi   t k    yi   p yi    
+traj  traj  xi
+else
+    n
+    n
+gp  corr  gp corr
+for i      t do
+i 
+pi  compute   perception   field  i     i    gp corr
+ 
+xi  pi    sample vantage point
+z    predict gp i 
+corr   gp ind   xi  
+ 
+gp icorr  update   sensor   model gp i 
+corr   xi   z  
+ i   i    kn  zn    w   i    
+ i    i    gn bn gtn   
+traj  traj  xi
+t  t  traj
+
+
+
+    execute   trajectory
+
+equ   
+
+equ   
+equs        and   
+
+equ  
+
+equs   and   
+equs           and   
+equs        and   
+
+arg min cost t   
+t  t
+
+figure    the waypoint planning algorithm samples trajectories using the perception field  then
+chooses the trajectories which balance increasing the robots confidence about an object
+with minimizing trajectory costs  equ     
+
+   
+
+fiv elez   h emann   h uang   p osner   roy
+
+ a  initially  the robot  blue
+triangle  has a goal  red star 
+an no detections have fired
+yet  so no potential objects
+are being reasoned about 
+
+ b  after the detector fires 
+the robot starts reasoning
+about the potential object 
+the system creates an initial
+perception field from training
+data for the potential object
+and plans a path to take more
+detections 
+
+ c  after two detections  magenta  the belief is high
+enough that the system is confident the door truly exists in
+the world and continues on
+towards the goal  shown is
+the resulting perception field
+after the two taken observations 
+
+figure    a sample run of our system  from an initially empty set of objects being reasoned about
+ a   to a door detector firing and causing a new door object hypothesis and perception field
+to be created  b   the system then plans and executes a path to the goal which allows it
+to take advantageous observations of the hypothesized door  after two observations  the
+system continues towards the goal since the belief of whether the door exists or not is
+such that the increase in expected reward for further improving the confidence of the
+object model is not justified by the additional cost  c   brighter regions of the perception
+fields correspond to waypoints more likely to result in higher confidence posterior beliefs 
+observations are taken with the robot at the denoted location  magenta  and oriented to
+point the sensor directly at the object  the belief over whether the door truly exists or not
+is denoted by the green bar 
+
+very small variance  additionally  the expected cost of a decision will depend only on the variance
+of the distribution  the smaller the covariance of the normal posterior  the less likely the probability
+of a decision error  finally  the posterior covariance of the normal will depend only on the sensor
+model  and not the observation itself  as a result  if we know the sensor model information gain
+for each measurement  we can predict the posterior covariance  and hence the expected cost of any
+decision action  without knowing the exact observation sequence itself  this approximation of the
+binomial measurement function is known as the posterior belief distribution  pbd  algorithm  he
+et al          and can be used to efficiently compute the resulting belief after t time steps  we sketch
+the general idea behind pbd below  which we use to compute the expected entropy reduction in our
+belief by future observations 
+   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+    the belief over y
+in reality  an object either exists or does not exists in the world  denoted by y    labeled training
+data for the output of an object detector is of the form  z  x  y    object  no object    where we pair
+the detector output at a particular waypoint with the knowledge of whether the object exists or not 
+in order to use such labeled samples to train our sensor model  a model of the object detector   we
+keep track of a belief  over whether the object exists or not  equs     and    show our independent
+and correlated observation model likelihood given  using the likelihood given y   we marginalize
+over our belief for both our independent and correlated observations models  equs     and     to
+get
+k
+k
+p zind
+   xk   t k        p zind
+ object  xk   t k   
+k
+         p zind
+ no object  xk   t k   
+
+    
+
+k
+k
+p zcorr
+   xk   t k        p zcorr
+ object  xk   t k   
+k
+         p zcorr
+ no object  xk   t k    
+
+    
+
+where each likelihood is itself modeled as a gp similar to equ     or    for the independent or
+correlated models respectively 
+noting that we can write the likelihood of z in terms of  using y  equs     and      we can
+similarly rewrite equ    in terms of likelihoods based on  as
+k
+p z k    xk   t k      p z k  t k   p zind
+   xk   t k   
+k
+      p z k  t k    p zcorr
+   xk   t k    
+
+    
+
+    posterior belief distribution
+the pbd algorithm allows us to estimate the expected information gain from a particular waypoint
+without integrating over potential observations z  we begin by framing our problem in the exponential family kalman filter  efkf  formulation  he et al         where we treat  as the state we
+are trying to estimate  and we have an exponential family observation model 
+n   n   n  n   n  
+
+    
+
+zn   exp zn n  bn  n     n  zn    
+
+    
+
+given a single observation and the canonical link function w mapping from state to observation
+parameter   the posterior mean and variance of the belief can be computed as 
+n   n    kn  zn  w  n    
+n    n    gn bn gt   
+
+    
+    
+
+n
+
+kn   n  gn  gn n  gtn   bn
+zn   n  bn
+fi
+n fifi
+gn  
+n fi
+
+ 
+
+  bn  zn  
+ 
+
+n  n 
+
+   
+
+   
+
+ 
+
+    
+    
+    
+
+fiv elez   h emann   h uang   p osner   roy
+
+gp
+object
+text gp ind
+no object
+text gp ind
+object
+text gp corr
+no object
+text gp corr
+object
+door gp ind
+no object
+door gp ind
+object
+door gp corr
+no object
+door gp corr
+
+se kernel 
+   
+    
+   
+   
+    
+    
+     
+    
+
+se kernel l
+    
+    
+    
+    
+    
+    
+    
+    
+
+table    the learned gp parameters  note that the kernel scale for the door and text differ for the
+correlated observation gps 
+
+of particular importance to us is the fact that the posterior covariance has a closed form solution 
+is independent from the posterior mean  he et al          and does not require integrating over all
+possible observations z  we now can compute the posterior covariance after t observations in the
+future as
+t
+x
+n t    n   
+gi bi gti     
+    
+i  
+
+rather than having to marginalize out potential future observations for every future waypoint  we
+can compute the variance of our belief after t observations by simply multiplying through the
+variance of the observations at each of the future waypoints  given that our perception field is a
+function of the variance in our belief  since the entropy of a normal distribution is a function of the
+variance   we can now quickly compute the field for deep observation trajectories  such efficient
+computation allows our planning algorithm to sample potential observation trajectories with many
+observations  t      thereby increasing the effective search depth of our algorithm and improving
+our plans 
+
+   objects  doors and signs
+our system is in general agnostic to the type of detector employed and even the sensing modality
+used  the only constraint is formed by the need to be able to define vantage points  see section
+     to compute a perception field  see section       in this work  we chose to test our approach
+with two different vision based object detectors  the first leverages the parts based object detector
+by felzenszwalb  mcallester  and ramanan        trained to find doors  the second detector aims to
+spot human readable text in the world such as commonly found on signs  the use of text spotting
+was inspired by the work of posner  corke  and newman        and the authors kindly provided us
+with a c   software library of the latest incarnation of their text spotting engine  which provides
+detection and parsing facilities for individual words in natural scene images 
+the door detector was trained on approximately      positive and      negative examples
+from manually labeled images collected from a large range of indoor areas excluding our testing
+environment  performance on images from the testing environment was low due to false positives
+triggered by visual structures not present in the training images  the detector could be re trained to
+   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+average
+precision
+recall
+path length  m 
+total trials
+
+g reedy    
+         
+         
+          
+  
+
+g reedy    
+         
+         
+          
+  
+
+p lanneddisc
+         
+         
+          
+  
+
+rtbss
+         
+         
+          
+  
+
+table    simulation performance on single door scenario  with standard error values 
+
+improve performance  but the problem recurs when new environments are encountered  these same
+examples were also used to train both the sensor models of the door detector 
+the text detector was trained exactly as described by posner et al          the dynamic timevarying sensor model was determined using approximately      positive and      negative examples from manually labeled images collected from an indoor office environment excluding our
+testing environment  we used the text detector only to localize text in the environment  and did not
+actually use the contents of the text itself 
+for the mixture parameter in our dynamic time varying sensor model  the scale factor  was
+chosen as the maximum likelihood estimator using the training data for each detector in the system 
+we learned scaling values door       and text        table   shows the learned gp parameters
+for both the door and text detectors 
+
+   simulation results
+we first assessed our planning approach using the learned models in a simulated environment  our
+simulation environment consisted of a robot navigating through an occupancy map  with object
+detections triggered according to the learned observation model  we also simulated false positives
+by placing non object perceptual features that probabilistically triggered object detections using the
+learned model for false alarms  the processing delay incurred by the actual object detector was also
+simulated  the door detector requires approximately     seconds to process a spatially decimated
+   x    pixel image while the text detector requires   seconds to process a full     x    pixel
+image  
+    comparison algorithms
+for the simulation trials we compared our algorithm against two other algorithms  the g reedy
+algorithm selected the best waypoint according to our perception field for each potential object until the belief of each object exceeded a threshold   second  we compared our algorithm against
+the rtbss online pomdp algorithm  paquet  tobin    chaib draa         the rtbss algorithm
+could not use our full sensor model because of the markov assumption and only utilized the independent part of the model  one could augment the state space to include the entire history of
+detections  and therefore use our full sensor model  however such a large state space would render
+the pomdp intractable in practice  we chose a maximum depth equal to that of our algorithm and
+modeled the world using a resolution of     meters for the rtbss algorithm  we will denote the
+algorithm using the static disc sensor model as p lanneddisc   and the dynamic time varying sensor
+model as p lanned 
+   
+
+fiv elez   h emann   h uang   p osner   roy
+
+average
+precision
+recall
+path length  m 
+total trials
+
+g reedy    
+         
+         
+           
+  
+
+g reedy    
+         
+         
+           
+  
+
+p lanneddisc
+         
+         
+           
+  
+
+rtbss
+         
+         
+           
+  
+
+table    simulation performance on multiple door scenario  with standard error values 
+
+ a  the small simulation environment used for doors
+containing a single object  blue  and two non object
+ black  
+
+ b  the multiple object simulation environment used
+for doors containing   objects  blue  and   nonobjects  black  
+
+figure    the simulation environments for the static disc sensor model of a door detector 
+    static disc sensor model simulations
+first  we tested our p lanneddisc algorithm on a small the simulation environment with one door
+object shown in fig    a   table   shows the simulation results for our static disc model of the door
+detector  overall  explicitly planning waypoints resulted in significantly higher performance  the
+p lanneddisc algorithm performed better than rtbss in terms of precision and recall  most likely
+because our algorithm sampled continuous space waypoints and the rtbss algorithm had a fixed
+discrete representation  while rtbss paths were shorter 
+we evaluated our p lanneddisc algorithm in a larger  more complex scenario containing four
+doors and six non door objects  fig    b  shows the multiple door simulation environment  table  
+shows the simulation results for the multi door scenario  our p lanneddisc algorithm resulted in the
+second shortest paths after g reedy     but with superior detection performance  p lanneddisc
+also resulted in significantly shorter paths than rtbss given the same operating point on the roc
+curve 
+    dynamic time varying sensor model simulations
+we tested our p lanned algorithm on both a small simulation with a single text sign and a more
+complex simulation environment with two signs shown in figs     and     table   shows the results
+of    trials using our text detector sensor model in the single object simulation  for text signs  we
+   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+average
+precision
+recall
+path length  m 
+total trials
+
+g reedy    
+         
+         
+          
+  
+
+p lanned
+         
+         
+          
+  
+
+rtbss
+         
+         
+          
+  
+
+table    simulation performance on single sign scenario  with standard error values 
+
+see that our deep trajectory planning does not help very much  compare the g reedy strategy with
+the planned strategy which had a planning horizon of     the information for the text detector
+was spread out smoothly  see the perception field fig    a   hence the greedy strategy was the best
+thing to do  however  our planner took into account cost and so resulted in lower precision recall
+performance but much shorter path length  we also saw that our correlation sensor model allowed
+our planned algorithm to perform better than rtbss  the belief updates predicted by rtbss were
+overconfident hence the rtbss algorithm resulted in shorter path lengths but worse precision recall
+performance than our planned waypoints algorithm 
+
+figure     the small simulation environment used for text signs containing a single object  blue 
+and a single non object  black  
+
+next  we evaluated our p lanned algorithm in a more complex scenario containing two objects
+and two non objects shown in fig      table   shows the simulation results for the multiple object
+scenario  the p lanned algorithm resulted in the best precision recall performance with short path
+length  rtbss also resulted in short path length  but because of the lack of a correlation model
+became overconfident in its belief  performing significantly worse than the planned waypoints algorithm in terms of precision recall 
+fig     also shows the density of all trajectories traversed by each algorithm for all simulations
+run  brighter spots denote places where the simulated robot frequented during the simulation runs 
+we see that the p lanned algorithm kept the robot close to the shortest path because of our cost
+function  as does rtbss  however  our p lanned algorithm decided to spread detections apart
+because of the correlation model employed whereas rtbss over valued the information gained
+from nearby observations  the g reedy algorithm did not take into account the motion cost for
+taking an observation and so we saw a widespread set of trajectories and waypoints being visited
+during the simulations 
+   
+
+fiv elez   h emann   h uang   p osner   roy
+
+average
+precision
+recall
+path length  m 
+total trials
+
+g reedy    
+         
+         
+          
+  
+
+p lanned
+         
+         
+          
+  
+
+rtbss
+         
+         
+          
+  
+
+table    simulation performance on multiple signs scenario  with standard error values 
+
+ a  g reedy trajectories
+
+ b  p lanned trajectories
+
+ c  rtbss trajectories
+
+figure     the multiple object simulation environment used for text containing   objects  blue  and
+  non objects  red   shown are the density of paths taken by the different algorithms
+during all simulation trials  the planned approach results in a narrower space of paths
+than g reedy while avoiding nearby  correlated  observations 
+
+    time improvements because of pbd
+we ran a comparison between updating our perception field using the pbd algorithm  see section
+     and an update which requires computing the expectation over possible detector outputs  we
+created a histogram of potential detector values with either     or    bins and used these sampled
+to compute the expected mutual information gain  the perception field  for each of those detector
+output bins  table   shows the results of computing a perception field     times  the pbd algorithm
+allowed us to efficiently calculate the perception field since we did not have to explicitly iterate over
+the possible detector values but could use equ     
+updating the perception field was the most time consuming part of our algorithm since it must
+be updated when reasoning about future observations during planning  the total run time was
+determined by how many trajectories were sampled using the perception field and the depth of these
+future trajectories  both of which could be tuned to a particular scenario and application  in this
+paper we let the planning algorithm sample and evaluate trajectories until the same amount of time
+as running the object detector on a single image had passed 
+   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+min
+avg
+max
+
+    bins for z
+    s
+    s
+    s
+
+   bins for z
+    s
+    s
+    s
+
+pbd
+    s
+    s
+    s
+
+table    timing results for computing a perception field using either the pbd algorithm  or explicitly enumerating potential detector values z and computing the expectation over these
+values 
+
+average
+precision
+recall
+path length  m 
+total trials
+
+g reedy    
+         
+         
+            
+  
+
+p lanneddisc
+        
+        
+           
+  
+
+table    results of door real world trials using robot wheelchair  with standard error values 
+
+ a  trajectory executed on the actual robot wheelchair using planned waypoints
+from s to g where the robot discovers one true door  cyan   near the goal 
+it detects two more possible doors  red dots   detours to inspect them  and  correctly  decides that they are not doors 
+
+ b  robotic wheelchair
+platform
+
+figure     real world trial of door detector using robotic wheelchair platform
+
+   results for real world trials
+finally  we validated the results of the p lanneddisc and p lanned algorithms on a robot wheelchair
+platform  fig     b    our autonomous wheelchair was equipped with onboard laser range scanners 
+primarily used for obstacle sensing and navigation  a point grey bumblebee  color stereo camera 
+and an quad core laptop as the main processing unit  the stereo camera was used to accurately
+determine the vantage point for a particular detection  both door and textual signs were planar  so
+   
+
+fiv elez   h emann   h uang   p osner   roy
+
+we fit a plane to the detection bounding box and  d points from the stereo camera to determine the
+orientation of the possible object given a detection 
+for both door and text real world trials  the robot started at a particular location and orientation 
+the robot was then given the same goal position such that a nominal trajectory would bring it past
+one true object  a door or a text sign   and near several fixtures which trigger object detections 
+initially  the system had no object hypothesis and the detector was run continuously as it moved
+towards the goal in the shortest path  as the object detector fired  the system started reasoning
+about the object hypothesis corresponding to the detections  the robot deviated from the shortest
+path to take observations for certain object hypothesis as determined by the cost function  finally 
+the robot reached the goal and the trial ended  the object hypothesis were accepted if the belief
+was greater than      the cost of an incorrect decision was set to be    times the cost of a meter in
+path length  and the cost for a correct decision was set to be the negative of an incorrect decision 
+all trials were capped at    minutes and were done in a real office environment without special
+accommodations to be as realistic as possible 
+fig     a  shows the location of the door trials  the robot always started at the start location
+ marked by s  and was given the same goal location  g   there was a single door which could
+be seen from the path from start to the goal  near the goal there were also a set of windows and light
+fixtures which often caused the door detector to fire  fig     a  illustrates the trajectory executed
+during a single trial of the p lanneddisc algorithm  and table   summarizes the results of all trials
+for doors  g reedy     was chosen as a baseline comparison since it was the best performing of
+the existing algorithms according to table    our p lanneddisc algorithm resulted in significantly
+shorter trajectories while maintaining comparable precision and recall  for doors detected with substantial uncertainty  our algorithm planned more advantageous waypoints to increase its confidence
+and ignored far away detections because of high motion cost  it is interesting to see in fig     a  how
+our algorithm deviated to take observations of the false detections near the goal location  ultimately
+correctly deciding that those object hypothesis were in fact not doors 
+we similarly conducted an experiment using the p lanned algorithm and g reedy     on the
+same robotic wheelchair platform with the text detection algorithm  the robot was given a nominal
+trajectory which brought it past a single textual sign  a poster with an office number on it placed at
+a common location for poster notifications   the trials were run during the daytime hours to allow
+for both artificial as well as natural lighting and common environmental changes such as people
+walking by the robot  table   summarizes the results of   real world trials with both algorithms 
+we see that the g reedy algorithm outperformed p lanned in terms of precision  consistent with
+our simulation results  but had much longer path lengths  the p lanned algorithm balanced the
+cost of gaining new observations against the travel time and resulted in much shorter trajectories 
+the large path length associated with the greedy algorithm came from two sources  first  the greedy
+algorithm did not take path cost into account when deciding the next observation to take  and second
+the greedy algorithm kept taking pictures of all object hypothesis until the belief was above a certain
+threshold  this included any sporadic object detections caused by lights or temporary environment
+noise 
+lastly  we ran a small set of   trials using the p lanned algorithm looking for text signs in a
+completely different environment than the previous trial  here we ran the trials at night with very
+few people walking by  table   shows the results  even in a different environment  the algorithms
+behaved similarly  with the g reedy algorithm outperforming our p lanned algorithm at the cost
+of much longer paths 
+   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+average
+precision
+recall
+path length  m 
+total trials
+
+g reedy    
+   
+   
+           
+ 
+
+p lanned
+         
+         
+          
+ 
+
+table    results of text real world trials using robot wheelchair 
+average
+precision
+recall
+path length  m 
+total trials
+
+g reedy    
+   
+   
+             
+ 
+
+p lanned
+         
+   
+            
+ 
+
+table    results of small text real world trials in a different location using robot wheelchair 
+
+    related work
+the problem of planning motion trajectories for a mobile sensor has been explored by a number
+of domains including planning  sensor placement  active vision and robot exploration  the most
+general formulation is the partially observable markov decision process  sondik         exact
+solutions to pomdps are computationally intractable  but recent progress has led to approximate
+solvers that can find good policies for many large  real world problems  pineau  gordon    thrun 
+      smith   simmons        kurniawati  hsu    lee        kurniawati  du  hsu    lee        
+however  the complexity of representing even an approximate pomdp solution has led to forward
+search strategies for solving pomdps  ross et al         prentice   roy        he et al         
+eidenberger and scharinger        formulate the problem of choosing sensor locations for active
+perception as a pomdp very similar in spirit to our formulation  however  they explicitly model the
+underlying physics of the object generation  model the uncertainty in the object location rather than
+object type  and are also unable to plan more than one step into the future  and therefore the work is
+most similar to the g reedy strategies described in previous sections  our approach is inspired by
+the forward search pomdp algorithms  but incorporates a more complex model that approximates
+the correlations between observations 
+in contrast to pomdp models of active sensing  the controls community and the sensor placement community have developed information theoretic models  where the goal is only to minimize a
+norm of the posterior belief  such as the entropy  this objective function does not depend on the motion costs of the vehicle  and is sub modular  krause   guestrin         as a consequence  greedy
+strategies that choose the next most valuable measurement can be shown to be boundedly close
+to the optimal  and the challenge is to generate a model that predicts this next best measurement
+ guestrin  krause    singh        krause  leskovec  guestrin  vanbriesen    faloutsos        
+in terms of image processing and object recognition  denzler and brown        and sommerlade
+and reid        showed that information theoretic planning could be used to tune camera parameters to improve object recognition performance and applied to multi camera systems  although their
+use of exhaustive search over the camera parameters rapidly becomes unwieldy  lastly  sridharan  wyatt  and dearden        showed that by formulating an information theoretic problem as
+a decision theoretic pomdp  true multi step policies did improve the performance of a computer
+   
+
+fiv elez   h emann   h uang   p osner   roy
+
+vision system in terms of processing time  however  all of these previous algorithms use models for
+sequential decision making where the costs of the actions are independent  or negligible   leading
+to a submodular objective function and limited improvement over greedy strategies 
+there has been considerable work in view point selection in active vision which we briefly
+review here  a few relevant pieces of work include that by arbel and ferrie        and more
+recently laporte and arbel        who use a bayesian approach to model detections that is related
+to ours  but only searches for the next best viewpoint  rather than computing a full plan  the work
+of deinzer  denzler  and niemann        is perhaps most similar to ours in that the viewpoint
+selection problem is framed using reinforcement learning  but again the authors neglect costs for
+camera movement and identify the absence of costs as a limitation of their work  similarly  the
+system by mittal and davis        learns a model of object occlusion and uses simulated annealing
+to solve for the optimal plan  the contribution is to learn a predictive model of good viewpoints  the
+work by borotschnig  paletta  prantl  and pinz        uses an appearance based object detection
+system to plan viewpoints that minimize the number of observations required to achieve a certain
+recognition rate  but does not account for correlations in the different observations 
+the field of object localization and search has seen some recent advancements  the use of
+object to object relations seems like a promising direction as shown in the works of aydemir  sjoo 
+folkesson  pronobis  and jensfelt        and joho  senk  and burgard         our approach differs
+in that the system uses spatial relations between a single object and multiple observations rather than
+between different objects  the works by joho et al         and aydemir  gobelbecker  pronobis 
+sjoo  and jensfelt        model the environment and achieve good results  whereas our system
+models the correlation between observations in lieu of modeling the full environment  the idea
+of attention seems a powerful tool for visual search  tsotsos        with systems such as those
+due to meger  forssen  lai  helmer  mccann  southey  baumann  little  and lowe        and
+andreopoulos  h   janssen  hasler  tsotsos  and korner        exhibiting excellent results  rather
+than using attention  our system utilizes the mutual information and minimizes the cost of taking
+observations  it is useful to note that while our system minimizes a single cost function which
+encodes both information and path costs  ye and tsotsos        formalized an approach which
+both maximizes the probability of localizing an object and minimizes the cost 
+in robot exploration  where the goal is to generate robot trajectories that learn the most accurate
+and complete map with minimum travel cost  the costs of motion must be incorporated  bourgault 
+makarenko  williams  grocholsky  and whyte        developed a full exploration planner that
+incorporated an explicit trade off between motion plans and map entropy  stachniss  grisetti  and
+burgard        described a planner that minimized total expected cost  but only performed search
+over the next best action  to address the computational challenge  kollar and roy        used
+reinforcement learning to both learn a model over the expected cost to the next viewpoint in the
+exploration  and minimize the total expected cost of a complete trajectory 
+the contribution of our work over the existing work is primarily to describe a planning model
+that incorporates both action costs and detection errors  and specifically to give an approximate
+observation model that captures the dynamic correlations between successive measurements that
+still allows forward search planning to operate  leading to an efficient multi step search to improve
+object detection 
+   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+    conclusion and future work
+previous work in planned sensing has largely ignored motion costs of planned trajectories and used
+simplified sensor models with strong independence assumptions  in this paper  we presented a sensor model that approximates the correlation in observations made from similar vantage points  and
+an efficient planning algorithm that balances moving to highly informative vantage points with the
+motion cost of taking detours  we did not fully model the effects of the entire environment on a
+sensor  an intractable endeavor  our sensor model simplifies environment interactions by treating
+them as correlations between the entire history of sensor readings  we placed an emphasis on spatial
+relations to model the correlations between new sensor readings and the history of previous sensor
+readings  because of the properties of gaussian processes  our sensor model allows for efficient
+deep trajectory sampling utilizing the posterior belief distribution framework  we tested our algorithm with two different object detectors  doors and signs  and found better detector dependent
+observation trajectories than comparable strategies 
+the system presented here planned deviations from a particular shortest path trajectory to a
+goal in order to detect and localize objects after they had been spotted once  in the future we aim to
+incorporate a large scale spatial model of where object are likely to be before we have encountered
+them  next generation systems will also have to deal with novel objects for which there exists no
+prior object detector and for whom a detector must be created on the fly  our goal is to create
+an end to end online adaptive semantic mapping solution which works for arbitrary objects and
+environments 
+
+references
+andreopoulos  a   h   w   janssen  h   hasler  s   tsotsos  j     korner  e          active  d object
+localization using asimo  ieee transactions on robotics              
+anguelov  d   koller  d   parker  e     thrun  s          detecting and modeling doors with mobile
+robots  in proc  icra 
+arbel  t     ferrie  f  p          viewpoint selection by navigation through entropy maps  in proc 
+iccv  kerkyra  greece 
+aydemir  a   sjoo  k   folkesson  j   pronobis  a     jensfelt  p          search in the real world 
+active visual object search based on spatial relations  in proc  icra 
+aydemir  a   gobelbecker  m   pronobis  a   sjoo  k     jensfelt  p          plan based object
+search and exploration using semantic spatial knowledge in the real world  in proc  ecmr 
+orebro  sweden 
+borotschnig  h   paletta  l   prantl  m     pinz  a          appearance based active object recognition  image and vision computing                
+bourgault  f   makarenko  a  a   williams  s  b   grocholsky  b     whyte  d  h  f          information based adaptive robotic exploration  in proc  iros  epfl  lausanne 
+coates  a     ng  a  y          multi camera object detection for robotics  in proc  icra 
+deinzer  f   denzler  j     niemann  h          viewpoint selection   planning optimal sequences
+of views for object recognition  in proc  iccv  springer 
+   
+
+fiv elez   h emann   h uang   p osner   roy
+
+denzler  j     brown  c  m          information theoretic sensor data selection for active object
+recognition and state estimation  ieee trans  pattern analysis and machine intelligence 
+              
+douillard  b   fox  d     ramos  f          laser and vision based outdoor object mapping  in
+proc  rss 
+eidenberger  r     scharinger  j          active perception and scene modeling by planning with
+probabilistic  d object poses  in proc  iros 
+felzenszwalb  p   mcallester  d     ramanan  d          a discriminatively trained  multiscale 
+deformable part model  in proc  cvpr 
+guestrin  c   krause  a     singh  a          near optimal sensor placements in gaussian processes  in proc  icml 
+he  r   brunskill  e     roy  n          puma  planning under uncertainty with macro actions  in
+proc  aaai  atlanta  ga 
+he  r   brunskill  e     roy  n          efficient planning under uncertainty with macro actions 
+journal of artificial intelligence research             
+joho  d   senk  m     burgard  w          learning search heuristics for finding objects in structured environments  robotics and autonomous systems                
+kaelbling  l   littman  m     cassandra  a          planning and acting in partially observable
+stochastic domains  artificial intelligence             
+kollar  t     roy  n          trajectory optimization using reinforcement learning for map exploration  international journal of robotics research                
+krause  a     guestrin  c          near optimal observation selection using submodular functions 
+in proc  aaai 
+krause  a   leskovec  j   guestrin  c   vanbriesen  j     faloutsos  c          efficient sensor
+placement optimization for securing large water distribution networks  journal of water resources planning and management           
+kurniawati  h   du  y   hsu  d     lee  w          motion planning under uncertainty for robotic
+tasks with long time horizons  international journal of robotics research        
+kurniawati  h   hsu  d     lee  w          sarsop  efficient point based pomdp planning by
+approximating optimally reachable belief spaces  in proc  rss 
+laporte  c     arbel  t          efficient discriminant viewpoint selection for active bayesian
+recognition  international journal of computer vision                
+martinez mozos  o   stachniss  c     burgard  w          supervised learning of places from
+range data using adaboost  in proc  icra 
+meger  d   forssen  p   lai  k   helmer  s   mccann  s   southey  t   baumann  m   little  j    
+lowe  d          curious george  an attentive semantic robot  robotics and autonomous
+systems                
+mittal  a     davis  l          a general method for sensor planning in multi sensor systems 
+extens ion to random occlusion  international journal of computer vision           
+   
+
+fim odelling o bservation c orrelations f or robust o bject d etection
+
+newman  p   sibley  g   smith  m   cummins  m   harrison  a   mei  c   posner  i   shade  r  
+schroeter  d   murphy  l   churchill  w   cole  d     reid  i          navigating  recognising and describing urban spaces with vision and laser  international journal of robotics
+research            
+paquet  s   tobin  l     chaib draa  b          real time decision making for large pomdps  in
+  th canadian conference on artificial intelligence 
+pineau  j   gordon  g     thrun  s          anytime point based approximations for large
+pomdps  journal of artificial intelligence research             
+posner  i   corke  p     newman  p          using text spotting to query the world  in proc  iros 
+posner  i   cummins  m     newman  p          a generative framework for fast urban labeling
+using spatial and temporal context  autonomous robots                
+prentice  s     roy  n          the belief roadmap  efficient planning in belief space by factoring
+the covariance  international journal of robotics research                     
+rasmussen  c  e     williams  c  k  i          gaussian processes for machine learning  mit
+press 
+ross  s   pineau  j   paquet  s     chaib draa  b          online planning algorithms for pomdps 
+journal of artificial intelligence research                
+smith  t     simmons  r          point based pomdp algorithms  improved analysis and implementation  in proc  uai 
+sommerlade  e     reid  i          probabilistic surveillance with multiple active cameras  in proc 
+icra 
+sondik  e  j          the optimal control of partially observable markov processes  ph d  thesis 
+stanford university 
+sridharan  m   wyatt  j     dearden  r          hippo  hierarchical pomdps for planning information processing and sensing actions on a robot  in proc  icaps 
+stachniss  c   grisetti  g     burgard  w          information gain based exploration using raoblackwellized particle filters  in proc  rss  cambridge  ma  usa 
+takeda  h     latombe  j          sensory uncertainty field for mobile robot navigation  proc 
+icra 
+tsotsos  j  k          on the relative complexity of active vs  passive visual search  international
+journal of computer vision               
+velez  j   hemann  g   huang  a   posner  i     roy  n          planning to perceive  exploiting
+mobility for robust object detection  in proc  icaps  freiburg  germany 
+ye  y     tsotsos  j          sensor planning for  d object search  computer vision and image
+understanding                
+
+   
+
+fi

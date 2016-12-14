@@ -1,0 +1,3483 @@
+journal of artificial intelligence research                  
+
+submitted          published        
+
+parallel model based diagnosis on multi core computers
+dietmar jannach
+thomas schmitz
+
+dietmar jannach tu dortmund de
+thomas schmitz tu dortmund de
+
+tu dortmund  germany
+
+kostyantyn shchekotykhin
+
+kostyantyn shchekotykhin aau at
+
+alpen adria university klagenfurt  austria
+
+abstract
+model based diagnosis  mbd  is a principled and domain independent way of analyzing why a system under examination is not behaving as expected  given an abstract
+description  model  of the systems components and their behavior when functioning normally  mbd techniques rely on observations about the actual system behavior to reason
+about possible causes when there are discrepancies between the expected and observed behavior  due to its generality  mbd has been successfully applied in a variety of application
+domains over the last decades 
+in many application domains of mbd  testing different hypotheses about the reasons
+for a failure can be computationally costly  e g   because complex simulations of the system behavior have to be performed  in this work  we therefore propose different schemes
+of parallelizing the diagnostic reasoning process in order to better exploit the capabilities
+of modern multi core computers  we propose and systematically evaluate parallelization
+schemes for reiters hitting set algorithm for finding all or a few leading minimal diagnoses using two different conflict detection techniques  furthermore  we perform initial
+experiments for a basic depth first search strategy to assess the potential of parallelization
+when searching for one single diagnosis  finally  we test the effects of parallelizing direct
+encodings of the diagnosis problem in a constraint solver 
+
+   introduction
+model based diagnosis  mbd  is a subfield of artificial intelligence that is concerned with
+the automated determination of possible causes when a system is not behaving as expected 
+in the early days of mbd  the diagnosed systems were typically hardware artifacts like
+electronic circuits  in contrast to earlier heuristic diagnosis approaches which connected
+symptoms with possible causes  e g   through expert rules  buchanan   shortliffe        
+mbd techniques rely on an abstract and explicit representation  model  of the examined
+system  such models contain both information about the systems structure  i e   the list of
+components and how they are connected  as well as information about the behavior of the
+components when functioning correctly  when such a model is available  the expected behavior  outputs  of a system given some inputs can thus be calculated  a diagnosis problem
+arises whenever the expected behavior conflicts with the observed system behavior  mbd
+techniques at their core construct and test hypotheses about the faultiness of individual
+components of the system  finally  a diagnosis is considered as a subset of the components
+that  if assumed to be faulty  can explain the observed behavior of the system 
+reiter        suggests a formal logical characterization of the diagnosis problem from
+first principles and proposed a breadth first tree construction algorithm to determine all
+c
+    
+ai access foundation  all rights reserved 
+
+fijannach  schmitz    shchekotykhin
+
+diagnoses for a given problem  due to the generality of the used knowledge representation
+language and the suggested algorithms for the computation of diagnoses  mbd has been
+later on applied to a variety of application problems other than hardware  the application
+fields of mbd  for example  include the diagnosis of knowledge bases and ontologies  process
+specifications  feature models  user interface specifications and user preference statements 
+and various types of software artifacts including functional and logic programs as well as
+vhdl  java or spreadsheet programs  felfernig  friedrich  jannach    stumptner       
+mateis  stumptner  wieland    wotawa        jannach   schmitz        wotawa      b 
+felfernig  friedrich  isak  shchekotykhin  teppan    jannach        console  friedrich 
+  dupre        friedrich   shchekotykhin        stumptner   wotawa        friedrich 
+stumptner    wotawa        white  benavides  schmidt  trinidad  dougherty    cortes 
+      friedrich  fugini  mussi  pernici    tagni        
+in several of these application fields  the search for diagnoses requires repeated computations based on modified versions of the original model to test the different hypotheses
+about the faultiness of individual components  in several works the original problem is
+converted into a constraint satisfaction problem  csp  and a number of relaxed versions
+of the original csp have to be solved to construct a new node in the search tree  felfernig
+et al         jannach   schmitz        white et al          depending on the application domain  the computation of csp solutions or the check for consistency can  however 
+be computationally intensive and actually represents the most costly operation during the
+construction of the search tree  similar problems arise when other underlying reasoning
+techniques  e g   for ontology debugging  friedrich   shchekotykhin         are used 
+current mbd algorithms are sequential in nature and generate one node at a time 
+therefore  they do not exploit the capabilities of todays multi core computer processors 
+which can nowadays be found even in mobile devices  in this paper  we propose new schemes
+to parallelize the diagnostic reasoning process to better exploit the available computing
+resources of modern computer hardware  in particular  this work comprises the following
+algorithmic contributions and insights based on experimental evaluations 
+ we propose two parallel versions of reiters        sound and complete hitting set
+ hs  algorithm to speed up the process of finding all diagnoses  which is a common
+problem setting in the above described mbd applications  both approaches can be
+considered as window based parallelization schemes  which means that only a limited number of search nodes is processed in parallel at each point in time 
+ we evaluate two different conflict detection techniques in a multi core setting  where
+the goal is to find a few leading diagnoses  in this set of experiments  multiple conflicts can be computed at the construction of each tree node using the novel
+mergexplain method  mxp   shchekotykhin  jannach    schmitz        and more
+processing time is therefore implicitly allocated for conflict generation 
+ we demonstrate that speedups can also be achieved through parallelization for scenarios in which we search for one single diagnosis  e g   when using a basic parallel
+depth first strategy 
+ we measure the improvements that can be achieved through parallel constraint solving
+when using a direct csp based encoding of the diagnosis problem  this experiment
+   
+
+fiparallel model based diagnosis on multi core computers
+
+illustrates that parallelization in the underlying solvers  in particular when using a
+direct encoding  can be advantageous 
+we evaluate the proposed parallelization schemes through an extensive set of experiments  the following problem settings are analyzed 
+ i  standard benchmark problems from the diagnosis research community 
+ ii  mutated csps from a constraint programming competition and from the domain of
+csp based spreadsheet debugging  jannach   schmitz        
+ iii  faulty owl ontologies as used for the evaluation of mbd based debugging techniques
+of very expressive ontologies  shchekotykhin  friedrich  fleiss    rodler        
+ iv  synthetically generated problems which allow us to vary the characteristics of the
+underlying diagnosis problem 
+the results show that using parallelization techniques can help to achieve substantial
+speedups for the diagnosis process  a  across a variety of application scenarios   b  without
+exploiting any specific knowledge about the structure of the underlying diagnosis problem 
+ c  across different problem encodings  and  d  also for application problems like ontology
+debugging which cannot be efficiently encoded as sat problems 
+the outline of the paper is as follows  in the next section  we define the main concepts of
+mbd and introduce the algorithm used to compute diagnoses  in section    we present and
+systematically evaluate the parallelization schemes for reiters hs tree method when the
+goal is to find all minimal diagnoses  in section    we report the results of the evaluations
+when we implicitly allocate more processing time for conflict generation using mxp for
+conflict detection  in section   we assess the potential gains for a comparably simple
+randomized depth first strategy and a hybrid technique for the problem of finding one
+single diagnosis  the results of the experiments for the direct csp encoding are reported
+in section    in section   we discuss previous works  the paper ends with a summary and
+an outlook in section   
+
+   reiters diagnosis framework
+this section summarizes reiters        diagnosis framework which we use as a basis for
+our work 
+    definitions
+reiter        formally characterized model based diagnosis using first order logic  the
+main definitions can be summarized as follows 
+definition       diagnosable system  a diagnosable system is described as a pair  sd 
+comps  where sd is a system description  a set of logical sentences  and comps represents
+the systems components  a finite set of constants  
+the connections between the components and the normal behavior of the components
+are described in terms of logical sentences  the normal behavior of the system components
+   
+
+fijannach  schmitz    shchekotykhin
+
+is usually described in sd with the help of a distinguished negated unary predicate ab    
+meaning not abnormal 
+a diagnosis problem arises when some observation o p obs of the systems input output
+behavior  again expressed as first order sentences  deviates from the expected system behavior  a diagnosis then corresponds to a subset of the systems components which we
+assume to behave abnormally  be faulty  and where these assumptions must be consistent
+with the observations  in other words  the malfunctioning of these components can be a
+possible reason for the observations 
+definition       diagnosis  given a diagnosis problem  sd  comps  obs   a diagnosis is
+a subset minimal set   comps such that sd y obs y tab c  c p u y t abpcq c p
+compszu is consistent 
+according to definition      we are only interested in minimal diagnoses  i e   diagnoses
+which contain no superfluous elements and are thus not supersets of other diagnoses  whenever we use the term diagnosis in the remainder of the paper  we therefore mean minimal
+diagnosis  whenever we refer to non minimal diagnoses  we will explicitly mention this fact 
+finding all diagnoses can in theory be done by simply trying out all possible subsets
+of comps and checking their consistency with the observations  reiter         however 
+proposes a more efficient procedure based on the concept of conflicts 
+definition       conflict  a conflict for  sd  comps  obs  is a set tc         ck u  comps
+such that sd y obs y t abpc  q       abpck qu is inconsistent 
+a conflict corresponds to a subset of components which  if assumed to behave normally 
+are not consistent with the observations  a conflict c is considered to be minimal  if no
+proper subset of c exists which is also a conflict 
+    hitting set algorithm
+reiter        then discusses the relationship between conflicts and diagnoses and claims
+in his theorem     that the set of diagnoses for a collection of  minimal  conflicts f is
+equivalent to the set h of minimal hitting sets   of f  
+to determine the minimal hitting sets and therefore the diagnoses  reiter proposes a
+breadth first search procedure and the construction of a hitting set tree  hs tree   whose
+construction is guided by conflicts  in the logic based definition of the mbd problem
+ reiter         the conflicts are computed by calls to a theorem prover  tp   the tp
+component itself is considered as a black box and no assumptions are made about how
+the conflicts are determined  depending on the application scenario and problem encoding 
+one can  however  also use specific algorithms like quickxplain  junker         progression  marques silva  janota    belov        or mergexplain  shchekotykhin et al         
+which guarantee that the computed conflict sets are minimal 
+the main principle of the hs tree algorithm is to create a search tree where each node
+is either labeled with a conflict or represents a diagnosis  in the latter case the node is
+not further expanded  otherwise  a child node is generated for each element of the nodes
+   given a collection c of subsets of a finite set s  a hitting set for c is a subset of s which contains at
+least one element from each subset in c  this corresponds to the set cover problem 
+
+   
+
+fiparallel model based diagnosis on multi core computers
+
+conflict and each outgoing edge is labeled with one component of the nodes conflict  in the
+subsequent expansions of each node the components that were used to label the edges on
+the path from the root of the tree to the current node are assumed to be faulty  each newly
+generated child node is again either a diagnosis or will be labeled with a conflict that does
+not contain any component that is already assumed to be faulty at this stage  if no conflict
+can be found for a node  the path labels represent a diagnosis in the sense of definition     
+      example
+in the following example we will show how the hs tree algorithm and the quickxplain
+ qxp  conflict detection technique can be combined to locate a fault in a specification
+of a csp  a csp instance i is defined as a tuple pv  d  cq  where v  tv            vn u is a
+set of variables  d  td            dn u is a set of domains for each of the variables in v   and
+c  tc            ck u is a set of constraints  an assignment to any subset x  v is a set of
+pairs a  txv    d  y          xvk   dm yu where vi p x is a variable and dj p di is a value from the
+domain of this variable  an assignment comprises exactly one variable value pair for each
+variable in x  each constraint ci p c is defined over a list of variables s  called scope 
+and forbids or allows certain simultaneous assignments to the variables in its scope  an
+assignment a to s satisfies a constraint ci if a comprises an assignment allowed by ci   an
+assignment a is a solution to i if it satisfies all constraints c 
+consider a csp instance i with variables v  ta  b  cu where each variable has the
+domain t       u and the following set of constraints are defined 
+c    a  b 
+
+c    b  c 
+
+c    c  a 
+
+c    b  c
+
+obviously  no solution for i exists and our diagnosis problem consists in finding subsets of
+the constraints whose definition is faulty  the engineer who has modeled the csp could 
+for example  have made a mistake when writing down c   which should have been b  c 
+eventually  c  was added later on to correct the problem  but the engineer forgot to remove
+c   given the faulty definition of i  two minimal conflicts exist  namely ttc   c   c u 
+tc   c uu  which can be determined with the help of qxp  given these two conflicts 
+the hs tree algorithm will finally determine three minimal hitting sets ttc u  tc   c u 
+tc   c uu  which are diagnoses for the problem instance  the set of diagnoses also contains
+the true cause of the error  the definition of c  
+let us now review in more detail how the hs tree qxp combination works for the example problem  we illustrate the tree construction in figure    in the logic based definition
+of reiter  the hs tree algorithm starts with a check if the observations obs are consistent
+with the system description sd and the components comps  in our application setting this
+corresponds to a check if there exists any solution for the csp instance   since this is not
+the case  a qxp call is made  which returns the conflict tc   c   c u  which is used as a
+label for the root node       of the tree  for each element of the conflict  a child node is
+created and the conflict element is used as a path label  at each tree node  again the consistency of sd  obs  and comps is tested  this time  however  all the elements that appear
+   comps are the constraints tc    c u and sd corresponds to the semantics logic of the constraints when
+working correctly  e g   abpc q   pa  bq  obs is empty in this example but could be a partial value
+assignment  test case  in another scenario 
+
+   
+
+fijannach  schmitz    shchekotykhin
+
+ 
+ c  c   c  
+c 
+
+ 
+
+c 
+
+c 
+
+ 
+
+ c  c  
+ 
+
+c 
+
+ c  c  
+
+c 
+
+c 
+
+c 
+ 
+
+figure    example for hs tree construction 
+as labels on the path from the root node to the current node are considered to be abnormal 
+in the csp diagnosis setting  this means that we check if there is any solution to a modified
+version of our original csp from which we remove the constraints that appear as labels on
+the path from the root to the current node 
+at node     c  is correspondingly considered to be abnormal  as removing c  from the
+csp is  however  not sufficient and no solution exists for the relaxed problem  another call
+to qxp is made  which returns the conflict tc   c u  tc u is therefore not a diagnosis and
+the new conflict is used as a label for node     the algorithm then proceeds in breadth first
+style and tests if assuming tc u or tc u to be individually faulty is consistent with the
+observations  which in our case means that a solution to the relaxed csp exists  since tc u
+is a diagnosis  at least one solution exists if c  is removed from the csp definition  the
+node is marked with   and not further expanded  at node     which does not correspond
+to a diagnosis  the already known conflict tc   c u can be reused as it has no overlap with
+the nodes path label and no call to t p  qxp  is required  at the last tree level  the
+nodes   and   are not further expanded  closed and marked with    because tc u has
+already been identified as a diagnosis at the previous level and the resulting diagnoses would
+be supersets of tc u  finally  the sets tc   c u and tc   c u are identified as additional
+diagnoses 
+      discussion
+soundness and completeness according to reiter         the breadth first construction scheme and the node closing rule ensure that only minimal diagnoses are computed 
+at the end of the hs tree construction process  each set of edge labels on the path from the
+root of the tree to a node marked with   corresponds to a diagnosis  
+greiner  smith  and wilkerson         later on  identified a potential problem in reiters
+algorithm for cases in which the conflicts returned by t p are not guaranteed to be minimal 
+an extension of the algorithm based on an hs dag  directed acyclic graph  structure was
+proposed to solve the problem 
+in the context of our work  we only use methods that return conflicts which are guaranteed to be minimal  for example  according to theorem   in the work of junker        
+given a set of formulas and a sound and complete consistency checker  qxp always returns
+   reiter        states in theorem     that given a set of conflict sets f   the hs tree algorithm outputs a
+pruned tree t such that the set thpnq n is a node of t labeled with  u corresponds to the set h of all
+minimal hitting sets of f where hpnq is a set of arc labels on the path from the node n to the root 
+
+   
+
+fiparallel model based diagnosis on multi core computers
+
+either a minimal conflict or no conflict  this minimality guarantee in turn means that the
+combination of the hs tree algorithm and qxp is sound and complete  i e   all returned
+solutions are actually  minimal  diagnoses and no diagnosis for the given set of conflicts
+will be missed  the same holds when computing multiple conflicts at a time with mxp
+ shchekotykhin et al         
+to simplify the presentation of our parallelization approaches  we will therefore rely
+on reiters original hs tree formulation  an extension to deal with the hs dag structure
+ greiner et al         is possible 
+on demand conflict generation and complexity in many of the above mentioned
+applications of mbd to practical problems  the conflicts have to be computed on demand 
+i e   during tree construction  because we cannot generally assume that the set of minimal
+conflicts is given in advance  depending on the problem setting  finding these conflicts can
+therefore be the computationally most intensive part of the diagnosis process 
+generally  finding hitting sets for a collection of sets is known to be an np hard problem
+ garey   johnson         moreover  deciding if an additional diagnosis exists when conflicts
+are computed on demand is np complete even for propositional horn theories  eiter  
+gottlob         therefore  a number of heuristics based  approximate and thus incomplete 
+as well as problem specific diagnosis algorithms have been proposed over the years  we
+will discuss such approaches in later sections  in the next section  we  however  focus on
+ worst case  application scenarios where the goal is to find all minimal diagnoses for a given
+problem  i e   we focus on complete algorithms 
+consider  for example  the problem of debugging program specifications  e g   constraint
+programs  knowledge bases  ontologies  or spreadsheets  with mbd techniques as mentioned
+above  in these application domains  it is typically not sufficient to find one minimal diagnosis  in the work of jannach and schmitz         for example  the spreadsheet developer
+is presented with a ranked list of all sets of formulas  diagnoses  that represent possible
+reasons why a certain test case has failed  the developer can then either inspect each of
+them individually or provide additional information  e g   test cases  to narrow down the set
+of candidates  if only one diagnosis was computed and presented  the developer would have
+no guarantee that it is the true cause of the problem  which can lead to limited acceptance
+of the diagnosis tool 
+
+   parallel hs tree construction
+in this section we present two sound and complete parallelization strategies for reiters
+hs tree method to determine all minimal diagnoses 
+    a non recursive hs tree algorithm
+we use a non recursive version of reiters sequential hs tree algorithm as a basis for the
+implementation of the two parallelization strategies  algorithm   shows the main loop of a
+breadth first procedure  which uses a list of open nodes to be expanded as a central data
+structure 
+the algorithm takes a diagnosis problem  dp  instance as input and returns the set
+ of diagnoses  the dp is given as a tuple  sd  comps  obs   where sd is the system
+   
+
+fijannach  schmitz    shchekotykhin
+
+algorithm    diagnose  main algorithm loop 
+input  a diagnosis problem  sd  comps  obs 
+result  the set  of diagnoses
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+  h  paths  h  conflicts  h 
+nodestoexpand   xgeneraterootnode sd  comps  obs y 
+while nodestoexpand  x y do
+newnodes   x y 
+node   head nodestoexpand   
+foreach c p node conflict do
+generatenode node  c    paths  conflicts  newnodes  
+nodestoexpand   tail nodestoexpand   newnodes 
+return  
+
+algorithm    generatenode  node generation logic 
+input  an existingnode to expand  a conflict element c p comps 
+the sets   paths  conflicts  newnodes
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+  
+  
+  
+  
+
+newpathlabel   existingnode pathlabel y  c  
+if pe l p    l  newpathlabelq   checkandaddpathppaths  newpathlabelq then
+node   new node newpathlabel  
+if d s p conflicts   s x newpathlabel  h then
+node conflict   s 
+else
+newconflicts   checkconsistency sd  comps  obs  node pathlabel  
+node conflict   head newconflicts  
+if node conflict  h then
+newnodes   newnodes  xnodey 
+conflicts   conflicts y newconflicts 
+else
+   y  node pathlabel  
+
+description  comps the set of components that can potentially be faulty and obs a set of
+observations  the method generaterootnode creates the initial node  which is labeled
+with a conflict and an empty path label  within the while loop  the first element of a firstin first out  fifo  list of open nodes nodestoexpand is taken as the current element 
+the function generatenode  algorithm    is called for each element of the nodes conflict
+and adds new leaf nodes  which still have to be explored  to a global list  these new
+nodes are then appended    to the remaining list of open nodes in the main loop  which
+   
+
+fiparallel model based diagnosis on multi core computers
+
+continues until no more elements remain for expansion   algorithm    generatenode 
+implements the node generation logic  which includes reiters proposals for conflict re use 
+tree pruning  and the management of the lists of known conflicts  paths and diagnoses  the
+method determines the path label for the new node and checks if the new path label is not
+a superset of an already found diagnosis 
+algorithm    checkandaddpath  adding a new path label with a redundancy
+check 
+input  the previously explored paths  the newpathlabel to be explored
+result  boolean stating if newpathlabel was added to paths
+
+ 
+
+if e l p paths   l  newpathlabel then
+paths   paths y newpathlabel 
+return true 
+
+ 
+
+return false 
+
+ 
+ 
+
+the function checkandaddpath  algorithm    is then used to check if the node was
+not already explored elsewhere in the tree  the function returns true if the new path label
+was successfully inserted into the list of known paths  otherwise  the list of known paths
+remains unchanged and the node is closed 
+for new nodes  either an existing conflict is reused or a new one is created with a call
+to the consistency checker  theorem prover   which tests if the new node is a diagnosis
+or returns a set of minimal conflicts otherwise  depending on the outcome  a new node is
+added to the list nodestoexpand or a diagnosis is stored  note that algorithm   has no
+return value but instead modifies the sets   paths  conflicts  and newnodes  which were
+passed as parameters 
+    level wise parallelization
+our first parallelization scheme examines all nodes of one tree level in parallel and proceeds
+with the next level once all elements of the level have been processed  in the example shown
+in figure    this would mean that the computations  consistency checks and theorem prover
+calls  required for the three first level nodes labeled with tc u  tc u  and tc u can be done
+in three parallel threads  the nodes of the next level are explored when all threads of the
+previous level are finished 
+using this level wise parallelization  lwp  scheme  the breadth first character is maintained  the parallelization of the computations is generally feasible because the consistency
+checks for each node can be done independently from those done for the other nodes on the
+same level  synchronization is only required to make sure that no thread starts exploring a
+path which is already under examination by another thread 
+algorithm   shows how the sequential algorithm   can be adapted to support this
+parallelization approach  again  we maintain a list of open nodes to be expanded  the
+difference is that we run the expansion of all these nodes in parallel and collect all the
+   a limitation regarding the search depth or the number of diagnoses to find can be easily integrated into
+this scheme 
+
+   
+
+fijannach  schmitz    shchekotykhin
+
+algorithm    diagnoselw  level wise parallelization 
+input  a diagnosis problem  sd  comps  obs 
+result  the set  of diagnoses
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+  
+
+  h  conf licts  h  paths   h 
+nodestoexpand   xgeneraterootnode sd  comps  obs y 
+while nodestoexpand  x y do
+newnodes   x y 
+foreach node p nodestoexpand do
+foreach c p node conflict do
+   do computations in parallel
+threads execute generatenode node  c    paths  conflicts  newnodes   
+threads await   
+nodestoexpand   newnodes 
+
+   wait for current level to complete
+   prepare next level
+
+return  
+
+nodes of the next level in the variable newnodes  once the current level is finished  we
+overwrite the list nodestoexpand with the list containing the nodes of the next level 
+the java like api calls used in the pseudo code in algorithm   have to be interpreted
+as follows  the statement threads execute   takes a function as a parameter and schedules
+it for execution in a pool of threads of a given size  with a thread pool of  e g   size   
+the generation of the first two nodes would be done in parallel and the next ones would
+be queued until one of the threads has finished  with this mechanism  we can ensure that
+the number of threads executed in parallel is less than or equal to the number of hardware
+threads or cpus 
+the statement threads await   is used for synchronization and blocks the execution of
+the subsequent code until all scheduled threads are finished  to guarantee that the same
+path is not explored twice  we make sure that no two threads in parallel add a node with
+the same path label to the list of known paths  this can be achieved by declaring the
+function checkandaddpath as a critical section  dijkstra         which means that no
+two threads can execute the function in parallel  furthermore  we have to make the access
+to the global data structures  e g   the already known conflicts or diagnoses  thread safe 
+i e   ensure that no two threads can simultanuously manipulate them  
+    full parallelization
+in lwp  there can be situations where the computation of a conflict for a specific node
+takes particularly long  this  however  means that even if all other nodes of the current
+level are finished and many threads are idle  the expansion of the hs tree cannot proceed
+before the level is completed  algorithm   shows our proposed full parallelization  fp 
+algorithm variant  which immediately schedules every expandable node for execution and
+thereby avoids such potential cpu idle times at the end of each level 
+   controlling such concurrency aspects is comparably simple in modern programming languages like java 
+e g   by using the synchronized keyword 
+
+   
+
+fiparallel model based diagnosis on multi core computers
+
+algorithm    diagnosefp  full parallelization 
+input  a diagnosis problem  sd  comps  obs 
+result  the set  of diagnoses
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+  
+  
+  
+
+  h  paths  h  conflicts  h 
+nodestoexpand   xgeneraterootnode sd  comps  obs y 
+size      lastsize     
+while psizelastsizeq   pthreads activethreads  q do
+for i    to size  lastsize do
+node   nodestoexpand get lastsize   i  
+foreach c p node conflict do
+threads execute generatenodefp node  c    paths  conflicts 
+nodestoexpand   
+lastsize   size 
+wait   
+size   nodestoexpand length   
+return  
+
+the main loop of the algorithm is slightly different and basically monitors the list of
+nodes to expand  whenever new entries in the list are observed  i e   when the last observed
+list size is different from the current one  it retrieves the recently added elements and adds
+them to the thread queue for execution  the algorithm returns the diagnoses when no new
+elements are added since the last check and no more threads are active  
+with fp  the search does not necessarily follow the breadth first strategy anymore and
+non minimal diagnoses are found during the process  therefore  whenever we find a new
+diagnosis d  we have to check if the set of known diagnoses  contains supersets of d and
+remove them from  
+the updated generatenode method is listed in algorithm    when updating the shared
+data structures  nodestoexpand  conflicts  and    we again make sure that the threads do
+not interfere with each other  the mutual exclusive section is marked with the synchronized
+keyword 
+when compared to lwp  fp does not have to wait at the end of each level if a specific
+node takes particularly long to generate  on the other hand  fp needs more synchronization
+between threads  so that in cases where the last nodes of a level are finished at the same
+time  lwp could also be advantageous  we will evaluate this aspect in section     
+    properties of the algorithms
+algorithm   together with algorithms   and   corresponds to an implementation of the
+hs tree algorithm  reiter         algorithm   implements the breadth first search strategy
+ point     in reiters hs tree algorithm  since the nodes stored in the list nodestoexpand
+   the functions wait   and notify   implement the semantics of pausing a thread and awaking a paused
+thread in the java programming language and are used to avoid active waiting loops 
+
+   
+
+fijannach  schmitz    shchekotykhin
+
+algorithm    generatenodefp  extended node generation logic 
+input  an existingnode to expand  c p comps 
+sets   paths  conflicts  nodestoexpand
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+  
+  
+  
+  
+  
+  
+  
+
+  
+
+newpathlabel   existingnode pathlabel y  c  
+if pe l p    l  newpathlabelq   checkandaddpathppaths  newpathlabelq then
+node   new node newpathlabel  
+if d s p conflicts   s x newpathlabel  h then
+node conflict   s 
+else
+newconflicts   checkconsistency sd  comps  obs  node pathlabel  
+node conflict   head newconflicts  
+synchronized
+if node conflict  h then
+nodestoexpand   nodestoexpand  xnodey 
+conflicts   conflicts y newconflicts 
+else if e d p    d  newpathlabel then
+   y  node pathlabel  
+for d p    d  newpathlabel do
+   z d 
+notify   
+
+are processed iteratively in a first in first out order  see lines   and     algorithm   first
+checks if the pruning rules  i  and  ii  of reiter can be applied in line    these rules state
+that a node can be pruned if  i  there exists a diagnosis or  ii  there is a set of labels
+corresponding to some path in the tree such that it is a subset of the set of labels on the
+path to the node  pruning rule  ii  is implemented through algorithm    pruning rule  iii 
+of reiters algorithm is not necessary since in our settings a tp  call guarantees to return
+minimal conflicts 
+finally  point     of reiters hs tree algorithm description is implemented in the lines
+    of algorithm    here  the algorithm checks if there is a conflict that can be reused as a
+node label  in case no reuse is possible  the algorithm calls the theorem prover tp to find
+another minimal conflict  if a conflict is found  the node is added to the list of open nodes
+nodestoexpand   otherwise  the set of node path labels is added to the set of diagnoses 
+this corresponds to the situation in reiters algorithm where we would mark a node in the
+hs tree with the   symbol  note that we do not label any nodes with   as done in reiters
+algorithms since we simply do not store such nodes in the expansion list 
+overall  we can conclude that our hs tree algorithm implementation  algorithm   to
+   has the same properties as reiters original hs tree algorithm  namely  each hitting set
+returned by the algorithm is minimal  soundness  and all existing minimal hitting sets are
+found  completeness  
+   
+
+fiparallel model based diagnosis on multi core computers
+
+      level wise parallelization  lwp 
+theorem      level wise parallelization is sound and complete 
+proof  the proof is based on the fact that lwp uses the same expansion and pruning
+techniques as the sequential algorithm  algorithms   and     the main loop in line   applies
+the same procedure as the original algorithm with the only difference that the executions
+of algorithm   are done in parallel for each level of the tree  therefore  the only difference
+between the sequential algorithm and lwp lies in the order in which the nodes of one level
+are labeled and generated 
+let us assume that there are two nodes n  and n  in the tree and that the sequential
+hs tree algorithm will process n  before n    assuming that neither n  nor n  correspond
+to diagnoses  the sequential algorithm   would correspondingly first add the child nodes of
+n  to the queue of open nodes and later on append the child nodes of n   
+if we parallelize the computations needed for the generation of n  and n  in lwp  it
+can happen that the computations for n  need longer than those for n    in this case the
+child nodes of n  will be placed in the queue first  the order of how these nodes are
+subsequently processed is  however  irrelevant for the computation of the minimal hitting
+sets  since neither the labeling nor the pruning rules are influenced by it  in fact  the
+labeling of any node n only depends on whether or not a minimal conflict set f exists such
+that hpnq x f  h  but not on the other nodes on the same level  the pruning rules
+state that any node n can be pruned if there exists a node n  labeled with   such that
+hpn  q  hpnq  i e   supersets of already found diagnoses can be pruned  if n and n  are
+on the same level  then  hpnq    hpn  q   consequently  the pruning rule is applied only if
+hpnq  hpn  q  therefore  the order of nodes  i e   which of the nodes is pruned  is irrelevant
+and no minimal hitting set is lost  consequently  lwp is complete 
+soundness of the algorithm follows from the fact that lwp constructs the hitting sets
+always in the order of increasing cardinality  therefore  lwp will always return only minimal hitting sets even in scenarios in which we should stop after k diagnoses are found 
+where    k  n is a predefined constant and n is the total number of diagnoses of a
+problem 
+      full parallelization  fp 
+the minimality of the hitting sets encountered during the search is not guaranteed by fp 
+since the algorithm schedules a node for processing immediately after its generation  line  
+of algorithm     the special treatment in the generatenodefp function ensures that no
+supersets of already found hitting sets are added to  and that supersets of a newly found
+hitting set will be removed in a thread safe manner  lines        of algorithm     due
+to this change in generatenodefp  the analysis of soundness and completeness has to be
+done for two distinct cases 
+theorem      full parallelization is sound and complete  if applied to find all diagnoses
+up to some cardinality 
+proof  fp stops if either  i  no further hitting set exists  i e   all leaf nodes of a tree are
+labeled either with   or with    or  ii  the predefined cardinality  tree depth  is reached  in
+this latter case  every leaf node of the tree is labeled either with       or a minimal conflict
+   
+
+fijannach  schmitz    shchekotykhin
+
+set  case  ii  can be reduced to  i  by removing all branches from the tree that are labeled
+with a minimal conflict  these branches are irrelevant since they can only contribute to
+minimal hitting sets of higher cardinality  therefore  without loss of generality  we can limit
+our discussion to case  i  
+according to the definition of generatenodefp  the tree is built using the same pruning
+rule as done in the sequential hs tree algorithm  as a consequence  the tree generated by
+fp must comprise at least all nodes of the tree that is generated by the sequential hstree procedure  therefore  according to theorem     in the work of reiter        the
+tree t generated by fp must comprise a set of leaf nodes labeled with   such that the
+set thpnq n is a node of t labeled by  u corresponds to the set h of all minimal hitting
+sets  moreover  the result returned by fp comprises only minimal hitting sets  because
+generatenodefp removes all hitting sets from h which are supersets of other hitting sets 
+consequently  fp is sound and complete  when applied to find all diagnoses 
+theorem      full parallelization cannot guarantee completeness and soundness when
+applied to find the first k diagnoses  i e     k  n   where n is the total number of
+diagnoses of a problem 
+proof  the proof can be done by constructing an example for which fp returns at least
+one non minimal hitting set in the set   thus violating definition      for instance  this
+situation might occur if fp is applied to find one single diagnosis for the example problem
+presented in section        let us assume that the generation of the node corresponding
+to the path c  is delayed  e g   because the operating system scheduled another thread for
+execution first  and node   is correspondingly generated first  in this case  the algorithm
+would return the non minimal hitting set tc   c u which is not a diagnosis 
+note that the elements of the set  returned by fp in this case can be turned to
+diagnoses by applying a minimization algorithm like inv quickxplain  shchekotykhin 
+friedrich  rodler    fleiss         an algorithm that adopts the principles of quickxplain
+and applies a divide and conquer strategy to find one minimal diagnosis for a given set of
+inconsistent constraints 
+given a hitting set h and a diagnosis problem  the algorithm is capable of computing a
+minimal hitting set h    h requiring only op h      h     logp h   h    qqq calls to the theorem
+prover tp  the first part   h      reflects the computational costs of determining whether or
+not h   is minimal  the second part represents the number of subproblems that must be
+considered by the divide and conquer algorithm in order to find the minimal hitting set h    
+    evaluation
+to determine which performance improvements can be achieved through the various forms
+of parallelization proposed in this paper  we conducted a series of experiments with diagnosis
+problems from a number of different application domains  specifically  we used electronic
+circuit benchmarks from the dx competition      synthetic track  faulty descriptions of
+constraint satisfaction problems  csps   as well as problems from the domain of ontology
+debugging  in addition  we ran experiments with synthetically created diagnosis problems
+to analyze the impact of varying different problem characteristics  all diagnosis algorithms
+   
+
+fiparallel model based diagnosis on multi core computers
+
+evaluated in this paper were implemented in java unless noted otherwise  generally  we
+use wall clock times as our performance measure 
+in the main part of the paper  we will focus on the results for the dx competition
+problems as this is the most widely used benchmark  the results for the other problem
+setups will be presented and discussed in the appendix of the paper  in most cases  the
+results for the dx competition problems follow a similar trend as those that are achieved
+with the other experiments 
+in this section we will compare the hs tree parallelization schemes lwp and fp with
+the sequential version of the algorithm  when the goal is to find all diagnoses 
+      dataset and procedure
+for this set of experiments  we selected the first five systems of the dx competition     
+synthetic track  see table     kurtoglu   feldman         for each system  the competition specifies    scenarios with injected faults resulting in different faulty output values 
+we used the system description and the given input and output values for the diagnosis
+process  the additional information about the injected faults was of course ignored  the
+problems were converted into constraint satisfaction problems  in the experiments we used
+choco  prudhomme  fages    lorca        as a constraint solver and qxp for conflict
+detection  which returns one minimal conflict when called during node construction 
+as the computation times required for conflict identification strongly depend on the
+order of the possibly faulty constraints  we shuffled the constraints for each test and repeated
+all tests     times  we report the wall clock times for the actual diagnosis task  the times
+required for input and output are independent from the hs tree construction scheme and
+not relevant for our benchmarks  for the parallel approaches  we used a thread pool of size
+four  
+table   shows the characteristics of the systems in terms of the number of constraints
+  c  and the problem variables   v    the numbers of the injected faults   f  and the
+numbers of the calculated diagnoses   d  vary strongly because of the different scenarios
+for each system  for both columns we show the ranges of values over all scenarios  the
+columns  d and  d  indicate the average number of diagnoses and their average cardinality 
+as can be seen  the search tree for the diagnosis can become extremely broad with up to
+      diagnoses with an average diagnosis size of only      for the system c    
+      results
+table   shows the averaged results when searching for all minimal diagnoses  we first list the
+running times in milliseconds for the sequential version  seq   and then the improvements
+of lwp or fp in terms of speedup and efficiency with respect to the sequential version 
+speedup sp is computed as sp  t   tp   where t  is the wall time when using   thread  the
+sequential algorithm  and tp the wall time when p parallel threads are used  a speedup of
+   having four hardware threads is a reasonable assumption on standard desktop computers and also mobile
+devices  the hardware we used for the evaluation in this chapter  a laptop with an intel i      qm
+cpu    gb ram  running windows    also had four cores with hyperthreading  the results of an
+evaluation on server hardware with    cores are reported later in this section 
+   for systems marked with    the search depth was limited to their actual number of faults to ensure that
+the sequential algorithm terminates within a reasonable time frame 
+
+   
+
+fijannach  schmitz    shchekotykhin
+
+system
+     
+  l  
+      
+      
+c    
+
+ c
+  
+  
+  
+  
+   
+
+ v
+  
+  
+  
+  
+   
+
+ f
+   
+   
+   
+   
+   
+
+ d
+        
+       
+           
+          
+         
+
+ d
+     
+    
+       
+     
+       
+
+ d 
+    
+    
+    
+    
+    
+
+table    characteristics of the selected dxc benchmarks 
+  would therefore mean that the needed computation times were halved  a speedup of   
+which is the theoretical optimum when using   threads  means that the time was reduced
+to one quarter  the efficiency ep is defined as sp  p and compares the speedup with the
+theoretical optimum  the fastest algorithm for each system is highlighted in bold 
+system
+     
+  l  
+      
+      
+c    
+
+seq  qxp 
+ ms 
+  
+   
+   
+      
+      
+
+lwp qxp 
+s 
+e 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+fp qxp 
+s 
+e 
+         
+         
+         
+         
+         
+
+table    observed performance gains for the dxc benchmarks when searching for all diagnoses 
+
+in all tests  both parallelization approaches outperform the sequential algorithm  furthermore  the differences between the sequential algorithm and one of the parallel approaches were statistically significant  p        in    of the     tested scenarios  for
+all systems  fp was more efficient than lwp and the speedups range from      to     
+ i e   up to a reduction of running times of more than       in    of the     scenarios
+the differences between lwp and fp were statistically significant  a trend that can be
+observed is that the efficiency of fp is higher for the more complex problems  the reason is
+that for these problems the time needed for the node generation is much larger in absolute
+numbers than the additional overhead times that are required for thread synchronization 
+      adding more threads
+in some use cases the diagnosis process can be done on powerful server architectures that
+often have even more cpu cores than modern desktop computers  in order to assess to
+which extent more than   threads can help to speed up the diagnosis process  we tested the
+different benchmarks on a server machine with    cpu cores  for this test we compared
+fp with           and    threads to the sequential algorithm 
+the results of the dxc benchmark problems are shown in table    for all tested systems
+the diagnosis process was faster using   instead of   threads and substantial speedups up
+to      could be achieved compared to the sequential diagnosis  which corresponds to a
+   
+
+fiparallel model based diagnosis on multi core computers
+
+runtime reduction of      for all but one system  the utilization of    threads led to
+additional speedups  using    threads was the fastest for   of the   tested systems  the
+efficiency  however  degrades as more threads are used  because more time is needed for the
+synchronization between threads  using more threads than the hardware actually has cores
+did not result in additional speedups for any of the tested systems  the reason is that for
+most of the time all threads are busy with conflict detection  e g   finding solutions to csps 
+and use almost      of the processing power assigned to them 
+system
+     
+  l  
+     
+      
+c    
+
+seq  qxp 
+ ms 
+  
+   
+      
+      
+      
+
+s 
+    
+    
+    
+    
+    
+
+e 
+    
+    
+    
+    
+    
+
+s 
+    
+    
+    
+    
+    
+
+fp qxp 
+e 
+s  
+e  
+              
+              
+              
+              
+              
+
+s  
+    
+    
+    
+    
+    
+
+e  
+    
+    
+    
+    
+    
+
+table    observed performance gains for the dxc benchmarks on a server with    hardware
+threads 
+
+      additional experiments
+the details of additional experiments that were conducted to compare the proposed parallelization schemes with the sequential hs tree algorithm are presented in section a   in the
+appendix  the results show that significant speedups can also be achieved for other constraint satisfaction problems  section a      and ontologies  section a       the appendix
+furthermore contains an analysis of effects when adding more threads to the benchmarks of
+the csps and ontologies  section a      and presents the results of a simulation experiment
+in which we systematically varied different problem characteristics  section a      
+      discussion
+overall  the results of the evaluations show that both parallelization approaches help to improve the performance of the diagnosis process  as for all tested scenarios both approaches
+achieved speedups  in most cases fp is faster than lwp  however  depending on the
+specifics of the given problem setting  using lwp can be advantageous in some situations 
+e g   when the time needed to generate each node is very small or when the conflict generation time does not vary strongly  in these cases the synchronization overhead needed for
+fp is higher than the cost of waiting for all threads to finish  for the tested ontologies in
+section a      this was the case in four of the tested scenarios 
+although fp is on average faster than lwp and significantly better than the sequential
+hs tree construction approach  for some of the tested scenarios its efficiency is still far
+from the optimum of    this can be explained by different effects  for example  the effect
+of false sharing can happen if the memory of two threads is allocated to the same block
+ bolosky   scott         then every access to this memory block is synchronized although
+the two threads do not really share the same memory  another possible effect is called cache
+   
+
+fijannach  schmitz    shchekotykhin
+
+contention  chandra  guo  kim    solihin         if threads work on different computing
+cores but share the same memory  cache misses can occur more often depending on the
+problem characteristics and thus the theoretical optimum cannot be reached in these cases 
+
+   parallel hs tree construction with multiple conflicts per node
+both in the sequential and the parallel version of the hs tree algorithm  the theorem
+prover tp call corresponds to an invocation of qxp  whenever a new node of the hs tree
+is created  qxp searches for exactly one new conflict in case none of the already known
+conflicts can be reused  this strategy has the advantage that the call to tp immediately
+returns after one conflict has been determined  this in turn means that the other parallel
+execution threads immediately see this new conflict in the shared data structures and
+can  in the best case  reuse it when constructing new nodes 
+a disadvantage of computing only one conflict at a time with qxp is that the search
+for conflicts is restarted on each invocation  we recently proposed a new conflict detection
+technique called mergexplain  mxp   shchekotykhin et al          which is capable of
+computing multiple conflicts in one call  the general idea of mxp is to continue the search
+after the identification of the first conflict and look for additional conflicts in the remaining
+constraints  or logical sentences  in a divide and conquer approach 
+when combined with a sequential hs tree algorithm  the effect is that during tree construction more time is initially spent for conflict detection before the construction continues
+with the next node  in exchange  the chances of having a conflict available for reuse increase
+for the next nodes  at the same time  the identification of some of the conflicts is less timeintensive as smaller sets of constraints have to be investigated due to the divide and conquer
+approach of mxp  an experimental evaluation on various benchmark problems shows that
+substantial performance improvements are possible in a sequential hs tree scenario when
+the goal is to find a few leading diagnoses  shchekotykhin et al         
+in this section  we explore the benefits of using mxp with the parallel hs tree construction schemes proposed in the previous section  when using mxp in combination with
+multiple threads  the implicit effect is that more cpu processing power is devoted to conflict generation as the individual threads need more time to complete the construction of a
+new node  in contrast to the sequential version  the other threads can continue with their
+work in parallel 
+in the next section  we will briefly review the mxp algorithm before we report the
+results of the empirical evaluation on our benchmark datasets  section      
+    background  quickxplain and mergexplain
+algorithm   shows the qxp conflict detection technique of junker        applied to the
+problem of finding a conflict for a diagnosis problem during hs tree construction 
+qxp operates on two sets of constraints  which are modified through recursive calls 
+the background theory b comprises the constraints that will not be considered anymore
+to be part of a conflict at the current stage  at the beginning  this set contains sd  obs 
+   we use the term constraints here as in the original formulation  as qxp is independent from the
+underlying reasoning technique  the elements of the sets could be general logical sentences as well 
+
+   
+
+fiparallel model based diagnosis on multi core computers
+
+algorithm    quickxplain  qxp 
+input  a diagnosis problem  sd  comps  obs   a set visitednodes of elements
+output  a set containing one minimal conflict cs  c
+  b  sd y obs y  ab c  c p visitednodes   c  t abpcq c p compszvisitednodesu 
+  if isconsistent b y c  then return no conflict 
+  else if c  h then return h 
+  return tc  abpcq p getconflictpb  b  cqu 
+ 
+ 
+ 
+ 
+ 
+  
+
+function getconflict  b  d  c 
+if d  h   isconsistent b  then return h 
+if  c     then return c 
+split c into disjoint  non empty sets c  and c 
+d   getconflict  b y c    c    c   
+d   getconflict  b y d    d    c   
+return d  y d   
+
+and the set of nodes on the path to the current node of the hs tree  visited nodes   the
+set c represents the set of constraints in which we search for a conflict 
+if there is no conflict or c is empty  the algorithm immediately returns  otherwise getconflict is called  which corresponds to junkers qxp method with the minor difference
+that getconflict does not require a strict partial order for the set of constraints c  we
+introduce this variant of qxp since we cannot always assume that prior fault information
+is available that would allow us to generate this order 
+the rough idea of qxp is to relax the input set of faulty constraints c by partitioning
+it into two sets c  and c    if c  is a conflict  the algorithm continues partitioning c  in
+the next recursive call  otherwise  i e   if the last partitioning has split all conflicts of c so
+that there are no conflicts left in c    the algorithm extracts a conflict from the sets c  and
+c    this way  qxp finally identifies individual constraints which are inconsistent with the
+remaining consistent set of constraints and the background theory 
+mxp builds on the ideas of qxp but computes multiple conflicts in one call  if they
+exist   the general procedure is shown in algorithm    after the initial consistency checks 
+the method findconflicts is called  which returns a tuple xc     y  where c   is a set of
+remaining consistent constraints and  is a set of found conflicts  the function recursively
+splits the set c of constraints in two halves  these parts are individually checked for
+consistency  which allows us to exclude larger consistent subsets of c from the search process 
+besides the potentially identified conflicts  the calls to findconflicts also return two sets of
+constraints which are consistent  c   and c   q  if the union of these two sets is not consistent 
+we look for a conflict within c   y c    and the background theory  in the style of qxp 
+more details can be found in our earlier work  where also the results of an in depth
+experimental analysis are reported  shchekotykhin et al         
+   
+
+fijannach  schmitz    shchekotykhin
+
+algorithm    mergexplain  mxp 
+input  a diagnosis problem  sd  comps  obs   a set visitednodes of elements
+output    a set of minimal conflicts
+  b  sd y obs y  ab c  c p visitednodes   c  t abpcq c p compszu 
+  if
+isconsistentpbq then return no solution 
+  if isconsistentpb y cq then return h 
+  x   y  findconflictspb  cq
+  return tc  abpcq p   
+ 
+ 
+ 
+ 
+  
+  
+  
+  
+  
+  
+  
+  
+
+function findconflicts  b  c  returns tuple xc     y
+if isconsistent b y c  then return xc  hy 
+if  c     then return xh  tcuy 
+split c into disjoint  non empty sets c  and c 
+xc       y  findconflictspb  c  q
+xc       y  findconflictspb  c  q
+    y    
+while isconsistentpc   y c   y bq do
+x  getconflictpb y c     c     c   q
+cs  x y getconflictpb y x  x  c   q
+c    c   z tu where  p x
+   y tcs u
+return xc   y c     y 
+
+    evaluation
+in this section we evaluate the effects of parallelizing the diagnosis process when we use
+mxp instead of qxp to calculate the conflicts  as in  shchekotykhin et al         we
+focus on finding a limited set of  five  minimal diagnoses 
+      implementation variants
+using mxp during parallel tree construction implicitly means that more time is allocated
+for conflict generation than when using qxp before proceeding to the next node  to
+analyze to which extent the use of mxp is beneficial we tested three different strategies of
+using mxp within the full parallelization method fp 
+strategy      in this configuration we simply called mxp instead of qxp during node
+generation  whenever mxp finds a conflict  it is added to the global list of known conflicts
+and can be  re  used by other parallel threads  the thread that executes mxp during node
+generation continues with the next node when mxp returns 
+strategy      this strategy implements a variant of mxp which is slightly more complex 
+once mxp finds the first conflict  the method immediately returns this conflict such that
+the calling thread can continue exploring additional nodes  at the same time  a new background thread is started which continues the search for additional conflicts  i e   it completes
+the work of the mxp call  in addition  whenever mxp finds a new conflict it checks if
+any other already running node generation thread could have reused the conflict if it had
+   
+
+fiparallel model based diagnosis on multi core computers
+
+been available beforehand  if this is the case  the search for conflicts of this other thread
+is stopped as no new conflict is needed anymore  strategy     could in theory result in
+better cpu utilization  as we do not have to wait for a mxp call to finish before we can
+continue building the hs tree  however  the strategy also leads to higher synchronization
+costs between the threads  e g   to notify working threads about newly identified conflicts 
+strategy      finally  we parallelized the conflict detection procedure itself  whenever
+the set c of constraints is split into two parts  the first recursive call of findconflicts is
+queued for execution in a thread pool and the second call is executed in the current thread 
+when both calls are finished  the algorithm continues 
+we experimentally evaluated all three configurations on our benchmark datasets  our
+results showed that strategy     did not lead to measurable performance improvements
+when compared to strategy      the additional communication costs seem to be higher
+than what can be saved by executing the conflict detection process in the background in its
+own thread  strategy     can be applied in combination with the other strategies  but similar
+to the experiments reported for the sequential hs tree construction  shchekotykhin et al  
+       no additional performance gains could be observed due to the higher synchronization
+costs  the limited effectiveness of strategies     and     can in principle be caused by the
+nature of our benchmark problems and these strategies might be more advantageous in
+different problem settings  in the following  we will therefore only report the results of
+applying strategy     
+      results for the dxc benchmark problems
+the results for the dxc benchmarks are shown in table    the left side of the table shows
+the results when using qxp and the right hand side shows the results for mxp  the
+speedups shown in the fp columns refer to the respective sequential algorithms using the
+same conflict detection technique 
+using mxp instead of qxp is favorable when using a sequential hs tree algorithm
+as also reported in the work about mxp  shchekotykhin et al          the reduction of
+running times ranges from     to      the speedups obtained through fp when using
+mxp are comparable to fp using qxp and range from      to       i e   they lead to a
+reduction of the running times of up to      these speedups were achieved in addition to
+the speedups that the sequential algorithm using mxp could already achieve over qxp 
+the best results are printed in bold face in table   and using mxp in combination
+with fp consistently performs best  overall  using fp in combination with mxp was
+    to     faster than the sequential algorithm using qxp  these tests indicate that
+our parallelization method works well also for conflict detection techniques that are more
+complex than qxp and  as in this case  return more than one conflict for each call  in
+addition  investing more time for conflict detection in situations where the goal is to find a
+few leading diagnoses proves to be a promising strategy 
+      additional experiments and discussion
+again we ran additional experiments on constraint problems and ontology debugging problems  the detailed results are provided in section a   
+   
+
+fijannach  schmitz    shchekotykhin
+
+system
+     
+  l  
+     
+     
+c   
+
+seq  qxp 
+ ms 
+  
+  
+  
+   
+     
+
+fp qxp 
+s 
+e 
+         
+         
+         
+         
+         
+
+seq  mxp 
+ ms 
+  
+  
+  
+   
+     
+
+fp mxp 
+s 
+e 
+         
+         
+         
+         
+         
+
+table    observed performance gains for the dxc benchmarks  qxp vs mxp  
+
+overall  the results obtained when embedding mxp in the sequential algorithm confirm
+the results by shchekotykhin et al         that using mxp is favorable over qxp for all
+but a few very small problem instances  however  we can also observe that allocating more
+time for conflict detection with mxp in a parallel processing setup can help to further
+speedup the diagnosis process when we search for a number of leading diagnoses  the bestperforming configuration across all experiments is using the full parallelization method in
+combination with mxp as this setup led to the shortest computation times in    out of
+the    tested scenarios  dx benchmarks  csps  ontologies  
+
+   parallelized depth first and hybrid search
+in some application domains of mbd  finding all minimal diagnoses is either not required
+or simply not possible because of the computational complexity or application specific constraints on the allowed response times  for such settings  a number of algorithms have been
+proposed over the years  which for example try to find one or a few minimal diagnoses very
+quickly or find all diagnoses of a certain cardinality  metodi  stern  kalech    codish       
+feldman  provan    van gemund      b  de kleer         in some cases  the algorithms
+can in principle be extended or used to find all diagnoses  they are  however  not optimized
+for this task 
+instead of analyzing the various heuristic  stochastic or approximative algorithms proposed in the literature individually with respect to their potential for parallelization  we will
+analyze in the next section if parallelization can be helpful already for the simple class of
+depth first algorithms  in that context  we will also investigate if measurable improvements
+can be achieved without using any  domain specific  heuristic  finally  we will propose a
+hybrid strategy which combines depth first and full parallel hs tree construction and will
+conduct additional experiments to assess if this strategy can be advantageous for the task
+of quickly finding one minimal diagnosis 
+    parallel random depth first search
+the section introduces a parallelized depth first search algorithm to quickly find one single
+diagnosis  as the different threads explore the tree in a partially randomized form  we call
+the scheme parallel random depth first search  prdfs  
+   
+
+fiparallel model based diagnosis on multi core computers
+
+      algorithm description
+algorithm   shows the main program of a recursive implementation of prdfs  similar to
+the hs tree algorithm  the search for diagnoses is guided by conflicts  this time  however 
+the algorithm greedily searches in a depth first manner  once a diagnosis is found  it
+has to be checked for minimality because the diagnosis can contain redundant elements 
+the minimization of a non minimal diagnosis can be achieved by calling a method like
+inv quickxplain  shchekotykhin et al         or by simply trying to remove one element
+of the diagnosis after the other and checking if the resulting set is still a diagnosis 
+algorithm    diagnoseprdfs  parallelized random depth first search 
+input  a diagnosis problem  sd  comps  obs  
+the number mindiags of diagnoses to find
+result  the set  of diagnoses
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+  h  conflicts  h 
+rootnode   getrootnode sd  comps  obs  
+for i    to nbthreads do
+threads execute expandprdfs rootnode  mindiags    conflicts   
+while     mindiags do
+wait   
+threads shutdownnow   
+return  
+
+the idea of the parallelization approach in the algorithm is to start multiple threads
+from the root node  all of these threads perform the depth first search in parallel  but pick
+the next conflict element to explore in a randomized manner 
+the logic for expanding a node is shown in algorithm     first  the conflict of the
+given node is copied  so that changes to this set of constraints will not affect the other
+threads  then  as long as not enough diagnoses were found  a randomly chosen constraint
+from the current nodes conflict is used to generate a new node  the expansion function is
+then immediately called recursively for the new node  thereby implementing the depth first
+strategy  any identified diagnosis is minimized before being added to the list of known
+diagnoses  similar to the previous parallelization schemes  the access to the global lists of
+known conflicts has to be made thread safe  when the specified number of diagnoses is
+found or all threads are finished  the statement threads shutdownnow   immediately stops
+the execution of all threads that are still running and the results are returned  the semantics
+of threads execute    wait    and notify   are the same as in section   
+      example
+let us apply the depth first method to the example from section        remember that the
+two conflicts for this problem were ttc   c   c u  tc   c uu  a partially expanded tree for
+this problem can be seen in figure   
+   
+
+fijannach  schmitz    shchekotykhin
+
+algorithm     expandprdfs  parallel random depth first node expansion 
+input  an existingnode to expand  the number mindiags of diagnoses to find 
+the sets  and conflicts
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+  
+  
+  
+
+  
+  
+  
+  
+  
+  
+
+c   existingnode conflict clone   
+   copy existingnodes conflict
+while     mindiags   c     do
+randomly pick a constraint c from c
+c  cztcu 
+newpathlabel   existingnode pathlabel y  c  
+node   new node newpathlabel  
+if d s p conflicts   s x newpathlabel  h then
+node conflict   s 
+else
+node conflict   checkconsistency sd  comps  obs  node pathlabel  
+if node conflict  h then
+   new conflict found
+conflicts   conflicts y node conflict 
+   recursive call implements the depth first search strategy
+expandprdfs node  mindiags    conflicts  
+else
+   diagnosis found
+diagnosis   minimize node pathlabel  
+   y  diagnosis  
+if     mindiags then
+notify   
+
+in the example  first the root node   is created and again the conflict tc   c   c u
+is found  next  the random expansion would  for example  pick the conflict element c 
+and generate node     for this node  the conflict tc   c u will be computed because tc u
+alone is not a diagnosis  since the algorithm continues in a depth first manner  it will
+then pick one of the label elements of node     e g   c  and generate node     for this
+node  the consistency check succeeds  no further conflict is computed and the algorithm has
+found a diagnosis  the found diagnosis tc   c u is  however  not minimal as it contains
+the redundant element c   the function minimize  which is called at the end of algorithm
+    will therefore remove the redundant element to obtain the correct diagnosis tc u 
+if we had used more than one thread in this example  one of the parallel threads would
+have probably started expanding the root node using the conflict element c   node      in
+that case  the single element diagnosis tc u would have been identified already at the first
+level  adding more parallel threads can therefore help to increase the chances to find one
+hitting set faster as different parts of the hs tree are explored in parallel 
+instead of the random selection strategy  more elaborate schemes to pick the next nodes
+are possible  e g   based on application specific heuristics or fault probabilities  one could
+also better synchronize the search efforts of the different threads to avoid duplicate calculations  we conducted experiments with an algorithm variant that used a shared and
+   
+
+fiparallel model based diagnosis on multi core computers
+
+ 
+ c  c   c  
+c 
+
+ 
+
+ 
+
+c 
+
+c 
+
+ c  c  
+ 
+
+c 
+
+ c  c  
+
+c 
+
+c 
+
+c 
+
+figure    example for hs tree construction with prdfs 
+synchronized list of open nodes to avoid that two threads generate an identical sub tree in
+parallel  we did  however  not observe significantly better results than with the method
+shown in algorithm   probably due to the synchronization overhead 
+      discussion of soundness and completeness
+every single thread in the depth first algorithm systematically explores the full search space
+based on the conflicts returned by the theorem prover  therefore  all existing diagnoses
+will be found when the parameter mindiags is equal or higher than the number of actually
+existing diagnoses 
+whenever a  potentially non minimal  diagnosis is encountered  the minimization process ensures that only minimal diagnoses are stored in the list of diagnoses  the duplicate
+addition of the same diagnosis by one or more threads in the last lines of the algorithm is
+prevented because we consider diagnoses to be equal if they contain the same set of elements
+and  as a set by definition cannot contain the same element twice 
+overall  the algorithm is designed to find one or a few diagnoses quickly  the computation of all minimal diagnoses is possible with the algorithm but highly inefficient  e g   due
+to the computational costs of minimizing the diagnoses 
+    a hybrid strategy
+let us again consider the problem of finding one minimal diagnosis  one can easily imagine
+that the choice of the best parallelization strategy  i e   breadth first or depth first  can
+depend on the specifics of the given problem setting and the actual size of the existing
+diagnoses  if a single element diagnosis exists  exploring the first level of the hs tree in a
+breadth first approach might be the best choice  see figure   a    a depth first strategy
+might eventually include this element in a non minimal diagnosis  but would then have to
+do a number of additional calculations to ensure the minimality of the diagnosis 
+if  in contrast  the smallest actually existing diagnosis has a cardinality of  e g   five 
+the breadth first scheme would have to fully explore the first four hs tree levels before
+finding the five element diagnosis  the depth first scheme  in contrast  might quickly find
+   
+
+fidiagnosis detected
+
+jannach  schmitz    shchekotykhin
+
+a superset of the five element diagnosis  e g   with six elements  and then only needs six
+additional consistency checks to remove the redundant element from the diagnosis  figure
+  b   
+diagnosis detected
+
+diagnosis detected
+
+ a  breadth first strategy is advantageous 
+
+ b  depth first strategy is advantageous 
+
+figure    two problem configurations for which different search strategies are favorable 
+since we cannot know the cardinality of the diagnoses in advance  we propose a hybrid
+strategy  in which half of the threads adopt a depth first strategy and the other half uses
+the fully parallelized breadth first regime  to implement this strategy  the algorithms  
+ fp  and    prdfs  can be started in parallel and each algorithm is allowed to use one
+half or some other defined share of the available threads  the coordination between the
+two algorithms can be done with the help of shared data structures that contain the known
+conflicts and diagnoses  when enough diagnoses  e g  one  are found  all running threads
+can be terminated
+and the results are returned 
+diagnosis detected
+    evaluation
+we evaluated the different strategies for efficiently finding one minimal diagnosis on the
+same set of benchmark problems that were used in the previous sections  the experiment
+setup was identical except that the goal was to find one arbitrary diagnosis and that we
+included the additional depth first algorithms  in order to measure the potential benefits of
+parallelizing the depth first search  we ran the benchmarks for prdfs both with   threads
+and with   thread  where the latter setup corresponds to a random depth first search
+ rdfs  without parallelization 
+      results for the dxc benchmark problems
+the results for the dxc benchmark problems are shown in table    overall  for all tested
+systems  each of the approaches proposed in this paper can help to speed up the process
+of finding one single diagnosis  in    of the     evaluated scenarios at least one of the
+tested approaches was statistically significantly faster than the sequential algorithm  for
+the other    scenarios  finding one single diagnosis was too simple so that only modest but
+no significant speedups compared to the sequential algorithm were obtained 
+when comparing the individual parallel algorithms  the following observations can be
+made 
+   
+
+fiparallel model based diagnosis on multi core computers
+
+ for most of the examples  the prdfs method is faster than the breadth first search
+implemented in the fp technique  for one benchmark system  the prdfs approach
+can even achieve a speedup of    compared to the sequential algorithm  which corresponds to a runtime reduction of     
+ when compared with the non parallel rdfs  prdfs could achieve higher speedups
+for all tested systems except the most simple one  which only took    ms even for the
+sequential algorithm  overall  parallelization can therefore be advantageous also for
+depth first strategies 
+ the performance of the hybrid strategy lies in between the performances of its components prdfs and fp for   of the   tested systems  for these systems  it is closer to
+the faster one of the two  adopting the hybrid strategy can therefore represent a good
+choice when the structure of the problem is not known in advance  as it combines both
+ideas of breadth first and depth first search and is able to quickly find a diagnosis for
+problem settings with unknown characteristics 
+
+system
+     
+  l  
+     
+     
+c   
+
+seq 
+ ms 
+  
+  
+  
+   
+     
+
+fp
+s 
+e 
+         
+         
+         
+         
+         
+
+rdfs
+ ms 
+ 
+  
+  
+  
+     
+
+prdfs
+s 
+e 
+         
+         
+         
+         
+         
+
+hybrid
+s 
+e 
+         
+         
+         
+         
+         
+
+table    observed performance gains for dxc benchmarks for finding one diagnosis 
+
+      additional experiments
+the detailed results obtained through additional experiments are again provided in the
+appendix  the measurements include the results for csps  section a      and ontologies
+ section a       as well as results that were obtained by systematically varying the characteristics of synthetic diagnosis problems  section a       the results indicate that applying
+a depth first parallelization strategy in many cases is advantageous for the csp problems 
+the tests on the ontology problems and the simulation results however reveal that depending on the problem structure there are cases in which a breadth first strategy can be more
+beneficial 
+      discussion
+the experiments show that the parallelization of the depth first search strategy  prdfs 
+can help to further reduce the computation times when we search for one single diagnosis 
+in most evaluated cases  prdfs was faster than its sequential counterpart  in some
+cases  however  the obtained improvements were quite small or virtually non existent  which
+can be explained as follows 
+   
+
+fijannach  schmitz    shchekotykhin
+
+ for the very small scenarios  the parallel depth first search cannot be significantly
+faster than the non parallel variant because the creation of the first node is not parallelized  therefore a major fraction of the tree construction process is not parallelized
+at all 
+ there are problem settings in which all existing diagnoses have the same size  all
+parallel depth first searching threads therefore have to explore the tree to a certain
+depth and none of the threads can immediately return a diagnosis that is much smaller
+than one determined by another thread  e g   given a diagnosis problem  where all
+diagnoses have size    all threads have to explore the tree to at least level   to find a
+diagnosis and are also very likely to find a diagnosis on that level  therefore  in this
+setting no thread can be much faster than the others 
+ finally  we again suspect problems of cache contention and a correspondingly increased number of cache misses  which leads to a general performance deterioration
+and overhead caused by the multiple threads 
+overall  the obtained speedups again depend on the problem structure  the hybrid
+technique represents a good compromise for most cases as it is faster than the sequential
+breadth first search approach for most of the tested scenarios  including the csps  ontologies  and synthetically created diagnosis problems presented in section a     also  it
+is more efficient than prdfs in some cases for which breadth first search is better than
+depth first search 
+
+   parallel direct csp encodings
+as an alternative to conflict guided diagnosis approaches like reiters hitting set technique 
+so called direct encodings have become more popular in the research community in recent
+years  feldman  provan  de kleer  robert    van gemund      a  stern  kalech  feldman 
+  provan        metodi et al         mencia   marques silva        menca  previti   
+marques silva        marques silva  janota  ignatiev    morgado          
+the general idea of direct encodings is to generate a specific representation of a diagnosis
+problem instance with some knowledge representation language and then use the theorem
+prover  e g   a sat solver or constraint engine  to compute the diagnoses directly  these
+methods support the generation of one or multiple diagnoses by calling a theorem prover
+only once  nica  pill  quaritsch  and wotawa        made a number of experiments in
+which they compared conflict directed search with such direct encodings and showed that
+for several problem settings  using the direct encoding was advantageous 
+in this part of the paper  our goal is to evaluate whether the parallelization of the search
+process  in that case inside the constraint engine  can help to improve the efficiency of
+the diagnostic reasoning process  the goal of this chapter is therefore rather to quantify
+to which extent the internal parallelization of a solver is useful than to present a new
+algorithmic contribution 
+    such direct encodings may not always be possible in mbd settings as discussed above 
+
+   
+
+fiparallel model based diagnosis on multi core computers
+
+    using gecode as a solver for direct encodings
+for our evaluation we use the gecode constraint solver  schulte  lagerkvist    tack        
+in particular  we use the parallelization option of gecode to test its effects on the diagnosis
+running times    the chosen problem encoding is similar to the one used by nica and
+wotawa         this allows us to make our results comparable with those obtained in
+previous works  in addition  the provided encoding is represented in a language which is
+supported by multiple solvers 
+      example
+let us first show the general idea on a small example  consider the following csp  
+consisting of the integer variables a   a   b   b   c  and the constraints x    x    and x 
+which are defined as 
+x    b   a      x    b   a      x    c   b   b  
+let us assume that the programmer made a mistake and x  should actually be c  
+b    b   given a set of expected observations  a test case  a      a      d       mbd
+can be applied by considering the constraints as the possibly faulty components 
+in a direct encoding the given csp is extended with a definition of an array ab 
+rab    ab    ab  s of boolean       variables which encode whether a corresponding constraint
+is considered as faulty or not  the constraints are rewritten as follows 
+x     ab    pb   a    q 
+
+x     ab    pb   a    q 
+
+x     ab    pc   b   b q 
+
+the observations can be encoded through equality constraints which bind the values of
+the observed variables  in our example  these constraints would be 
+o    a     
+
+o    a     
+
+o    d     
+
+in order to find a diagnosis of cardinality    we additionally add the constraint
+ab    ab    ab    
+and let the solver search for a solution  in this case  x  would be identified as the only
+possible diagnosis  i e   ab  would be set to   by the solver 
+      parallelization approach of gecode
+when using such a direct encoding  a parallelization of the diagnosis process  as shown
+for reiters approach  cannot be done because it is embedded in the underlying search
+procedure  however  modern constraint solvers  such as gecode  or tools and many other
+solvers of those that participated in the minizinc challenge  stuckey  feydy  schutt  tack 
+  fischer         internally implement parallelization strategies to better utilize todays
+multi core computer architectures  michel  see    van hentenryck        chu  schulte   
+    a state of the art sat solver capable of parallelization could have been used for this analysis as well 
+    adapted from an earlier work  jannach   schmitz        
+
+   
+
+fijannach  schmitz    shchekotykhin
+
+stuckey         in the following  we will therefore evaluate through a set of experiments  if
+these solver internal parallelization techniques can help to speed up the diagnosis process
+when a direct encoding is used   
+gecode implements an adaptive work stealing strategy  chu et al         for its parallelization  the general idea can be summarized as follows  as soon as a thread finishes
+processing its nodes of the search tree  it steals some of the nodes from non idle threads 
+in order to decide from which thread the work should be stolen  an adaptive strategy uses
+balancing heuristics that estimate the density of the solutions in a particular part of the
+search tree  the higher the likelihood of containing a solution for a given branch  the more
+work is stolen from this branch 
+    problem encoding
+in our evaluation we use minizinc as a constraint modeling language  this language can
+be processed by different solvers and allows us to model diagnosis problems as csps as
+shown above 
+      finding one diagnosis
+to find a single diagnosis for a given diagnosis problem  sd  comps  obs   we generate a
+direct encoding in minizinc as follows 
+    for the set of components comps we generate an array ab    ab            abn   of
+boolean variables 
+    for each formula sdi p sd we add a constraint of the form
+constraint abris   psdi q 
+and for each observation oj p obs the model is extended with a constraint
+constraint oj  
+    finally  we add the search goal and an output statement 
+solve minimize sumpi in    nqpbool intpabrisqq 
+output show ab   
+the first statement of the last part  solve minimize   instructs the solver to search for
+a  single  solution with a minimal number of abnormal components  i e   a diagnosis with
+minimum cardinality  the second statement  output  projects all assignments to the set
+of abnormal variables  because we are only interested in knowing which components are
+faulty  the assignments of the other problem variables are irrelevant 
+      finding all diagnoses
+the problem encoding shown above can be used to quickly find one all diagnoses of minimum cardinality  it is  however  not sufficient for scenarios where the goal is to find all
+diagnoses of a problem  we therefore propose the following sound and complete algorithm
+which repeatedly modifies the constraint problem to systematically identify all diagnoses 
+    in contrast to the parallelization approaches presented in the previous sections  we do not propose any
+new parallelization schemes here but rather rely on the existing ones implemented in the solver 
+
+   
+
+fiparallel model based diagnosis on multi core computers
+
+technically  the algorithm first searches for all diagnoses of size   and then increases the
+desired cardinality of the diagnoses step by step 
+
+algorithm     directdiag  computation of all diagnoses using a direct encoding 
+input  a diagnosis problem  sd  comps  obs   maximum cardinality k
+result  the set  of diagnoses
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+  
+
+  h  c  h  card    
+if k   comps  then k   comps  
+m   generatemodel  sd  comps  obs  
+while card  k do
+m   updatemodel  m  card   c  
+   computediagnosespmq 
+c  c y generateconstraintsp  q 
+   y    
+card  card     
+return  
+
+procedure algorithm    shows the main components of the direct diagnosis method used
+in connection with a parallel constraint solver to find all diagnoses  the algorithm starts
+with the generation of a minizinc model  generatemodel  as described above  the
+only difference is that we will now search for all solutions of a given cardinality  further
+details about the encoding of the search goals are given below 
+in each iteration  the algorithm modifies the model by updating the cardinality of the
+searched diagnoses and furthermore adds new constraints corresponding to the already
+found diagnoses  updatemodel   this updated model is then provided to a minizinc
+interpreter  constraint solver   which returns a set of solutions     each element i p  
+corresponds to a diagnosis of the cardinality card  
+in order to exclude supersets of the already found diagnoses   in future iterations  we
+generate a constraint for each i p   with the formulas j to l  generateconstraints  
+constraint abrjs  false        abrls  false 
+these constraints ensure that an already found diagnosis or supersets of it cannot be found
+again  they are added to the model m in the next iteration of the main loop  the algorithm
+continues until all diagnoses with cardinalities up to k are computed 
+changes in encoding to calculate all diagnoses of a given size  we first instruct the
+solver to search for all possible solutions when provided with a constraint problem    in
+addition  while keeping steps     and     from section       we replace the lines of step    
+    this is achieved by calling minizinc with the   all solutions flag 
+
+   
+
+fijannach  schmitz    shchekotykhin
+
+by the following statements 
+constraint sumpi in    nqpbool intpabrisqq  card  
+solve satisfy 
+output show ab   
+the first statement constrains the number of abnormal variables that can be true to a
+certain value  i e   the given cardinality card  the second statement tells the solver to find
+all variable assignments that satisfy the constraints  the last statement again guarantees
+that the solver only considers the solutions to be different when they are different with
+respect to the assignments of the abnormal variables 
+soundness and completeness algorithm    implements an iterative deepening approach which guarantees the minimality of the diagnoses in   specifically  the algorithm
+constructs diagnoses in the order of increasing cardinality by limiting the number of ab
+variables that can be set to true in a model  the computation starts with card     which
+means that only one ab variable can be true  therefore  only diagnoses of cardinality   
+i e   comprising only one abnormal variable  can be returned by the solver  for each found
+diagnosis we then add a constraint that requires at least one of the abnormal variables of
+this diagnosis to be false  therefore  neither this diagnosis nor its supersets can be found
+in the subsequent iterations  these constraints implement the pruning rule of the hs tree
+algorithm  finally  algorithm    repeatedly increases the cardinality parameter card by
+one and continues with the next iteration  the algorithm continues to increment the cardinality until card becomes greater than the number of components  which corresponds to
+the largest possible cardinality of a diagnosis  consequently  given a diagnosis problem as
+well as a sound and complete constraint solver  algorithm    returns all diagnoses of the
+problem 
+    evaluation
+to evaluate if speedups can be achieved through parallelization also for a direct encoding 
+we again used the first five systems of the dxc synthetic track and tested all scenarios
+using the gecode solver without parallelization and with   and   parallel threads 
+      results
+we evaluated two different configurations  in setup  a   the task was to find one single
+diagnosis of minimum cardinality  in setup  b   the iterative deepening procedure from
+section       was used to find all diagnoses up to the size of the actual error 
+the results for setup  a  are shown in table    we can observe that using the parallel
+constraint solver pays off except for the tiny problems for which the overall search time is
+less than     ms  furthermore  adding more worker threads is also beneficial for the larger
+problem sizes and a speedup of up to      was achieved for the most complex test case
+which took about     seconds to solve 
+the same pattern can be observed for setup  b   the detailed results are listed in table
+   for the tiny problems  the internal parallelization of the gecode solver does not lead
+to performance improvements but slightly slows down the whole process  as soon as the
+   
+
+fiparallel model based diagnosis on multi core computers
+
+problems become more complex  parallelization pays off and we can observe a speedup of
+     for the most complex of the tested cases  which corresponds to a runtime reduction of
+    
+system
+     
+  l  
+     
+     
+c   
+
+direct encoding
+abs   ms 
+s 
+e 
+s 
+                 
+                 
+                 
+                  
+                    
+
+e 
+    
+    
+    
+    
+    
+
+table    observed performance gains for dxc benchmarks for finding one diagnosis with
+a direct encoding using one  column abs    two  and four threads 
+
+system
+     
+  l  
+     
+     
+c   
+
+direct encoding
+abs   ms 
+s 
+e 
+s 
+                  
+                 
+                  
+                    
+                      
+
+e 
+    
+    
+    
+    
+    
+
+table    observed performance gains for dxc benchmarks for finding all diagnoses with a
+direct encoding using one  column abs    two  and four threads 
+
+      summary and remarks
+overall  our experiments show that parallelization can be beneficial when a direct encoding
+of the diagnosis problem is employed  in particular when the problems are non trivial 
+comparing the absolute running times of our java implementation using the open source
+solver choco with the optimized c   implementation of gecode is generally not appropriate and for most of the benchmark problems  gecode works faster on an absolute scale 
+note  however  that this is not true in all cases  in particular when searching for all diagnoses up to the size of the actual error for the most complex system c     even reiters
+non parallelized hitting set algorithm was much faster     seconds  than using the direct
+encoding based on iterative deepening      seconds   this is in line with the observation
+of nica et al         that direct encodings are not always the best choice when searching
+for all diagnoses 
+a first analysis of the run time behavior of gecode shows that the larger the problem is 
+the more time is spent by the solver in each iteration to reconstruct its internal structures 
+which can lead to a measurable performance degradation  note that in our work we relied
+on a minizinc encoding of the diagnosis problem to be independent of the specifics of the
+   
+
+fijannach  schmitz    shchekotykhin
+
+underlying constraint engine  an implementation that relies on the direct use of the api of
+a specific csp solver might help to address certain performance issues  nevertheless  such
+an implementation must be solver specific and will not allow us to switch solvers easily as
+it is now possible with minizinc  
+
+   relation to previous works
+in this section we explore works that are related to our approach  first we examine different
+approaches for the computation of diagnoses  then we will focus on general methods for
+parallelizing search algorithms 
+    computation of diagnoses
+computing minimal hitting sets for a given set of conflicts is a computationally hard problem
+as already discussed in section       and several approaches were proposed over the years to
+deal with the issue  these approaches can be divided into exhaustive and approximate ones 
+the former perform a sound and complete search for all minimal diagnoses  whereas the
+latter improve the computational efficiency in exchange for completeness  e g   they search
+for only one or a small set of diagnoses 
+approximate approaches can for example be based on stochastic search techniques like
+genetic algorithms  li   yunfei        or greedy stochastic search  feldman et al       b  
+the greedy method proposed by feldman et al       b   for example  uses a two step
+approach  in the first phase  a random and possibly non minimal diagnosis is determined
+by a modified dpll   algorithm  the algorithm always finds one random diagnosis at each
+invocation due to the random selection of propositional variables and their assignments  in
+the second step  the algorithm minimizes the diagnosis returned by the dpll technique by
+repeatedly applying random modifications  it randomly chooses a negative literal which
+denotes that a corresponding component is faulty and flips its value to positive  the
+obtained candidate as well as the diagnosis problem are provided to the dpll algorithm
+to check whether the candidate is a diagnosis or not  in case of success the obtained
+diagnosis is kept and another random flip is done  otherwise  the negative literal is labeled
+with failure and another negative literal is randomly selected  the algorithm stops if the
+number of failures is greater than some predefined constant and returns the best diagnosis
+found so far 
+in the approach of li and yunfei        a genetic algorithm takes a number of conflict
+sets as input and generates a set of bit vectors  chromosomes   where every bit encodes a
+truth value of an atom over the ab    predicate  in each iteration the algorithm applies
+genetic operations  such as mutation  crossover  etc   to obtain new chromosomes  subsequently  all obtained bit vectors are evaluated by a hitting set fitting function which
+eliminates bad candidates  the algorithm stops after a predefined number of iterations and
+returns the best diagnosis 
+in general  such approximate approaches are not directly comparable with our lwp and
+fp techniques  since they are incomplete and do not guarantee the minimality of returned
+    davis putnam logemann loveland 
+
+   
+
+fiparallel model based diagnosis on multi core computers
+
+hitting sets  our goal in contrast is to improve the performance while at the same time
+maintaining both the completeness and the soundness property 
+another way of finding approximate solutions is to use heuristic search approaches  for
+example  abreu and van gemund        proposed the staccato algorithm which applies
+a number of heuristics for pruning the search space  more aggressive pruning techniques
+result in better performance of the search algorithms  however  they also increase the probability that some of the diagnoses will not be found  in this approach the aggressiveness
+of the heuristics can be varied by input parameters depending on the application goals 
+more recently  cardoso and abreu        suggested a distributed version of the staccato algorithm  which is based on the map reduce scheme  dean   ghemawat        and
+can therefore be executed on a cluster of servers  other more recent algorithms focus on
+the efficient computation of one or more minimum cardinality  minc  diagnoses  de kleer 
+       both in the distributed approach and in the minimum cardinality scenario  the assumption is that the  possibly incomplete  set of conflicts is already available as an input
+at the beginning of the hitting set construction process  in the application scenarios that
+we address with our work  finding the conflicts is considered to be the computationally
+expensive part and we do not assume to know the minimal conflicts in advance but have
+to compute them on demand as also done in other works  felfernig  friedrich  jannach 
+stumptner  et al         friedrich   shchekotykhin        williams   ragno         see also
+the work by pill  quaritsch  and wotawa        for a comparison of conflict computation
+approaches 
+exhaustive approaches are often based on hs trees like the work of wotawa      a  
+a tree construction algorithm that reduces the number of pruning steps in presence of nonminimal conflicts  alternatively  one can use methods that compute diagnoses without the
+explicit computation of conflict sets  i e   by solving a problem dual to minimal hitting sets
+ satoh   uno         stern et al          for example  suggest a method that explores the
+duality between conflicts and diagnoses and uses this symmetry to guide the search  other
+approaches exploit the structure of the underlying problem  which can be hierarchical  autio
+  reiter         tree structured  stumptner   wotawa         or distributed  wotawa  
+pill         these algorithms are very similar to the hs tree algorithm and  consequently 
+can be parallelized in a similar way  as an example  consider the set enumeration tree
+ se tree  algorithm  rymon         this algorithm  similarly to reiters hs tree approach 
+uses breadth first search with a specific expansion procedure that implements the pruning
+and node selection strategies  both the lwp and and the fp parallelization variant can be
+used with the se tree algorithm and comparable speedups are expected 
+    parallelization of search algorithms
+historically  the parallelization of search algorithms was approached in three different ways
+ burns  lemons  ruml    zhou        
+ i  parallelization of node processing  when applying this type of parallelization  the tree
+is expanded by one single process  but the computation of labels or the evaluation of
+heuristics is done in parallel 
+   
+
+fijannach  schmitz    shchekotykhin
+
+ ii  window based processing  in this approach  sets of nodes  called windows  are processed by different threads in parallel  the windows are formed by the search algorithm
+according to some predefined criteria 
+ iii  tree decomposition approaches  here  different sub trees of the search tree are assigned to different processes  ferguson   korf        brungger  marzetta  fukuda   
+nievergelt        
+in principle  all three types of parallelization can be applied in some form to the hs tree
+generation problem 
+applying strategy  i  in the mbd problem setting would mean to parallelize the process
+of conflict computation  e g   through a parallel variant of qxp or mxp  we have tested
+a partially parallelized version of mxp  which however did not lead to further performance
+improvements when compared to a single threaded approach on the evaluated benchmark
+problems  shchekotykhin et al          the experiments in section   however show that
+using mxp in combination with lwp or fp  thereby implicitly allocating more cpu time
+for the computation of multiple conflicts during the construction of a single node  can be advantageous  other well known conflict or prime implicate computation algorithms  junker 
+      marques silva et al         previti  ignatiev  morgado    marques silva        in
+contrast were not designed for parallel execution or the computation of multiple conflicts 
+strategy  ii   computing sets of nodes  windows  in parallel  was for example applied by
+powley and korf         in their work the windows are determined by different thresholds
+of a heuristic function of iterative deepening a   applying the strategy to an hs tree
+construction problem would mean to categorize the nodes to be expanded according to
+some criterion  e g   the probability of finding a diagnosis  and to allocate the different
+groups to individual threads  in the absence of such window criteria  lwp and fp could be
+seen as extreme cases with window size one  where each open node is allocated to one thread
+on a processor  the experiments done throughout the paper suggest that independent of the
+parallelization strategy  lwp or fp  the number of parallel threads  windows  should not
+exceed the number of physically available computing threads to obtain the best performance 
+finally  iii   the strategy exploring different sub trees during the search with different
+processes can  for example  be applied in the context of mbd techniques when using binary
+hs tree  bhs  algorithms  pill   quaritsch         given a set of conflict sets  the bhs
+method generates a root node and labels it with the input set of conflicts  then  it selects
+one of the components occurring in the conflicts and generates two child nodes  such that
+the left node is labeled with all conflicts comprising the selected component and the right
+node with the remaining ones  consequently  the diagnosis tree is decomposed into two subtrees and can be processed in parallel  the main problem for this kind of parallelization is
+that the conflicts are often not known in advance and have to be computed during search 
+anglano and portinale        suggested another approach in which they ultimately
+parallelized the diagnosis problem based on structural problem characteristics  in their
+work  they first map a given diagnosis problem to a behavioral petri net  bpn   then 
+the obtained bpn is manually partitioned into subnets and every subnet is provided to a
+different parallel virtual machine  pvm  for parallel processing  the relationship of their
+work to our lwp and fp parallelization schemes is limited and our approaches also do not
+require a manual problem decomposition step 
+   
+
+fiparallel model based diagnosis on multi core computers
+
+in general  parallelized versions of domain independent search algorithms like a can
+be applied to mbd settings  however  the mbd problem has some specifics that make the
+application of some of these algorithms difficult  for instance  the pra method and its
+variant hda discussed in the work of burns et al         use a mechanism to minimize the
+memory requirements by retracting parts of the search tree  these forgotten parts are
+later on re generated when required  in our mbd setting  the generation of nodes is however
+the most costly part  which is why the applicability of hda seems limited  similarly 
+duplicate detection algorithms like pbnf  burns et al         require the existence of an
+abstraction function that partitions the original search space into blocks  in general mbd
+settings  we however cannot assume that such a function is given 
+in order to improve the performance we have therefore to avoid the parallel generation
+of duplicate nodes by different threads  which we plan to investigate in our future work 
+a promising starting point for this research could be the work by phillips  likhachev 
+and koenig         the authors suggest a variant of the a  algorithm that generates only
+independent nodes in order to reduce the costs of node generation  two nodes are considered
+as independent if the generation of one node does not lead to a change of the heuristic
+function of the other node  the generation of independent nodes can be done in parallel
+without the risk of the repeated generation of an already known state  the main difficulty
+when adopting this algorithm for mbd is the formulation of an admissible heuristic required
+to evaluate the independence of the nodes for arbitrary diagnosis problems  however  for
+specific problems that can be encoded as csps  williams and ragno        present a
+heuristic that depends on the number of unassigned variables at a particular search node 
+finally  parallelization was also used in the literature to speed up the processing of very
+large search trees that do not fit in memory  korf and schultze         for instance  suggest
+an extension of a hash based delayed duplicate detection algorithm that allows a search
+algorithm to continue search while other parts of the search tree are written to or read from
+the hard drive  such methods can in theory be used in combination with our lwp or fp
+parallelization schemes in case of complex diagnosis problems  we plan to explore the use
+of  externally  saved search states in the context of mbd as part of our future works 
+
+   summary
+in this work  we propose and systematically evaluate various parallelization strategies for
+model based diagnosis to better exploit the capabilities of multi core computers  we show
+that parallelization can be advantageous in various problem settings and diagnosis approaches  these approaches include the conflict driven search for all or a few minimal
+diagnoses with different conflict detection techniques and the  heuristic  depth first search
+in order to quickly determine a single diagnosis  the main benefits of our parallelization
+approaches are that they can be applied independent of the underlying reasoning engine and
+for a variety of diagnostic problems which cannot be efficiently represented as sat or csp
+problems  in addition to our hs tree based parallelization approaches  we also show that
+parallelization can be beneficial for settings in which a direct problem encoding is possible
+and modern parallel solver engines are available 
+our evaluations have furthermore shown that the speedups of the proposed parallelization methods can vary according to the characteristics of the underlying diagnosis problem 
+   
+
+fijannach  schmitz    shchekotykhin
+
+in our future work  we plan to explore techniques that analyze these characteristics in order
+to predict in advance which parallelization method is best suited to find one single or all
+diagnoses for the given problem 
+regarding algorithmic enhancements  we furthermore plan to investigate how information about the underlying problem structure can be exploited to achieve a better distribution of the work on the parallel threads and to thereby avoid duplicate computations 
+furthermore  we plan to explore the usage of parallel solving schemes for the dual algorithms  i e   algorithms that compute diagnoses directly without the computation of minimal conflicts  satoh   uno        felfernig  schubert    zehentner        stern et al  
+      shchekotykhin et al         
+the presented algorithms were designed for the use on modern multi core computers
+which today usually have less than a dozen cores  our results show that the additional performance improvements that we obtain with the proposed techniques become smaller when
+adding more and more cpus  as part of our future works we therefore plan to develop
+algorithms that can utilize specialized environments that support massive parallelization 
+in that context  a future topic of research could be the adaption of the parallel hs tree
+construction to gpu architectures  gpus  which can have thousands of computing cores 
+have proved to be superior for tasks which can be parallelized in a suitable way  campeotto 
+palu  dovier  fioretto  and pontelli        for example used a gpu to parallelize a constraint solver  however  it is not yet fully clear whether tree construction techniques can
+be efficiently parallelized on a gpu  as many data structures have to be shared across all
+nodes and access to them has to be synchronized 
+
+acknowledgements
+this paper significantly extends and combines our previous work  jannach  schmitz   
+shchekotykhin        shchekotykhin et al         
+we would like to thank hakan kjellerstrand and the gecode team for their support  we
+are also thankful for the various helpful comments and suggestions made by the anonymous
+reviewers of jair  dx    dx    aaai    and ijcai   
+this work was supported by the carinthian science fund  kwf  contract kwf                  the austrian science fund  fwf  and the german research foundation  dfg  under contract numbers i      n    and ja           project debugging
+of spreadsheet programs  
+
+appendix a 
+in this appendix we report the results of additional experiments that were made on different
+benchmark problems as well as results of simulation experiments on artificially created
+problem instances 
+ section a   contains the results for the lwp and fp parallelization schemes proposed
+in section   
+ section a   reports additional measurements regarding the use of mergexplain
+within the parallel diagnosis process  see section   
+   
+
+fiparallel model based diagnosis on multi core computers
+
+ section a   finally provides additional results of the parallelization of the depth first
+strategies discussed in section   
+a   additional experiments for the lwp and fp parallelization strategies
+in addition to the experiments with the dxc benchmark systems reported in section     
+we made additional experiments with constraint satisfaction problems  ontologies  and
+artificial hitting set construction problems  furthermore  we examined the effects of further
+increasing the number of available threads for the benchmarks of the csps and ontologies 
+a     diagnosing constraint satisfaction problems
+data sets and procedure in this set of experiments we used a number of csp instances
+from the      cp solver competition  lecoutre  roussel    van dongen        in which
+we injected faults    the diagnosis problems were created as follows  we first generated
+a random solution using the original csp formulations  from each solution  we randomly
+picked about     of the variables and stored their value assignments  which then served
+as test cases  these stored variable assignments correspond to the expected outcomes when
+all constraints are formulated correctly  next  we manually inserted errors  mutations  in
+the constraint problem formulations     e g   by changing a less than operator to a more
+than operator  which corresponds to a mutation based approach in software testing  the
+diagnosis task then consists of identifying the possibly faulty constraints using the partial
+test cases  in addition to the benchmark csps we converted a number of spreadsheet
+diagnosis problems  jannach   schmitz        to csps to test the performance gains on
+realistic application settings 
+table   shows the problem characteristics including the number of injected faults   f  
+the number of diagnoses   d   and the average diagnosis size   d    in general  we selected
+csps which are quite diverse with respect to their size 
+results the measurement results using   threads and searching for all diagnoses are given
+in table    improvements could be achieved for all problem instances  with the exception
+of the smallest problem mknap     all speedups achieved by lwp and fp are statistically
+significant  for some problems  the improvements are very strong  with a running time
+reduction of over       whereas for others the improvements are modest  on average  fp
+is also faster than lwp  however  fp is not consistently better than lwp and often the
+differences are small 
+the observed results indicate that the performance gains depend on a number of factors
+including the size of the conflicts  the computation times for conflict detection  and the
+problem structure itself  while on average fp is faster than lwp  the characteristics of the
+problem settings seem to have a considerable impact on the speedups that can be obtained
+by the different parallelization strategies 
+    to be able to do a sufficient number of repetitions  we picked instances with comparably small running
+times 
+    the mutated csps can be downloaded at http   ls   www cs tu dortmund de homepage hp 
+downloads jair csps zip 
+
+   
+
+fijannach  schmitz    shchekotykhin
+
+scenario
+c 
+costasarray   
+domino        
+gracefulk  p 
+mknap    
+queens  
+hospital payment
+profit calculation
+course planning
+preservation model
+revenue calculation
+
+ c
+   
+  
+   
+  
+ 
+  
+  
+  
+   
+   
+  
+
+ v
+   
+  
+   
+  
+  
+ 
+  
+   
+   
+   
+   
+
+ f
+ 
+ 
+ 
+ 
+ 
+  
+ 
+ 
+ 
+ 
+ 
+
+ d
+ 
+ 
+  
+   
+ 
+ 
+   
+  
+    
+  
+    
+
+ d 
+    
+   
+ 
+    
+ 
+    
+   
+    
+ 
+ 
+ 
+
+table    characteristics of selected problem settings 
+scenario
+c 
+costasarray   
+domino        
+gracefulk  p 
+mknap    
+queens  
+hospital payment
+profit calculation
+course planning
+preservation model
+revenue calculation
+
+seq  qxp 
+ ms 
+   
+     
+     
+     
+   
+   
+      
+   
+      
+   
+   
+
+lwp qxp 
+s 
+e 
+         
+    
+    
+         
+    
+    
+         
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+         
+
+fp qxp 
+s 
+e 
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+
+table    results for csp benchmarks and spreadsheets when searching for all diagnoses 
+a     diagnosing ontologies
+data sets and procedure in recent works  mbd techniques are used to locate faults in
+description logic ontologies  friedrich   shchekotykhin        shchekotykhin et al        
+shchekotykhin   friedrich         which are represented in the web ontology language
+ owl   grau  horrocks  motik  parsia  patel schneider    sattler         when testing
+such an ontology  the developer can  similarly to an earlier approach  felfernig  friedrich 
+jannach  stumptner    zanker         specify a set of positive and negative test cases 
+the test cases are sets of logical sentences which must be entailed by the ontology  positive 
+or not entailed by the ontology  negative   in addition  the ontology itself  which is a set
+of logical sentences  has to be consistent and coherent  baader  calvanese  mcguinness 
+nardi    patel schneider         a diagnosis  debugging  problem in this context arises  if
+one of these requirements is not fulfilled 
+in the work by shchekotykhin et al          two interactive debugging approaches were
+tested on a set of faulty real world ontologies  kalyanpur  parsia  horridge    sirin       
+   
+
+fiparallel model based diagnosis on multi core computers
+
+and two randomly modified large real world ontologies  we use the same dataset to evaluate
+the performance gains when applying our parallelization schemes to the ontology debugging problem  the details of the different tested ontologies are given in table     the
+characteristics of the problems are described in terms of the description logic  dl  used to
+formulate the ontology  the number of axioms   a   concepts   c   properties   p   and
+individuals   i   in terms of the first order logic  concepts and properties correspond to
+unary and binary predicates  whereas individuals correspond to constants  every letter of
+a dl name  such as alchf pdq   corresponds to a syntactic feature of the language  e g  
+alchf pdq is an attributive concept language with complement  properties hierarchy 
+functional properties and datatypes  as an underlying description logic reasoner  we used
+pellet  sirin  parsia  grau  kalyanpur    katz         the manipulation of the knowledge bases during the diagnosis process was accomplished with the owl api  horridge  
+bechhofer        
+note that the considered ontology debugging problem is different from the other diagnosis settings discussed so far as it cannot be efficiently encoded as a csp or sat problem 
+the reason is that the decision problems  such as the checking of consistency and concept
+satisfiability  for the ontologies given in table    are exptime complete  baader et al  
+       this set of experiments therefore helps us to explore the benefits of parallelization
+for problem settings in which the computation of conflict sets is very hard  furthermore 
+the application of the parallelization approaches on the ontology debugging problem demonstrates the generality of our methods  i e   we show that our methods are applicable to a
+wide range of diagnosis problems and only require the existence of a sound and complete
+consistency checking procedure 
+due to the generality of reiters general approach and  correspondingly  our implementation of the diagnosis procedures  the technical integration of the owl dl reasoner into
+our software framework is relatively simple  the only difference to the csp based problems
+is that instead of calling chocos solve   method inside the theorem prover  we make a call
+to the pellet reasoner via the owl api to check the consistency of an ontology 
+ontology
+chemical
+koala
+sweet jpl
+minitambis
+university
+economy
+transportation
+cton
+opengalen no propchains
+
+dl
+alchf pdq
+alcon pdq
+alchof pdq
+alcn
+soin pdq
+alchpdq
+alchpdq
+shf
+alchif pdq
+
+ a
+   
+  
+     
+   
+  
+     
+     
+      
+     
+
+ c  p  i
+       
+      
+            
+        
+       
+          
+          
+           
+           
+
+ d
+ 
+  
+  
+  
+  
+   
+     
+  
+   
+
+ d 
+    
+   
+ 
+ 
+    
+    
+ 
+ 
+    
+
+table     characteristics of the tested ontologies 
+results the obtained results  again using a thread pool of size four  are shown in table
+    again  in every case parallelization is advantageous when compared to the sequential
+version and in some cases the obtained speedups are substantial  regarding the comparison
+   
+
+fijannach  schmitz    shchekotykhin
+
+of the lwp and fp variants  there is no clear winner across all test cases  lwp seems to
+be advantageous for most of the problems that are more complex with respect to their
+computation times  for the problems that can be easily solved  fp is sometimes slightly
+better  a clear correlation between other problem characteristics like the complexity of the
+knowledge base in terms of its size could not be identified within this set of benchmark
+problems 
+ontology
+chemical
+koala
+sweet jpl
+minitambis
+university
+economy
+transportation
+cton
+opengalen no propchains
+
+seq  qxp 
+ ms 
+   
+  
+ 
+   
+  
+   
+     
+   
+      
+
+lwp qxp 
+s 
+e 
+         
+         
+    
+    
+    
+    
+    
+    
+         
+         
+         
+    
+    
+
+fp qxp 
+s 
+e 
+         
+         
+         
+         
+         
+         
+         
+         
+         
+
+table     results for ontologies when searching for all diagnoses 
+
+a     adding more threads
+constraint satisfaction problems table    shows the results of the csp benchmarks
+and spreadsheets when using up to    threads  in this test utilizing more than   threads
+was advantageous in all but one small scenario  however  for   of the    tested scenarios
+doing the computations with more than   threads did not pay off  this indicates that
+choosing the right degree of parallelization can depend on the characteristics of a diagnosis
+problem  the diagnosis of the mknap     problem  for example  cannot be sped up with
+parallelization as it only contains one single conflict that is found at the root node  in
+contrast  the graceful k  p  problem benefits from the use of up to    threads and we
+could achieve a speedup of      for this scenario  which corresponds to a runtime reduction
+of     
+ontologies the results of diagnosing the ontologies with up to    threads are shown in
+table     for the tested ontologies  which are comparably simple debugging cases  using
+more than   threads payed off in only   of   cases  the best results when diagnosing these
+  ontologies were obtained when   threads were used  for one ontology using more than
+  threads was even slower than the sequential algorithm  this again indicates that the
+effectiveness of parallelization depends on the characteristics of the diagnosis problem and
+adding more threads can be even slightly counterproductive 
+a     systematic variation of problem characteristics
+procedure to better understand in which way the problem characteristics influence the
+performance gains  we used a suite of artificially created hitting set construction problems
+   
+
+fiparallel model based diagnosis on multi core computers
+
+scenario
+
+seq  qxp 
+ ms  s 
+e 
+c 
+             
+costasarray   
+               
+domino        
+             
+gracefulk  p 
+               
+mknap    
+               
+queens  
+            
+hospital payment
+                
+profit calculation
+            
+course planning
+                
+preservation model
+             
+revenue calculation
+             
+
+s 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+fp qxp 
+e 
+s  
+e  
+s  
+e  
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+
+table     observed performance gains for the csp benchmarks and spreadsheets on a
+server with    hardware threads 
+ontology
+chemical
+koala
+sweet jpl
+minitambis
+university
+economy
+transportation
+
+seq  qxp 
+ ms 
+   
+  
+ 
+   
+  
+   
+     
+
+s 
+    
+    
+    
+    
+    
+    
+    
+
+e 
+    
+    
+    
+    
+    
+    
+    
+
+s 
+    
+    
+    
+    
+    
+    
+    
+
+fp qxp 
+e 
+s  
+         
+         
+         
+         
+         
+         
+         
+
+e  
+    
+    
+    
+    
+    
+    
+    
+
+s  
+    
+    
+    
+    
+    
+    
+    
+
+e  
+    
+    
+    
+    
+    
+    
+    
+
+table     observed performance gains for the ontologies on a server with    hardware
+threads 
+
+with the following varying parameters  number of components   cp   number of conflicts
+  cf   average size of conflicts   cf    given these parameters  we used a problem generator
+which produces a set of minimal conflicts with the desired characteristics  the generator
+first creates the given number of components and then uses these components to generate
+the requested number of conflicts 
+to obtain more realistic settings  not all generated conflicts were of equal size but rather
+varied according to a gaussian distribution with the desired size as a mean  similarly  not
+all components should be equally likely to be part of a conflict and we again used a gaussian
+distribution to assign component failure probabilities  other probability distributions could
+be used in the generation process as well  e g   to reflect specifics of a certain application
+domain 
+since for this experiment all conflicts are known in advance  the conflict detection algorithm within the consistency check only has to return one suitable conflict upon request 
+because zero computation times are unrealistic and our assumption is that the conflict
+   
+
+fijannach  schmitz    shchekotykhin
+
+detection is actually the most costly part of the diagnosis process  we varied the assumed
+conflict computation times to analyze their effect on the relative performance gains  these
+computation times were simulated by adding artificial active waiting times  wt  inside the
+consistency check  shown in ms in table      note that the consistency check is only called
+if no conflict can be reused for the current node  the artificial waiting time only applies to
+cases in which a new conflict has to be determined 
+each experiment was repeated     times on different variations of each problem setting
+to factor out random effects  the number of diagnoses  d is thus an average as well  all
+algorithms had  however  to solve identical sets of problems and thus returned identical
+sets of diagnoses  we limited the search depth to   for all experiments to speed up the
+benchmark process  the average running times are reported in table    
+results  varying computation times first  we varied the assumed conflict computation times for a quite small diagnosis problem using   parallel threads  table      the
+first row with assumed zero computation times shows how long the hs tree construction
+alone needs  the improvements of the parallelization are smaller for this case because of the
+overhead of thread creation and synchronization  however  as soon as we add an average
+running time of   ms for the consistency check  both parallelization approaches result in a
+speedup of about    which corresponds to a runtime reduction of      further increasing
+the assumed computation time does not lead to better relative improvements using the pool
+of   threads 
+results  varying conflict sizes the average conflict size impacts the breadth of the
+hs tree  next  we therefore varied the average conflict size  our hypothesis was that larger
+conflicts and correspondingly broader hs trees are better suited for parallel processing 
+the results shown in table    confirm this assumption  fp is always slightly more efficient
+than lwp  average conflict sizes larger than   did  however  not lead to strong additional
+improvements when using   threads 
+results  adding more threads for larger conflicts  adding additional threads leads
+to further improvements  using   threads results in improvements of up to       corresponding to a running time reduction of over      for these larger conflict sizes because in
+these cases even higher levels of parallelization can be achieved 
+results  adding more components finally  we varied the problem complexity by
+adding more components that can potentially be faulty  since we left the number and
+size of the conflicts unchanged  adding more components led to diagnoses that included
+more different components  as we limited the search depth to   for this experiment  fewer
+diagnoses were found up to this level and the search trees were narrower  as a result  the
+relative performance gains were lower than when there are fewer components  constraints  
+discussion the simulation experiments demonstrate the advantages of parallelization 
+for all tests  the speedups of lwp and fp are statistically significant  the results also
+confirm that the performance gains depend on different characteristics of the underlying
+problem  the additional gains of not waiting at the end of each search level for all worker
+threads to be finished typically led to small further improvements 
+redundant calculations can  however  still occur  in particular when the conflicts for
+new nodes are determined in parallel and two worker threads return the same conflict 
+   
+
+fiparallel model based diagnosis on multi core computers
+
+ cp   cf   d wt seq 
+lwp
+ cf 
+ ms   ms 
+s 
+e 
+varying computation times wt
+        
+  
+ 
+  
+         
+        
+  
+  
+   
+         
+        
+                      
+varying conflict sizes
+        
+  
+                  
+        
+   
+                  
+         
+   
+                  
+varying numbers of components
+         
+   
+                  
+         
+   
+                  
+          
+  
+                  
+ cp   cf   d wt seq 
+lwp
+i cf 
+ ms   ms 
+s 
+e 
+adding more threads    instead of   
+        
+  
+                  
+        
+   
+                  
+         
+   
+                  
+
+fp
+s 
+
+e 
+
+    
+    
+    
+
+    
+    
+    
+
+    
+    
+    
+
+    
+    
+    
+
+         
+         
+         
+fp
+s 
+e 
+    
+    
+    
+
+    
+    
+    
+
+table     simulation results 
+although without parallelization the computing resources would have been left unused
+anyway  redundant calculations can lead to overall longer computation times for very small
+problems because of the thread synchronization overheads 
+a   additional experiments using mxp for conflict detection
+in this section we report the additional results that were obtained when using mergexplain
+instead of quickxplain as a conflict detection strategy as described in section      the
+different experiments were again made using a set of csps and ontology debugging problems  remember that in this set of experiments our goal is to identify a set of leading
+diagnoses 
+a     diagnosing constraint satisfaction problems
+table    shows the results when searching for five diagnoses using the csp and spreadsheet
+benchmarks  mxp could again help to reduce the running times for most of the tested
+scenarios except for some of the smaller ones  for the tiny scenario mknap      the simple
+sequential algorithm using qxp is the fastest alternative  for most of the other scenarios 
+however  parallelization pays off and is faster than when sequentially expanding the search
+tree  the best result could be achieved for the scenario costasarray     where fp using
+mxp reduced the running times by     compared to the sequential algorithm using qxp 
+   
+
+fijannach  schmitz    shchekotykhin
+
+which corresponds to a speedup of    the results again indicate that fp works well for
+both qxp and mxp 
+scenario
+c 
+costasarray   
+domino        
+gracefulk  p 
+mknap    
+queens  
+hospital payment
+profit calculation
+course planning
+preservation model
+revenue calculation
+
+seq  qxp 
+ ms 
+   
+     
+  
+   
+  
+  
+     
+  
+     
+   
+  
+
+fp qxp 
+s 
+e 
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+
+seq  mxp 
+ ms 
+   
+     
+  
+   
+  
+  
+     
+  
+     
+   
+  
+
+fp mxp 
+s 
+e 
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+
+table     results for csp benchmarks and spreadsheets  qxp vs mxp  
+note that in one case  costasarray     we see an efficiency value larger than one  which
+means that the obtained speedup is super linear  this can happen in special situations
+in which we search for a limited number of diagnoses and use the fp method  see also
+section a       assume that generating one specific node takes particularly long  i e   the
+computation of a conflict set requires a considerable amount of time  in that case  a
+sequential algorithm will be stuck at this node for some time  while the fp method will
+continue generating other nodes  if these other nodes are then sufficient to find the  limited 
+required number of diagnoses  this can lead to an efficiency value that is greater than the
+theoretical optimum 
+a     diagnosing ontologies
+the results are shown in table     similar to the previous experiment  using mxp in
+combination with fp pays off in all cases except for the very simple benchmark problems 
+a   additional experiments  parallel depth first search
+in this section  we report the results of additional experiments that were made to assess the
+effects of parallelizing a depth first search strategy as described in section      in this set of
+experiments the goal was to find one single minimal diagnosis  we again report the results
+obtained for the constraint problems and the ontology debugging problems and discuss
+the findings of a simulation experiment in which we systematically varied the problem
+characteristics 
+a     diagnosing constraint satisfaction problems
+the results of searching for a single diagnosis for the csps and spreadsheets are shown
+in table     again  parallelization generally shows to be a good strategy to speed up the
+   
+
+fiparallel model based diagnosis on multi core computers
+
+ontology
+chemical
+koala
+sweet jpl
+minitambis
+university
+economy
+transportation
+cton
+opengalen no propchains
+
+seq  qxp 
+ ms 
+   
+  
+ 
+  
+  
+  
+  
+   
+     
+
+fp qxp 
+s 
+e 
+         
+         
+         
+         
+         
+         
+         
+         
+         
+
+seq  mxp 
+ ms 
+   
+  
+ 
+  
+  
+  
+  
+   
+     
+
+fp mxp 
+s 
+e 
+         
+         
+         
+         
+         
+         
+         
+         
+         
+
+table     results for ontologies  qxp vs mxp  
+diagnosis process  all measured speedups except the speedup of rdfs for the first scenario
+c  are statistically significant  in this specific problem setting  only the fp strategy had
+a measurable effect and for some strategies even a modest performance deterioration was
+observed when compared to reiters sequential algorithm  the reason lies in the resulting
+structure of the hs tree which is very narrow as most conflicts are of size one 
+the following detailed observations can be made when comparing the algorithms 
+ in most of the tested csps  fp is advantageous when compared to rdfs and prdfs 
+ for the spreadsheets  in contrast  rdfs or prdfs were better than the breadth first
+approach of fp in three of five cases 
+ when comparing rdfs and prdfs  we can again observe that parallelization can
+be advantageous also for these depth first strategies 
+ again  however  the improvements seem to depend on the underlying problem structure  in the case of the hospital payment scenario  the speedup of prdfs is as high as
+    compared to the sequential algorithm  which corresponds to a runtime reduction
+of more than      the parallel strategy is  however  not consistently better for all
+test cases 
+ the performance of the hybrid method again lies in between the performances of its
+two components for many  but not all  of the tested scenarios 
+
+a     diagnosing ontologies
+next  we evaluated the search for one diagnosis on the real world ontologies  table      in
+the tested scenarios  applying the depth first strategy did often not pay off when compared
+to the breadth first methods  the reason is that in the tested examples from the ontology debugging domain in many cases single element diagnoses exist  which can be quickly
+detected by a breadth first strategy  furthermore the absolute running times are often comparably small  parallelizing the depth first strategy leads to significant speedups in some
+but not all cases 
+   
+
+fijannach  schmitz    shchekotykhin
+
+scenario
+c 
+costasarray   
+domino        
+gracefulk  p 
+mknap    
+queens  
+hospital payment
+profit calculation
+course planning
+preservation model
+revenue calculation
+
+seq 
+ ms 
+   
+     
+  
+   
+   
+  
+   
+  
+     
+   
+   
+
+fp
+s 
+e 
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+
+rdfs
+ ms 
+   
+     
+  
+   
+   
+  
+   
+  
+     
+   
+   
+
+prdfs
+s 
+e 
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+
+hybrid
+s 
+e 
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+         
+
+table     results for csp benchmarks and spreadsheets for finding one diagnosis 
+ontology
+chemical
+koala
+sweet jpl
+minitambis
+university
+economy
+transportation
+
+seq 
+ ms 
+  
+  
+ 
+  
+  
+  
+  
+
+fp
+s 
+e 
+         
+         
+         
+         
+         
+         
+         
+
+rdfs
+ ms 
+  
+ 
+ 
+  
+  
+  
+  
+
+prdfs
+s 
+e 
+         
+         
+         
+         
+         
+         
+         
+
+hybrid
+s 
+e 
+         
+         
+         
+         
+         
+         
+         
+
+table     observed performance gains for ontologies for finding one diagnosis 
+a     systematic variation of problem characteristics
+table    finally shows the simulation results when searching for one single diagnosis  in
+the experiment we used a uniform probability distribution when selecting the components
+of the conflicts to obtain more complex diagnosis problems  the results can be summarized
+as follows 
+ fp is as expected better than the sequential version of the hs tree algorithm for all
+tested configurations 
+ for the very small problems that contain only a few and comparably small conflicts 
+the depth first strategy does not work well  both the parallel and sequential versions
+are even slower than reiters original proposal  except for cases where zero conflict
+computation times are assumed  this indicates that the costs for hitting set minimization are too high 
+ for the larger problem instances  relying on a depth first strategy to find one single
+diagnosis is advantageous and also better than fp  an additional test with an even
+   
+
+fiparallel model based diagnosis on multi core computers
+
+ cp   cf  i d  wt
+seq 
+i cf 
+ ms 
+ ms 
+varying computation times wt
+        
+    
+ 
+  
+        
+    
+  
+  
+        
+        
+   
+varying conflict sizes
+        
+    
+  
+  
+        
+    
+  
+  
+         
+    
+  
+  
+varying numbers of components
+         
+    
+  
+   
+         
+    
+  
+   
+               
+  
+     
+more conflicts
+          
+    
+         
+
+fp
+
+rdfs
+ ms 
+
+prdfs
+s 
+e 
+
+hybrid
+s 
+e 
+
+s 
+
+e 
+
+    
+    
+    
+
+    
+    
+    
+
+ 
+   
+     
+
+    
+    
+    
+
+    
+    
+    
+
+    
+    
+    
+
+    
+    
+    
+
+    
+    
+    
+
+    
+    
+    
+
+   
+   
+   
+
+    
+    
+    
+
+    
+    
+    
+
+    
+    
+    
+
+    
+    
+    
+
+    
+    
+    
+
+    
+    
+    
+
+   
+   
+   
+
+    
+    
+    
+
+    
+    
+    
+
+    
+    
+    
+
+    
+    
+    
+
+    
+
+    
+
+   
+
+    
+
+    
+
+    
+
+    
+
+table     simulation results for finding one diagnosis 
+larger problem shown in the last line of table    reveals the potential of a depth first
+search approach 
+ when the problems are larger  prdfs can again help to obtain further runtime
+improvements compared to rdfs 
+ the hybrid method works well for all but the single case with zero computation times 
+again  it represents a good choice when the problem structure is not known 
+overall  the simulation experiments show that the speedups that can be achieved with
+the different methods depend on the underlying problem structure also when we search for
+one single diagnosis 
+
+references
+abreu  r     van gemund  a  j  c          a low cost approximate minimal hitting set
+algorithm and its application to model based diagnosis  in sara    pp     
+anglano  c     portinale  l          parallel model based diagnosis using pvm  in europvm    pp         
+autio  k     reiter  r          structural abstraction in model based diagnosis  in
+ecai    pp         
+baader  f   calvanese  d   mcguinness  d   nardi  d     patel schneider  p          the
+description logic handbook  theory  implementation and applications  vol     
+bolosky  w  j     scott  m  l          false sharing and its effect on shared memory
+performance  in sedms    pp       
+   
+
+fijannach  schmitz    shchekotykhin
+
+brungger  a   marzetta  a   fukuda  k     nievergelt  j          the parallel search bench
+zram and its applications  annals of operations research               
+buchanan  b     shortliffe  e   eds            rule based expert systems  the mycin experiments of the stanford heuristic programming project  addison wesley  reading 
+ma 
+burns  e   lemons  s   ruml  w     zhou  r          best first heuristic search for
+multicore machines  journal of artificial intelligence research             
+campeotto  f   palu  a  d   dovier  a   fioretto  f     pontelli  e          exploring the
+use of gpus in constraint solving  in padl    pp         
+cardoso  n     abreu  r          a distributed approach to diagnosis candidate generation  in epia    pp         
+chandra  d   guo  f   kim  s     solihin  y          predicting inter thread cache contention on a chip multi processor architecture  in hpca    pp         
+chu  g   schulte  c     stuckey  p  j          confidence based work stealing in parallel
+constraint programming  in cp    pp         
+console  l   friedrich  g     dupre  d  t          model based diagnosis meets error
+diagnosis in logic programs  in ijcai    pp           
+de kleer  j          hitting set algorithms for model based diagnosis  in dx    pp         
+dean  j     ghemawat  s          mapreduce  simplified data processing on large clusters  communications of the acm                 
+dijkstra  e  w          the structure of the the multiprogramming system  communications of the acm                 
+eiter  t     gottlob  g          the complexity of logic based abduction  journal of the
+acm              
+feldman  a   provan  g   de kleer  j   robert  s     van gemund  a       a   solving
+model based diagnosis problems with max sat solvers and vice versa  in dx    pp 
+       
+feldman  a   provan  g     van gemund  a       b   approximate model based diagnosis
+using greedy stochastic search  journal of artifcial intelligence research         
+    
+felfernig  a   friedrich  g   isak  k   shchekotykhin  k  m   teppan  e     jannach  d 
+        automated debugging of recommender user interface descriptions  applied
+intelligence              
+felfernig  a   friedrich  g   jannach  d     stumptner  m          consistency based diagnosis of configuration knowledge bases  artificial intelligence                  
+felfernig  a   friedrich  g   jannach  d   stumptner  m     zanker  m          hierarchical
+diagnosis of large configurator knowledge bases  in ki    pp         
+felfernig  a   schubert  m     zehentner  c          an efficient diagnosis algorithm for
+inconsistent constraint sets  artificial intelligence for engineering design  analysis
+and manufacturing               
+   
+
+fiparallel model based diagnosis on multi core computers
+
+felfernig  a   friedrich  g   jannach  d   stumptner  m   et al          consistency based
+diagnosis of configuration knowledge bases  in ecai    pp         
+ferguson  c     korf  r  e          distributed tree search and its application to alpha beta
+pruning  in aaai    pp         
+friedrich  g     shchekotykhin  k  m          a general diagnosis method for ontologies 
+in iswc    pp         
+friedrich  g   stumptner  m     wotawa  f          model based diagnosis of hardware
+designs  artificial intelligence                 
+friedrich  g   fugini  m   mussi  e   pernici  b     tagni  g          exception handling for
+repair in service based processes  ieee transactions on software engineering         
+       
+friedrich  g     shchekotykhin  k          a general diagnosis method for ontologies  in
+iswc    pp         
+garey  m  r     johnson  d  s          computers and intractability  a guide to the theory
+of np completeness  w  h  freeman   co 
+grau  b  c   horrocks  i   motik  b   parsia  b   patel schneider  p     sattler  u         
+owl    the next step for owl  web semantics  science  services and agents on
+the world wide web                
+greiner  r   smith  b  a     wilkerson  r  w          a correction to the algorithm in
+reiters theory of diagnosis  artificial intelligence               
+horridge  m     bechhofer  s          the owl api  a java api for owl ontologies 
+semantic web journal              
+jannach  d     schmitz  t          model based diagnosis of spreadsheet programs  a
+constraint based debugging approach  automated software engineering  february
+      published online  
+jannach  d   schmitz  t     shchekotykhin  k          parallelized hitting set computation
+for model based diagnosis  in aaai    pp           
+junker  u          quickxplain  preferred explanations and relaxations for overconstrained problems  in aaai    pp         
+kalyanpur  a   parsia  b   horridge  m     sirin  e          finding all justifications of
+owl dl entailments  in the semantic web  vol       of lecture notes in computer
+science  pp         
+korf  r  e     schultze  p          large scale parallel breadth first search  in aaai   
+pp           
+kurtoglu  t     feldman  a          third international diagnostic competition  dxc
+     https   sites google com site dxcompetition      accessed             
+lecoutre  c   roussel  o     van dongen  m  r  c          cpai   competition  http 
+  www cril univ artois fr cpai     accessed             
+li  l     yunfei  j          computing minimal hitting sets with genetic algorithm  in
+dx    pp     
+   
+
+fijannach  schmitz    shchekotykhin
+
+marques silva  j   janota  m   ignatiev  a     morgado  a          efficient model based
+diagnosis with maximum satisfiability  in ijcai    pp           
+marques silva  j   janota  m     belov  a          minimal sets over monotone predicates
+in boolean formulae  in computer aided verification  pp         
+mateis  c   stumptner  m   wieland  d     wotawa  f          model based debugging of
+java programs  in aadebug   
+mencia  c     marques silva  j          efficient relaxations of over constrained csps  in
+ictai    pp         
+menca  c   previti  a     marques silva  j          literal based mcs extraction  in
+ijcai    pp           
+metodi  a   stern  r   kalech  m     codish  m          a novel sat based approach to
+model based diagnosis  journal of artificial intelligence research             
+michel  l   see  a     van hentenryck  p          parallelizing constraint programs transparently  in cp    pp         
+nica  i   pill  i   quaritsch  t     wotawa  f          the route to success  a performance
+comparison of diagnosis algorithms  in ijcai    pp           
+nica  i     wotawa  f          condiag   computing minimal diagnoses using a constraint
+solver  in dx    pp         
+phillips  m   likhachev  m     koenig  s          pa se  parallel a  for slow expansions 
+in icaps   
+pill  i   quaritsch  t     wotawa  f          from conflicts to diagnoses  an empirical
+evaluation of minimal hitting set algorithms  in dx    pp         
+pill  i     quaritsch  t          optimizations for the boolean approach to computing
+minimal hitting sets  in ecai    pp         
+powley  c     korf  r  e          single agent parallel window search  ieee transactions
+on pattern analysis and machine intelligence                 
+previti  a   ignatiev  a   morgado  a     marques silva  j          prime compilation of
+non clausal formulae  in ijcai    pp           
+prudhomme  c   fages  j  g     lorca  x          choco documentation  tasc  inria
+rennes  lina cnrs umr       cosling s a s  http   www choco solver org 
+reiter  r          a theory of diagnosis from first principles  artificial intelligence         
+     
+rymon  r          an se tree based prime implicant generation algorithm  annals of
+mathematics and artificial intelligence                   
+satoh  k     uno  t          enumerating minimally revised specifications using dualization  in jsai    pp         
+schulte  c   lagerkvist  m     tack  g          gecode   an open  free  efficient constraint
+solving toolkit  http   www gecode org  accessed             
+   
+
+fiparallel model based diagnosis on multi core computers
+
+shchekotykhin  k   friedrich  g   fleiss  p     rodler  p          interactive ontology debugging  two query strategies for efficient fault localization  journal of web semantics 
+            
+shchekotykhin  k  m     friedrich  g          query strategy for sequential ontology
+debugging  in iswc    pp         
+shchekotykhin  k   jannach  d     schmitz  t          mergexplain  fast computation of
+multiple conflicts for diagnosis  in ijcai    pp           
+shchekotykhin  k  m   friedrich  g   rodler  p     fleiss  p          sequential diagnosis of
+high cardinality faults in knowledge bases by direct diagnosis generation  in ecai   
+pp         
+sirin  e   parsia  b   grau  b  c   kalyanpur  a     katz  y          pellet  a practical
+owl dl reasoner  web semantics  science  services and agents on the world wide
+web                
+stern  r   kalech  m   feldman  a     provan  g          exploring the duality in conflictdirected model based diagnosis  in aaai    pp         
+stuckey  p  j   feydy  t   schutt  a   tack  g     fischer  j          the minizinc challenge
+           ai magazine               
+stumptner  m     wotawa  f          debugging functional programs  in ijcai    pp 
+         
+stumptner  m     wotawa  f          diagnosing tree structured systems  artificial
+intelligence               
+white  j   benavides  d   schmidt  d  c   trinidad  p   dougherty  b     cortes  a  r 
+        automated diagnosis of feature model configurations  journal of systems and
+software                   
+williams  b  c     ragno  r  j          conflict directed a  and its role in model based
+embedded systems  discrete applied mathematics                     
+wotawa  f       a   a variant of reiters hitting set algorithm  information processing
+letters               
+wotawa  f       b   debugging hardware designs using a value based model  applied
+intelligence               
+wotawa  f     pill  i          on classification and modeling issues in distributed modelbased diagnosis  ai communications                 
+
+   
+
+fi

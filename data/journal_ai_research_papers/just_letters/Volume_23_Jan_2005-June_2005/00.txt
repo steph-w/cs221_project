@@ -1,0 +1,2569 @@
+journal of artificial intelligence research               
+
+submitted        published      
+
+finding approximate pomdp solutions through belief
+compression
+nicholas roy
+
+nickroy mit edu
+
+massachusetts institute of technology 
+computer science and artificial intelligence laboratory
+cambridge  ma
+
+geoffrey gordon
+
+ggordon cs cmu edu
+
+carnegie mellon university  school of computer science
+pittsburgh  pa
+
+sebastian thrun
+
+thrun stanford edu
+
+stanford university  computer science department
+stanford  ca
+
+abstract
+standard value function approaches to finding policies for partially observable markov
+decision processes  pomdps  are generally considered to be intractable for large models 
+the intractability of these algorithms is to a large extent a consequence of computing
+an exact  optimal policy over the entire belief space  however  in real world pomdp
+problems  computing the optimal policy for the full belief space is often unnecessary for
+good control even for problems with complicated policy classes  the beliefs experienced
+by the controller often lie near a structured  low dimensional subspace embedded in the
+high dimensional belief space  finding a good approximation to the optimal value function
+for only this subspace can be much easier than computing the full value function 
+we introduce a new method for solving large scale pomdps by reducing the dimensionality of the belief space  we use exponential family principal components analysis  collins  dasgupta    schapire        to represent sparse  high dimensional belief spaces
+using small sets of learned features of the belief state  we then plan only in terms of the
+low dimensional belief features  by planning in this low dimensional space  we can find
+policies for pomdp models that are orders of magnitude larger than models that can be
+handled by conventional techniques 
+we demonstrate the use of this algorithm on a synthetic problem and on mobile robot
+navigation tasks 
+
+   introduction
+decision making is one of the central problems of artificial intelligence and robotics  most
+robots are deployed into the world to accomplish specific tasks  but the real world is a
+difficult place in which to actactions can have serious consequences  figure   a  depicts
+a mobile robot  pearl  designed to operate in the environment shown in figure   b   the
+longwood retirement facility in pittsburgh  real world environments such as longwood
+are characterized by uncertainty  sensors such as cameras and range finders are noisy and
+the entire world is not always observable  a large number of state estimation techniques
+explicitly recognize the impossibility of correctly identifying the true state of the world
+ gutmann  burgard  fox    konolige        olson        gutmann   fox        kanazawa 
+c
+    
+ai access foundation  all rights reserved 
+
+firoy  gordon    thrun
+
+koller    russell        isard   blake        by using probabilistic techniques to track the
+location of the robot  such state estimators as the kalman filter  leonard   durrantwhyte        or markov localization  fox  burgard    thrun        thrun  fox  burgard 
+  dellaert        provide a  possibly factored  boyen   koller        distribution over
+possible states of the world instead of a single  possibly incorrect  state estimate 
+
+ a 
+
+figure   
+
+ b 
+
+a planner for the mobile robot pearl  shown in  a   must be able to navigate
+reliably in such real environments as the longwood at oakmont retirement facility 
+shown in  b   the white areas of the map are free space  the black pixels are
+obstacles  and the grey areas again are regions of map uncertainty  notice the
+large open spaces  and many symmetries that can lead to ambiguity in the robots
+position  the map is     m      m  with a resolution of    m     m per pixel 
+
+in contrast  controllers such as motion planners  dialogue systems  etc  rarely model the
+same notions of uncertainty  if the state estimate is a full probability distribution  then the
+controller often uses a heuristic to extract a single best state  such as the distributions
+mean or mode  some planners compensate for the inevitable estimation errors through robust control  chen        bagnell   schneider         but few deployed systems incorporate
+a full probabilistic state estimate into planning  although the most likely state method is
+simple and has been used successfully by some real applications  nourbakhsh  powers   
+birchfield         substantial control errors can result when the distribution over possible
+states is very uncertain  if the single state estimate is wrong  the planner is likely to choose
+an unreasonable action 
+figure   illustrates the difference between conventional controllers and those that model
+uncertainty  in this figure  the robot must navigate from the bottom right corner to the top
+left  but has limited range sensing  up to  m  and noisy dead reckoning   the impoverished
+   for the purposes of this example the sensing and dead reckoning were artificially poor  but the same
+phenomenon would occur naturally in larger scale environments 
+
+ 
+
+fifinding approximate pomdp solutions through belief compression
+
+sensor data can cause the robots state estimate to become quite uncertain if it strays too
+far from environmental structures that it can use to localize itself  on the left  figure  a 
+is an example trajectory from a motion planner that has no knowledge of the uncertainty in
+the state estimate and no mechanism for taking this uncertainty into account  the robots
+trajectory diverges from the desired path  and the robot incorrectly believes it has arrived
+at the goal  not shown here are the state estimates that reflect the high uncertainty in the
+robot position  on the right  figure  b  is an example trajectory from a controller that can
+model the positional uncertainty  take action to keep the uncertainty small by following the
+walls  and arrive reliably at the goal 
+
+goal
+
+goal
+
+measured path
+
+measured path
+true path
+true path
+
+start
+
+start
+
+ a  conventional controller
+
+figure   
+
+ b  robust controller
+
+two possible trajectories for navigation in the longwood at oakmont environment  the robot has limited range sensing  up to  m  and poor dead reckoning
+from odometry   a  the trajectory from a conventional motion planner that uses
+a single state estimate  and minimizes travel distance   b  the trajectory from
+a more robust controller that models the state uncertainty to minimize travel
+distance and uncertainty 
+
+the controller in figure   b  was derived from a representation called the partially observable markov decision process  pomdp   pomdps are a technique for making decisions
+based on probabilistic estimates of the state of the world  rather than on absolute knowledge
+of the true state  a pomdp uses an a priori model of the world together with the history
+of actions taken and observations received in order to infer a probability distribution  or
+belief  over the possible states of the world  the controller chooses actions  based upon
+the current belief  to maximize the reward it expects to receive over time 
+the advantage to using pomdps for decision making is that the resulting policies
+handle uncertainty well  the pomdp planning process can take advantage of actions that
+implicitly reduce uncertainty  even if the problem specification  e g   the reward function 
+does not explicitly reward such actions  the disadvantage to pomdps is that finding the
+optimal policy is computationally intractable  existing techniques for finding exact optimal
+ 
+
+firoy  gordon    thrun
+
+plans for pomdps typically cannot handle problems with more than a few hundred states
+ hauskrecht        zhang   zhang         most planning problems involving real  physical
+systems cannot be expressed so compactly  we would like to deploy robots that plan over
+thousands of possible states of the world  e g   map grid cells   with thousands of possible
+observations  e g   laser range measurements  and actions  e g   velocities  
+in this paper  we will describe an algorithm for finding approximate solutions to realworld pomdps  the algorithm arises from the insight that exact pomdp policies use
+unnecessarily complex  high dimensional representations of the beliefs that the controller
+can expect to experience  by finding low dimensional representations  the planning process
+becomes much more tractable 
+we will first describe how to find low dimensional representations of beliefs for realworld pomdps  we will use a variant of a common dimensionality reduction technique
+called principal components analysis  the particular variant we use modifies the loss
+function of pca in order to better model the data as probability distributions  using these
+low dimensional representations  we will describe how to plan in the low dimensional space 
+and conclude with experimental results on robot control tasks 
+
+   partially observable markov decision processes
+a partially observable markov decision process  pomdp  is a model for deciding how to
+act in an accessible  stochastic environment with a known transition model  russell and
+norvig         pg        a pomdp is described by the following 
+
+
+
+
+
+
+
+
+
+a set of states s    s    s          s s   
+a set of actions a    a    a            a a   
+a set of observations z    z    z            z z   
+a set of transition probabilities t  si   a  sj     p sj  si   a 
+a set of observation probabilities o zi   a  sj     p zi  sj   a 
+a set of rewards r   s  a   r
+a discount factor         
+an initial belief p   s 
+
+the transition probabilities describe how the state evolves with actions  and also represent the markov assumption  the next state depends only on the current  unobservable 
+state and action and is independent of the preceding  unobserved  states and actions  the
+reward function describes the objective of the control  and the discount factor is used to
+ensure reasonable behaviour in the face of unlimited time  an optimal policy is known
+to always exist in the discounted        case with bounded immediate reward  howard 
+      
+pomdp policies are often computed using a value function over the belief space  the
+value function v  b  for a given policy  is defined as the long term expected reward the
+controller will receive starting at belief b and executing the policy  up to some horizon time 
+which may be infinite  the optimal pomdp policy maximizes this value function  the
+value function for a pomdp policy under a finite horizon can be described using a piecewise linear function over the space of beliefs  many algorithms compute the value function
+iteratively  evaluating and refining the current value function estimate until no further
+ 
+
+fifinding approximate pomdp solutions through belief compression
+
+refinements can improve the expected reward of the policy from any belief  figure   a 
+shows the belief space for a three state problem  the belief space is the two dimensional 
+shaded simplex  each point on the simplex corresponds to a particular belief  a threedimensional vector   and the corners of the simplex represent beliefs where the state is
+known with      certainty  the value function shown in figure   b  gives the long term
+expected reward of a policy  starting at any belief in the simplex 
+
+ 
+
+  
+ 
+
+   
+
+ 
+ 
+
+   
+
+ 
+ 
+
+   
+
+ 
+ 
+
+   
+
+ 
+ 
+ 
+
+ 
+ 
+   
+
+   
+   
+   
+   
+ 
+
+ 
+
+   
+
+   
+
+   
+
+   
+
+   
+
+ 
+
+   
+   
+ 
+
+ a  the belief space
+figure   
+
+ 
+
+   
+
+   
+
+   
+
+   
+
+ 
+
+ b  the value function
+
+ a  the belief space for a three state problem is the two dimensional  shaded
+simplex   b  a value function defined over the belief space  for the purposes
+of visualization  the set of beliefs that constitutes the belief space shown in  a 
+has been projected onto the xy plane in  b   the value function then rises along
+the positive z axis  each point in the belief space corresponds to a specific
+distribution  and the value function at that point gives the expected reward of
+the policy starting from this belief  the belief space  and therefore the value
+function  will have one fewer dimension than the total number of states in the
+problem 
+
+the process of evaluating and refining the value function is at the core of why solving
+pomdps is considered to be intractable  the value function is defined over the space
+of beliefs  which is continuous and high dimensional  the belief space will have one fewer
+dimension than the number of states in the model  for a navigation problem in a map of
+thousands of possible states  computing the value function is an optimization problem over
+a continuous space with many thousands of dimensions  which is not feasible with existing
+algorithms 
+however  careful consideration of some real world problems suggests a possible approach
+for finding approximate value functions  if we examine the beliefs that a navigating mobile
+robot encounters  these beliefs share common attributes  the beliefs typically have a very
+small number of modes  and the particular shape of the modes is fairly generic  the modes
+move about and change in variance  but the ways in which the modes change is relatively
+constrained  in fact  even for real world navigation problems with very large belief spaces 
+the beliefs have very few degrees of freedom 
+figure   a  illustrates this idea  it shows a typical belief that a mobile robot might
+experience while navigating in the nursing home environment of figure   b   to visualize
+the distribution we sample a set of poses  also called particles  according to the distribution
+ 
+
+firoy  gordon    thrun
+
+and plot the particles on the map  the distribution is unimodal and the probability mass
+is mostly concentrated in a small area  figure   b  shows a very different kind of belief 
+probability mass is spread over a wide area  there are multiple modes  and the locations
+of particles bear little relationship to the map  it would be difficult to find a sequence of
+actions and observations that would result in such a belief 
+
+most particles
+are here
+
+ a  a common belief
+
+figure   
+
+ b  an unlikely belief
+
+two example probability distributions over robot pose  the small black dots are
+particles drawn from the distribution over discrete grid positions  on the left is a
+distribution where the robots location is relatively certain  this kind of compact 
+unimodal distribution is very common in robot navigation  on the right is a
+very different  implausible distribution  the right hand distribution is sufficiently
+unlikely that we can afford to ignore it  even if we are unable to distinguish this
+belief from some other belief and as a result fail to identify its optimal action  the
+quality of our controller will be unaffected 
+
+if real world beliefs have few degrees of freedom  then they should be concentrated near a
+low dimensional subset of the high dimensional belief spacethat is  the beliefs experienced
+by the controller should lie near a structured  low dimensional surface embedded in the belief
+space  if we can find this surface  we will have a representation of the belief state in terms
+of a small set of bases or features  one benefit of such a representation is that we will need
+to plan only in terms of the small set of features  finding value functions in low dimensional
+spaces is typically easier than finding value functions in high dimensional spaces 
+there are two potential disadvantages to this sort of representation  the first is that it
+contains an approximation  we are no longer finding the complete  optimal pomdp policy 
+instead  as suggested in figure    we are trying to find representations of the belief which
+are rich enough to allow good control but which are also sufficiently parsimonious to make
+ 
+
+fifinding approximate pomdp solutions through belief compression
+
+the planning problem tractable  the second disadvantage is a technical one  because we are
+making a nonlinear transformation of the belief space  pomdp planning algorithms which
+assume a convex value function will no longer work  we discuss this problem in more detail
+in section   
+conventional
+path planner
+
+pomdp
+
+tractable
+not robust
+
+figure   
+
+intractable
+robust
+
+the most useful planner lies somewhere on a continuum between the mdp style
+approximations and the full pomdp solution 
+
+   dimensionality reduction
+in order to find a low dimensional representation of our beliefs  we will use statistical dimensionality reduction algorithms  cox   cox         these algorithms search for a projection
+from our original high dimensional representation of our beliefs to a lower dimensional compact representation  that is  they search for a low dimensional surface  embedded in the
+high dimensional belief space  which passes near all of the sample beliefs  if we consider
+the evolution of beliefs from a pomdp as a trajectory inside the belief space  then our assumption is that trajectories for most large  real world pomdps lie near a low dimensional
+surface embedded in the belief space  figure   depicts an example low dimensional surface
+embedded in the belief space of the three state pomdp described in the previous section 
+ 
+
+   
+
+   
+
+   
+
+   
+
+ 
+ 
+   
+   
+   
+   
+ 
+
+figure   
+
+ 
+
+   
+
+   
+
+   
+
+   
+
+ 
+
+a one dimensional surface  black line  embedded in a two dimensional belief space
+ gray triangle   each black dot represents a single belief probability distribution
+experienced by the controller  the beliefs all lie near the low dimensional surface 
+
+ideally  dimensionality reduction involves no information lossall aspects of the data
+can be recovered equally well from the low dimensional representation as from the highdimensional one  in practice  though  we will see that we can use lossy representations
+of the belief  that is  representations that may not allow the original data or beliefs to
+be recovered without error  and still get good control  but  we will also see that finding
+such representations of probability distributions will require a careful trade off between
+ 
+
+firoy  gordon    thrun
+
+preserving important aspects of the distributions and using as few dimensions as possible 
+we can measure the quality of our representation by penalizing reconstruction errors with
+a loss function  collins et al          the loss function provides a quantitative way to
+measure errors in representing the data  and different loss functions will result in different
+low dimensional representations 
+principal components analysis
+one of the most common forms of dimensionality reduction is principal components analysis  joliffe         given a set of data  pca finds the linear lower dimensional representation of the data such that the variance of the reconstructed data is preserved  intuitively 
+pca finds a low dimensional hyperplane such that  when we project our data onto the
+hyperplane  the variance of our data is changed as little as possible  a transformation that
+preserves variance seems appealing because it will maximally preserve our ability to distinguish between beliefs that are far apart in euclidean norm  as we will see below  however 
+euclidean norm is not the most appropriate way to measure distance between beliefs when
+our goal is to preserve the ability to choose good actions 
+we first assume we have a data set of n beliefs  b            bn    b  where each belief bi
+is in b  the high dimensional belief space  we write these beliefs as column vectors in a
+matrix b    b           bn    where b  r s n   we use pca to compute a low dimensional
+representation of the beliefs by factoring b into the matrices u and b 
+b   u b t  
+
+   
+
+in equation      u  r s l corresponds to a matrix of bases that span the low dimensional
+space of l    s  dimensions  b  rnl represents the data in the low dimensional space  
+from a geometric perspective  u comprises a set of bases that span a hyperplane b in the
+high dimensional space of b  b are the co ordinates of the data on that hyperplane  if no
+hyperplane of dimensionality l exists that contains the data exactly  pca will find the surface of the given dimensionality that best preserves the variance of the data  after projecting
+the data onto that hyperplane and then reconstructing it  minimizing the change in variance between the original data b and its reconstruction u b t is equivalent to minimizing
+the sum of squared error loss 
+l b  u  b    kb  u b t k f  
+
+   
+
+pca performance
+figure   shows a toy problem that we can use to evaluate the success of pca at finding
+low dimensional representations  the abstract model has a two dimensional state space 
+one dimension of position along one of two circular corridors  and one binary variable that
+determines which corridor we are in  states s        s    inclusive correspond to one corridor 
+and states s          s    correspond to the other  the reward is at a known position that is
+different in each corridor  therefore  the agent needs to discover its corridor  move to the
+   many descriptions of pca are based on a factorization u sv t   with u and v column orthonormal and
+s diagonal  we could enforce a similar constraint by identifying b   v s  in this case the columns of u
+would have to be orthonormal while those of b would have to be orthogonal 
+
+ 
+
+fifinding approximate pomdp solutions through belief compression
+
+appropriate position  and declare it has arrived at the goal  when the goal is declared
+the system resets  regardless of whether the agent is actually at the goal   the agent
+has   actions  left  right  sense corridor  and declare goal  the observation and
+transition probabilities are given by discretized von mises distributions  mardia   jupp 
+      shatkay   kaelbling         an exponential family distribution defined over       
+the von mises distribution is a wrapped analog of a gaussian  it accounts for the fact
+that the two ends of the corridor are connected  because the sum of two von mises variates
+is another von mises variate  and because the product of two von mises likelihoods is a
+scaled von mises likelihood  we can guarantee that the true belief distribution is always a
+von mises distribution over each corridor after each action and observation 
+this instance of the problem consists of     states  with   actions and     observations 
+actions   and   move the controller left and right  with some von mises noise  and action
+  returns an observation that uniquely and correctly identifies which half of the maze the
+agent is in  the top half or the bottom half   observations returned after actions   and  
+identify the current state modulo      the probability of each observation is a von mises
+distribution with mean equal to the true state  modulo       that is  these observations
+indicate approximately where the agent is horizontally 
+max prob 
+obs      
+ 
+
+max prob 
+obs      
+ 
+
+max prob 
+obs      
+
+ 
+
+ 
+
+   
+
+   
+
+ 
+
+ 
+
+   
+
+   
+
+ 
+
+reward
+   
+
+   
+
+   
+
+   
+   
+
+max prob 
+obs        
+   
+
+observation  top  after
+action    has prob   
+
+reward
+
+observation  bottom  after
+action    has prob   
+
+   
+
+figure    the toy maze of     states 
+
+this maze is interesting because it is relatively large by pomdp standards      states 
+and contains a particular kind of uncertaintythe agent must use action   at some point to
+uniquely identify which half of the maze it is in  the remaining actions result in observations
+that contain no information about which corridor the agent is in  this problem is too large
+to be solved by conventional pomdp value iteration  but structured such that heuristic
+policies will also perform poorly 
+we collected a data set of     beliefs and assessed the performance of pca on beliefs
+from this problem  the data were collected using a hand coded controller  alternating at
+random between exploration actions and the mdp solution  taking as the current state the
+maximum likelihood state of the belief  figure   shows   sample beliefs from this data
+set  notice that each of these beliefs is essentially two discretized von mises distributions
+with different weights  one for each half of the maze  the starting belief state is the
+left most distribution in figure    equal probability on the top and bottom corridors  and
+position along the corridor following a discretized von mises distribution with concentration
+parameter      meaning that p state  falls to   e of its maximum value when we move    
+of the way around the corridor from the most likely state  
+ 
+
+firoy  gordon    thrun
+
+a sample belief
+
+a sample belief
+
+    
+
+    
+
+     
+
+     
+
+    
+
+    
+
+     
+
+     
+
+    
+     
+    
+
+    
+     
+    
+
+     
+
+     
+
+ 
+
+ 
+
+      
+
+ 
+
+  
+
+  
+
+  
+
+      
+
+                          
+state
+
+probability
+
+    
+     
+
+probability
+
+probability
+
+a sample belief
+    
+     
+
+    
+     
+    
+     
+ 
+
+ 
+
+  
+
+  
+
+  
+
+      
+
+                          
+state
+
+ 
+
+  
+
+  
+
+  
+
+                          
+state
+
+a sample belief
+    
+    
+
+probability
+
+   
+    
+    
+    
+    
+ 
+
+figure   
+
+ 
+
+  
+
+  
+
+  
+
+  
+
+                       
+state
+
+sample beliefs for the toy problem  from a sample set of      at different  noncontiguous  points in time  the left most belief is the initial belief state 
+
+figure   examines the performance of pca on representing the beliefs in this data set by
+computing the average error between the original beliefs b and their reconstructions u b  
+in figure   a  we see the average squared error  squared l    compared to the number
+of bases  and in figure   b   we see the average kullbach leibler  kl  divergence  the
+kl divergence between a belief b and its reconstruction r   u b from the low dimensional
+representation b is given by
+kl b k r   
+
+ s 
+x
+
+b si   ln
+
+i  
+
+
+
+b si  
+r si  
+
+
+
+   
+
+minimizing the squared l  error is the explicit objective of pca  but the kl divergence is
+a more appropriate measure of how much two probability distributions differ   
+unfortunately  pca performs poorly at representing probability distributions  despite
+the fact that probability distributions in the collected data set have only   degrees of
+freedom  the reconstruction error remains relatively high until somewhere between    and
+   basis functions  if we examine the reconstruction of a sample belief  we can see the
+kinds of errors that pca is making  figure    shows a sample belief  the solid line  and
+its reconstruction  the dotted line   notice that the reconstructed belief has some strange
+artifacts  it contains ringing  multiple small modes   and also is negative in some regions 
+pca is a purely geometric process  it has no notion of the original data as probability
+distributions  and is therefore free to generate reconstructions of the data that contain
+negative numbers or do not sum to   
+   we use a popular implementation of pca based on the golub reinsche algorithm  golub   reinsch 
+      available through the gnu scientific library  galassi  davies  theiler  gough  jungman  booth 
+  rossi        
+   note that before computing the kl divergence between the reconstruction and the original belief  we
+shift the reconstruction to be non negative  and rescale it to sum to   
+
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+average l  error vs  number of bases
+
+average kl divergence vs  number of bases
+
+    
+
+   
+average kl divergence
+
+   
+average l  error
+
+     
+    
+     
+ 
+
+   
+ 
+   
+   
+   
+   
+ 
+
+ 
+
+ 
+
+  
+  
+  
+number of bases
+
+  
+
+  
+
+ 
+
+ a  average squared l   error
+figure   
+
+ 
+
+  
+
+  
+  
+number of bases
+
+  
+
+  
+
+ b  average kl divergence
+
+the average error between the original sample set b and the reconstructions u b 
+ a  squared l  error  explicitly minimized by pca  and  b  the kl divergence 
+the error bars represent the standard deviation from the mean of the error over
+the     beliefs 
+an example belief and reconstruction
+     
+
+original belief
+reconstructed belief
+
+    
+
+probability
+
+     
+    
+     
+    
+     
+    
+     
+ 
+      
+
+ 
+
+  
+
+  
+
+  
+
+  
+
+                       
+state
+
+figure     an example belief and its reconstruction  using    bases 
+
+notice also that the pca process is making its most significant errors in the lowprobability regions of the belief  this is particularly unfortunate because real world probability distributions tend to be characterized by compact masses of probability  surrounded
+by large regions of zero probability  e g   figure  a   what we therefore need to do is modify
+pca to ensure the reconstructions are probability distributions  and improve the representation of sparse probability distributions by reducing the errors made on low probability
+events 
+the question to be answered is what loss functions are available instead of the sum of
+squared errors  as in equation      we would like a loss function that better reflects the
+need to represent probability distributions 
+  
+
+firoy  gordon    thrun
+
+   exponential family pca
+the conventional view of pca is a geometric one  finding a low dimensional projection
+that minimizes the squared error loss  an alternate view is a probabilistic one  if the
+data consist of samples drawn from a probability distribution  then pca is an algorithm
+for finding the parameters of the generative distribution that maximize the likelihood of
+the data  the squared error loss function corresponds to an assumption that the data is
+generated from a gaussian distribution  collins et al         demonstrated that pca can
+be generalized to a range of loss functions by modeling the data with different exponential
+families of probability distributions such as gaussian  binomial  or poisson  each such
+exponential family distribution corresponds to a different loss function for a variant of
+pca  and collins et al         refer to the generalization of pca to arbitrary exponential
+family data likelihood models as exponential family pca or e pca 
+an e pca model represents the reconstructed data using a low dimensional weight
+vector b  a basis matrix u   and a link function f  
+b  f  u b 
+
+   
+
+each e pca model uses a different link function  which can be derived from its data
+likelihood model  and its corresponding error distribution and loss function   the link
+function is a mapping from the data space to another space in which the data can be
+linearly represented 
+the link function f is the mechanism through which e pca generalizes dimensionality reduction to non linear models  for example  the identity link function corresponds
+to gaussian errors and reduces e pca to regular pca  while the sigmoid link function
+corresponds to bernoulli errors and produces a kind of logistic pca for     valued data 
+other nonlinear link functions correspond to other non gaussian exponential families of
+distributions 
+we can find the parameters of an e pca model by maximizing the log likelihood of
+the data under the model  which has been shown  collins et al         to be equivalent to
+minimizing a generalized bregman divergence
+bf   b k u b    f  u b   b  u b   f   b 
+
+   
+
+between the low dimensional and high dimensional representations  which we can solve using
+convex optimization techniques   here f is a convex function whose derivative is f   while
+f  is the convex dual of f   we can ignore f  for the purpose of minimizing equation  
+since the value of b is fixed   the relationship between pca and e pca through link
+functions is reminiscent of the relationship between linear regression and generalized linear
+models  mccullagh   nelder        
+to apply e pca to belief compression  we need to choose a link function which accurately reflects the fact that our beliefs are probability distributions  if we choose the link
+function
+f  u b    eu b
+   
+p u b
+p
+then it is not hard to verify that f  u b   
+e and f   b    b  ln b  b  so  equation  
+becomes
+x
+x
+bf   b k u b   
+eu b  b  u b   b  ln b 
+b
+   
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+if we write b   f  u b   then equation   becomes
+bf   b k u b    b  ln b  b  ln b  
+
+x
+
+b 
+
+x
+
+b   u kl b k b 
+
+where u kl is the unnormalized kl divergence  thus  choosing the exponential link function     corresponds to minimizing the unnormalized kl divergence between the original
+belief and its reconstruction  this loss function is an intuitively reasonable choice for measuring the error in reconstructing a probability distribution   the exponential link function
+corresponds to a poisson error model for each component of the reconstructed belief 
+our choice of loss and link functions has two advantages  first  the exponential link
+function constrains our low dimensional representation eu b to be positive  second  our error
+model predicts that the variance of each belief component is proportional to its expected
+value  since pca makes significant errors close to    we wish to increase the penalty for
+errors in small probabilities  and this error model accomplishes that 
+if we compute the loss for all bi   ignoring terms that depend only on the data b  then 
+
+l b  u  b   
+
+ b  
+x
+i  
+
+
+eu bi  bi  u bi  
+
+   
+
+the introduction of the link function raises a question  instead of using the complex
+machinery of e pca  could we just choose some non linear function to project the data
+into a space where it is linear  and then use conventional pca  the difficulty with this
+approach is of course identifying that function  in general  good link functions for e pca
+are not related to good nonlinear functions for application before regular pca  so  while
+it might appear reasonable to use pca to find a low dimensional representation of the log
+beliefs  rather than use e pca with an exponential link function to find a representation
+of the beliefs directly  this approach performs poorly because the surface is only locally
+well approximated by a log projection  e pca can be viewed as minimizing a weighted
+least squares that chooses the distance metric to be appropriately local  using conventional
+pca over log beliefs also performs poorly in situations where the beliefs contain extremely
+small or zero probability entries 
+p
+   if we had chosen the link function eu b   eu b we would have arrived at the normalized kl divergence 
+which is perhaps an even more intuitively reasonable way to measure the error in reconstructing a
+probability distribution  this more complicated link function would have made it more difficult to
+derive the newton equations in the following pages  but not impossible  we have experimented with the
+resulting algorithm and found that it produces qualitatively similar results to the algorithm described
+here  using the normalized kl divergence does have one advantage  it can allow us to get away with
+one fewer basis function during planning  since for unnormalized kl divergence the e pca optimization
+must learn a basis which can explicitly represent the normalization constant 
+   e pca is related to lee and seungs        non negative matrix factorization  one of the nmf loss
+functions presented by lee and seung        penalizes the kl divergence between a matrix and its
+reconstruction  as we do in equation    but  the nmf loss does not incorporate a link function and so is
+not an e pca loss  another nmf loss function presented by lee and seung        penalizes squared
+error but constrains the factors to be nonnegative  the resulting model is an example of a  gl    m  a
+generalization of e pca described by gordon        
+
+  
+
+firoy  gordon    thrun
+
+finding the e pca parameters
+algorithms for conventional pca are guaranteed to converge to a unique answer independent of initialization  in general  e pca does not have this property  the loss function    
+may have multiple distinct local minima  however  the problem of finding the best b given
+b and u is convex  convex optimization problems are well studied and have unique global
+solutions  rockafellar         similarly  the problem of finding the best u given b and b is
+convex  so  the possible local minima in the joint space of u and b are highly constrained 
+and finding u and b does not require solving a general non convex optimization problem 
+gordon        describes a fast  newtons method approach for computing u and b
+which we summarize here  this algorithm is related to iteratively reweighted least squares 
+a popular algorithm for generalized linear regression  mccullagh   nelder         in order
+to use newtons method to minimize equation      we need its derivative with respect to u
+and b 
+
+  u b 
+
+l b  u  b   
+e
+
+b  u b
+   
+u
+u
+u
+  e u b  b t  b b t
+    
+   e u b   b b t
+
+    
+
+and
+  u b 
+
+
+l b  u  b   
+e
+
+b  u b
+ b
+ b
+ b
+  u t e u b   u t b
+t
+
+  u  e
+
+ u b 
+
+ b  
+
+    
+    
+    
+
+if we set the right hand side of equation      to zero  we can iteratively compute bj   the
+column of b  by newtons method  let us set q bj     u t  e u bj    bj    and linearize
+about bj to find roots of q    this gives
+j th
+
+bjnew   bj 
+bjnew  bj
+
+  
+
+q bj  
+q    bj  
+
+u t  e u bj    bj  
+q    bj  
+
+    
+    
+
+note that equation    is a formulation of newtons method for finding roots of q  typically
+written as
+f  xn  
+xn     xn   
+ 
+    
+f  xn  
+we need an expression for q    
+q
+ bj
+
+ 
+ 
+
+
+u t  e u bj    bj  
+ bj
+
+u t e u bj  
+ bj
+
+  u t dj u
+  
+
+    
+    
+    
+
+fifinding approximate pomdp solutions through belief compression
+
+we define dj in terms of the diag operator that returns a diagonal matrix 
+
+where
+
+dj   diag eu bj   
+
+    
+
+
+b s         
+ 
+
+     
+  
+diag b        
+ 
+  
+ 
+      b s s   
+
+    
+
+
+
+combining equation      and equation       we get
+ u t dj u   bjnew  bj     u t  bj  eu bj  
+
+    
+
+u t dj u bjnew    u t dj u  bj   u t dj dj   bj  eu bj  
+  u t dj  u bj   dj   bj  eu bj   
+
+    
+    
+
+which is a weighted least squares problem that can be solved with standard linear algebra
+techniques  in order to ensure that the solution is numerically well conditioned  we typically
+add a regularizer to the divisor  as in
+bjnew  
+
+u t dj  u bj   dj   bj  eu bj  
+ u t dj u       il  
+
+ 
+
+    
+
+where il is the l  l identity matrix  similarly  we can compute a new u by computing ui  
+the ith row of u   as
+ ui b    bi  eui b  di   di b t
+ 
+    
+uinew  
+ bdi b t       il  
+the e pca algorithm
+we now have an algorithm for automatically finding a good low dimensional representation
+b for the high dimensional belief set b  this algorithm is given in table    the optimization
+is iterated until some termination condition is reached  such as a finite number of iterations 
+or when some minimum error  is achieved 
+the steps   and   raise one issue  although solving for each row of u or column of b
+separately is a convex optimization problem  solving for the two matrices simultaneously
+is not  we are therefore subject to potential local minima  in our experiments we did not
+find this to be a problem  but we expect that we will need to find ways to address the local
+minimum problem in order to scale to even more complicated domains 
+once the bases u are found  finding the low dimensional representation of a highdimensional belief is a convex problem  we can compute the best answer by iterating equation       recovering a full dimensional belief b from the low dimensional representation b
+is also very straightforward 
+x   eu b  
+    
+our definition of pca does not explicitly factor the data into u   s and b as many
+presentations do  in this three part representation of pca  s contains the singular values
+  
+
+firoy  gordon    thrun
+
+   collect a set of sample beliefs from the high dimensional belief space
+   assemble the samples into the data matrix b    b           b b   
+   choose an appropriate loss function  l b  u  b 
+   fix an initial estimate for b and u randomly
+   do
+  
+
+for each column bj  b 
+compute bjnew using current u estimate from equation     
+
+  
+  
+
+for each row ui  u  
+
+  
+
+compute uinew using new b estimate from equation     
+
+    while l b  u  b    
+
+table   
+
+the e pca algorithm for finding a low dimensional representation of a pomdp 
+including gordons newtons method        
+
+of the decomposition  and u and b are orthonormal  we use the two part representation
+b  f  u b  because there is no quantity in the e pca decomposition which corresponds
+to the singular values in pca  as a result  u and b will not in general be orthonormal  if
+desired  though  it is possible to orthonormalize u as an additional step after optimization
+using conventional pca and adjust b accordingly 
+
+   e pca performance
+using the loss function from equation     with the iterative optimization procedure described
+by equation      and equation      to find the low dimensional factorization  we can look
+at how well this dimensionality reduction procedure performs on some pomdp examples 
+toy problem
+recall from figure   that we were unable to find good representations of the data with
+fewer than    or    bases  even though our domain knowledge indicated that the data had
+  degrees of freedom  horizontal position of the mode along the corridor  concentration
+about the mode  and probability of being in the top or bottom corridor   examining one
+of the sample beliefs in figure     we saw that the representation was worst in the lowprobability regions  we can now take the same data set from the toy example  use e pca
+to find a low dimensional representation and compare the performance of pca and e pca 
+figure    a  shows that e pca is substantially more efficient at representing the data  as
+we see the kl divergence falling very close to   after   bases  additionally  the squared l  
+error at   bases is              we need   bases for perfect reconstruction  rather than
+   since we must include a constant basis function  the small amount of reconstruction
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+error with   bases remains because we stopped the optimization procedure before it fully
+converged  
+
+average kl divergence vs  number of bases  e pca 
+
+an example belief and reconstruction using   bases
+
+   
+
+     
+    
+     
+    
+
+   
+ 
+
+probability
+
+average kl divergence
+
+   
+
+   
+   
+   
+ 
+ 
+
+ 
+
+  
+
+  
+  
+number of bases
+
+  
+
+  
+
+ a  reconstruction performance
+
+probability
+
+probability
+
+     
+     
+     
+    
+     
+
+  
+
+  
+
+  
+
+                       
+state
+
+ e   
+   e   
+ e   
+ e   
+
+     
+
+ 
+   
+
+   
+
+   
+state
+
+   
+
+   
+
+  
+
+ c  the belief and reconstruction near the
+peak
+
+figure    
+
+  
+
+an example belief and reconstruction using   bases
+ e   
+original belief
+reconstructed belief
+   e   
+
+original belief
+reconstructed belief
+
+     
+
+ 
+
+ b  an example belief and reconstruction
+
+an example belief and reconstruction using   bases
+    
+
+     
+    
+     
+    
+     
+ 
+      
+
+   
+
+original belief
+reconstructed belief
+
+  
+
+   
+state
+
+   
+
+   
+
+ d  the belief and reconstruction in lowprobability region
+
+ a  the average kl divergence between the original sample set and the reconstructions  the kl divergence is       after   bases  the error bars represent
+the standard deviation from the mean over the     beliefs   b  the same example
+belief from figure    and its reconstruction using   bases  the reconstruction
+shows small errors at the peak of each mode  not shown is the reconstruction
+using   bases  in which the original belief and its reconstruction are indistinguishable to the naked eye   c  and  d  show fine detail of the original belief and
+the reconstruction in two parts of the state space  although the reconstruction
+is not perfect  in the low probability area  we see that the error is approximately
+        
+
+  
+
+firoy  gordon    thrun
+
+figure    b  shows the e pca reconstruction of the same example belief as in figure    
+we see that many of the artifacts present in the pca reconstruction are absent  using only
+  bases  we see that the e pca reconstruction is already substantially better than pca
+using    bases  although there are some small errors at the peaks  e g   figure   c  of the
+two modes   using   bases  the e pca reconstruction is indistinguishable to the naked eye
+from the original belief   this kind of accuracy for both   and   bases is typical for this
+data set 
+robot beliefs
+although the performance of e pca on finding good representations of the abstract problem
+is compelling  we would ideally like to be able to use this algorithm on real world problems 
+such as the robot navigation problem in figure    figures    and    show results from two
+such robot navigation problems  performed using a physically realistic simulation  although
+with artificially limited sensing and dead reckoning   we collected a sample set of     beliefs
+by moving the robot around the environment using a heuristic controller  and computed the
+low dimensional belief space b according to the algorithm in table    the full state space
+is     m    m  discretized to a resolution of  m   m per pixel  for a total of     states 
+figure    a  shows a sample belief  and figure    b  the reconstruction using   bases 
+in figure    c  we see the average reconstruction performance of the e pca approach 
+measured as average kl divergence between the sample belief and its reconstruction  for
+comparison  the performance of both pca and e pca are plotted  the e pca error falls
+to      at   bases  suggesting that   bases are sufficient for good reconstruction  this is a
+very substantial reduction  allowing us to represent the beliefs in this problem using only
+  parameters  rather than     parameters  notice that many of the states lie in regions
+that are outside the map  that is  states that can never receive probability mass were not
+removed  while removing these states would be a trivial operation  the e pca is correctly
+able to do so automatically 
+in figure     similar results are shown for a different environment  a sample set of    
+beliefs was again collected using a heuristic controller  and the low dimensional belief space
+b was computed using the e pca  the full state space is     m      m  with a resolution
+of   m    m per pixel  an example belief is shown in figure    a   and its reconstruction
+using   bases is shown figure    b   the reconstruction performance as measured by the
+average kl divergence is shown in figure    c   the error falls very close to   around  
+bases  with minimal improvement thereafter 
+
+   computing pomdp policies
+the exponential family principal components analysis model gives us a way to find a
+low dimensional representation of the beliefs that occur in any particular problem  for the
+two real world navigation problems we have tried  the algorithm proved to be effective at
+finding very low dimensional representations  showing reductions from      states and
+        states down to   or   bases  a   or   dimensional belief space will allow much
+more tractable computation of the value function  and so we will be able to solve much
+larger pomdps than we could have solved previously 
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+kl divergence between sampled beliefs and reconstructions
+
+particles form
+a bimodal distribution
+
+  
+
+e pca
+pca
+
+  
+
+kl divergence
+
+  
+
+ a  original belief
+
+  
+  
+  
+  
+  
+ 
+ 
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+number of bases
+
+ c  reconstruction performance
+
+ b  reconstruction
+
+figure    
+
+ a  a sample belief for the robot navigation task   b  the reconstruction of this
+belief from the learned e pca representation using   bases   c  the average
+kl divergence between the sample beliefs and their reconstructions against the
+number of bases used  notice that the e pca error falls close to   for   bases 
+whereas conventional pca has much worse reconstruction error even for   bases 
+and is not improving rapidly 
+
+kl divergence between sampled beliefs and reconstructions
+ 
+   
+kl divergence
+
+ 
+   
+ 
+   
+ 
+   
+ 
+
+ a  a sample belief
+
+figure    
+
+ b  the reconstruction
+
+ 
+
+ 
+
+ 
+
+ 
+ 
+  
+number of bases
+
+ c  average
+performance
+
+  
+
+  
+
+  
+
+reconstruction
+
+ a  a sample belief for the navigation problem in longwood  cf  figure     b 
+the reconstruction from the learned e pca representation using   bases   c 
+the average kl divergence between the sample beliefs and their reconstructions
+against the number of bases used 
+
+unfortunately  we can no longer use conventional pomdp value iteration to find the
+optimal policy given the low dimensional set of belief space features  pomdp value iteration depends on the fact that the value function is convex over the belief space  when
+  
+
+firoy  gordon    thrun
+
+we compute a non linear transformation of our beliefs to recover their coordinates on the
+low dimensional belief surface  we lose the convexity of the value function  compare figure   and figure   to see why   as a result  the value function cannot be expressed as the
+supremum of a set of hyperplanes over the low dimensional belief space 
+so  instead of using pomdp value iteration  we will build a low dimensional discrete
+belief space mdp and use mdp value iteration  since we do not know the form of the
+value function  we will turn to function approximation  gordon        proved that the
+fitted value iteration algorithm is guaranteed to find a bounded error approximation to a
+ possibly discounted  mdps value function  so long as we use it in combination with a
+function approximator that is an averager  averagers are function approximators which are
+non expansions in max norm  that is  they do not exaggerate errors in their training data 
+in our experiments below  we use regular grids as well as irregular  variable resolution grids
+based on   nearest neighbour discretization  represented by a set of low dimensional beliefs
+b   
+b     b    b            b b      
+    
+both of these approximations are averagers  other averagers include linear interpolation  knearest neighbours  and local weighted averaging  we will not focus in detail on the exact
+mechanism for discretizing the low dimensional space  as this is outside the scope of this
+paper  the resolution of the regular grid in all cases was chosen empirically  in section   we
+describe a specific variable resolution discretization scheme that worked well empirically 
+the reader can consult munos and moore        or zhou and hansen        for more
+sophisticated representations 
+the fitted value iteration algorithm uses the following update rule to compute a t step
+lookahead value function v t from a  t     step lookahead value function v t   
+
+
+ b   
+x
+v t  bi     max r  bi   a    
+t   bi   a  bj    v t   bj  
+    
+a
+
+j  
+
+here r and t  are approximate reward and transition functions based on the dynamics of
+our pomdp  the result of our e pca  and the finite set of low dimensional belief samples
+b  that we are using as our function approximator  note that in all problems described in
+this paper  the problem did not require discounting         the following sections describe
+how to compute the model parameters r and t   
+computing the reward function
+the original reward function r s  a  represents the immediate reward of taking action a
+at state s  we cannot know  given either a low dimensional or high dimensional belief 
+what the immediate reward will be  but we can compute the expected reward  we therefore
+represent the reward as the expected value of the immediate reward of the full model  under
+the current belief 
+r  b   a    eb  r s  a  
+
+    
+
+ s 
+
+ 
+
+x
+i  
+
+  
+
+r si   a b si   
+
+    
+
+fifinding approximate pomdp solutions through belief compression
+
+equation      requires us to recover the high dimensional belief b from the low dimensional
+representation b   as shown in equation      
+for many problems  the reward function r will have the effect of giving a low immediate
+reward for belief states with high entropy  that is  for many problems the planner will be
+driven towards beliefs that are centred on high reward states and have low uncertainty  this
+property is intuitively desirable  in such beliefs the robot does not have to worry about an
+immediate bad outcome 
+computing the transition function
+computing the low dimensional transition function t    p bj  a  bi   is not as simple as
+computing the low dimensional reward function r   we need to consider pairs of lowdimensional beliefs  bi and bj   in the original high dimensional belief space  the transition
+from a prior belief bi to a posterior belief bj is described by the bayes filter equation 
+bj  s     o s  a  z 
+
+ s 
+x
+
+t  sk   a  s bi  sk  
+
+    
+
+k  
+
+here a is the action we selected and z is the observation we saw  t is the original pomdp
+transition probability distribution  and o is the original pomdp observation probability
+distribution 
+equation      describes a deterministic transition conditioned upon a prior belief  an
+action and an observation  the transition to the posterior bj is stochastic when the observation is not known  that is  the transition from bi to bj occurs only when a specific z is
+generated  and the probability of this transition is the probability of generating observation
+z  so  we can separate the full transition process into a deterministic transition to b a   the
+belief after acting but before sensing  and a stochastic transition to b j   the full posterior 
+ba  s   
+
+ s 
+x
+
+t  sj   a  s bi  sj  
+
+    
+
+j  
+
+bj  s     o s  a  z ba  s  
+
+    
+
+equations    and    describe the transitions of the high dimensional beliefs for the
+original pomdp  based on these high dimensional transitions  we can compute the transitions in our low dimensional approximate belief space mdp  figure    depicts the process 
+as the figure shows  we start with a low dimensional belief bi   from bi we reconstruct
+a high dimensional belief b according to equation       then we apply an action a and
+an observation z as described in equation      and equation      to find the new belief
+b    once we have b  we can compress it to a low dimensional representation b  by iterating
+equation       finally  since b  may not be a member of our sample b  of low dimensional
+belief states  we map b  to a nearby bj  b  according to our function approximator 
+if our function approximator is a grid  the last step above means replacing b  by a
+prototypical bj which shares its grid cell  more generally  our function approximator may
+represent b  as a combination of several states  putting weight w bj   b    on each bj    for
+example  if our approximator is k nearest neighbour  w bj   b      k  for each of the closest k
+  
+
+firoy  gordon    thrun
+
+  
+bi
+
+ 
+b
+
+  
+bj
+lowdimensional
+
+action
+a
+
+b
+
+ba
+
+b
+
+highdimensional
+
+observation
+z
+
+figure     the process of computing a single transition probability 
+
+samples in b     in this case we replace the transition from bi to b  with several transitions 
+each from bi to some bj   and scale the probability of each one by w bj   b    
+for each transition bi  b  ba  b   b   bj we can assign a probability
+p z  j i  a   
+
+p z ba   w bj   b   
+
+ 
+
+w bj   b   
+
+ s 
+x
+
+p z sl  ba  sl  
+
+    
+
+l  
+
+the total transition probability t   bi   a  bj   is the sum  over all observations z  of p z  j i  a  
+step   in table   performs this computation  but shares work between the computation of
+t   bi   a  bj   for different posterior beliefs bj which are reachable from the same prior belief
+bi under action a 
+computing the value function
+with the reward and transition functions computed in the previous sections  we can use
+value iteration to compute the value function for our belief space mdp  the full algorithm
+is given in table   
+
+   solving large pomdps
+in this section  we present the application of our algorithm to finding policies for large
+pomdps 
+toy problem
+we first tested the e pca belief features using a regular grid representation on a version
+of the toy problem described earlier  to ensure that we only needed a small set of belief
+samples bi   we made the goal region larger  we also used a coarser discretization of the
+underlying state space     states instead of      to allow us to compute the low dimensional
+model more quickly 
+figure    shows a comparison of the policies from the different algorithms  the e pca
+does approximately twice as well as the maximum likelihood heuristic  this heuristic guesses
+its corridor  and is correct only about half the time  the amdp heuristic algorithm is the
+augmented mdp algorithm reported by roy and thrun         this controller attempts
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+   generate the discrete low dimensional belief space b  using e pca  cf  table   
+   compute the low dimensional reward function r  
+for each b  b    a  a
+ a  recover b from b
+ b  compute r  b  a   
+
+p s 
+
+i   r si   a b si   
+
+   compute the low dimensional transition function t   
+for each bi  b    a  a
+ a  for each bj   t   bi   a  bj      
+ b  recover bi from bi
+ c  for each observation z
+ d 
+
+compute bj from the bayes filter equation      and b 
+
+ e 
+
+compute b  from bj by iterating equation      
+
+ f 
+
+for each bj with w bj   b       
+add p z  j i  a  from equation      to t   bi   a  bj  
+
+ g 
+
+   compute the value function for b 
+ a  t    
+ b  for each bi  b    v    bi      
+ c  do
+ d 
+
+change    
+
+ e 
+
+for each bi  b   
+
+
+p b   
+v t  bi     maxa r  bi   a     j   t   bi   a  bj    v t   bj  
+
+change   change   v t  bi    v t   bi  
+ f  while change    
+
+table    value iteration for an e pca pomdp
+
+to find the policy that will result in the lowest entropy belief in reaching the goal  this
+controller does very poorly because it is unable to distinguish between a unimodal belief
+that knows which corridor it is in but not its position within the corridor  and a bimodal
+belief that knows its position but not which corridor  the results in figure    are averaged
+over        trials 
+it should be noted that this problem is sufficiently small that conventional pca fares
+reasonably well  in the next sections  we will see problems where the pca representation
+does poorly compared to e pca 
+  
+
+firoy  gordon    thrun
+
+average reward vs  number of bases
+      
+
+e pca
+pca
+
+average reward
+
+      
+     
+     
+     
+
+mdp heuristic
+
+     
+ 
+      
+
+amdp heuristic
+ 
+
+ 
+
+ 
+
+ 
+
+number of bases
+
+figure    
+
+a comparison of policy performance using different numbers of bases  for       
+trials  with regular grid discretization  policy performance was given by total
+reward accumulated over trials 
+
+robot navigation
+we tested the e pca pomdp algorithm on simulated robot navigation problems in two
+example environments  the wean hall corridor shown in figure    and the longwood retirement facility shown in figure   b   the model parameters are given by robot navigation
+models  see fox et al         
+we evaluated the policy for the relatively simple problem depicted in figure     we set
+the robots initial belief such that it may have been at one of two locations in the corridor 
+with the objective to get to within    m of the goal state  each grid cell is    m   m   the
+controller received a reward of       for arriving at the goal state and taking an at goal
+action  a reward of      was given for  incorrectly  taking this action at a non goal state 
+there was a reward of   for each motion  the states used for planning in this example
+were the     states along the corridor  and the actions were forward and backward motion 
+figure    shows a sample robot trajectory using the e pca policy and   basis functions 
+notice that the robot drives past the goal to the lab door in order to verify its orientation
+before returning to the goal  the robot does not know its true position  and cannot know
+that it is in fact passing the goal  if the robot had started at the other end of the corridor 
+its orientation would have become apparent on its way to the goal 
+figure    shows the average policy performance for three different techniques  the
+maximum likelihood heuristic could not distinguish orientations  and therefore approximately     of the time declared the goal in the wrong place  we also evaluated a policy
+learned using the best   bases from conventional pca  this policy performed substantially
+better than the maximum likelihood heuristic in that the controller did not incorrectly declare that the robot had arrived at the goal  however  this representation could not detect
+when the robot was at the goal  and also chose sub optimal  with respect to the e pca
+policy  motion actions regularly  the e pca outperformed the other techniques in this example because it was able to model its belief accurately  in contrast to the result in figure   
+where pca had sufficient representation to perform as well or better than e pca 
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+true position
+
+goal state
+final estimated
+position
+
+true start state
+
+figure    
+
+goal position
+
+start position
+
+an example robot trajectory  using the policy learned using   basis functions 
+on the left are the start conditions and the goal  on the right is the robot
+trajectory  notice that the robot drives past the goal to the lab door to localize
+itself  before returning to the goal 
+
+policy perfomance on mobile robot navigation
+      
+
+average reward
+
+      
+      
+      
+ 
+
+         
+       
+
+       
+
+       
+       
+       
+
+figure    
+
+ml heuristic
+
+pca
+
+e pca
+
+a comparison of policy performance using e pca  conventional pca and the
+maximum likelihood heuristic  for       trials 
+
+figure    a  shows a second example of navigation in simulation  notice that the initial
+belief for this problem is bi modal  a good policy will take actions to disambiguate the
+modes before proceeding to the goal  using a sample set of     beliefs  we computed the
+low dimensional belief space b  figure    b  shows the average kl divergence between the
+original and reconstructed beliefs  the improvement in the kl divergence error measure
+slowed down substantially around   bases  we therefore used   bases to represent the belief
+space 
+figure    c  shows an example execution of the policy computed using the e pca 
+the reward parameters were the same as in the previous navigation example  the robot
+parameters were maximum laser range of  m  and high motion model variance  the first
+action the policy chose was to turn the robot around and move it closer to the nearest wall 
+this had the effect of eliminating the second distribution mode on the right  the robot then
+followed essentially a coastal trajectory up the left hand wall in order to stay localized 
+although the uncertainty in the y direction became relatively pronounced  we see that as
+the uncertainty eventually resolved itself at the top of the image  the robot moved to the
+goal 
+  
+
+firoy  gordon    thrun
+
+kl divergence between sampled beliefs and reconstructions
+ 
+   
+
+true  hidden  start
+
+ 
+kl divergence
+
+goal
+
+   
+ 
+   
+ 
+   
+ 
+
+start distribution modes
+
+ a  initial distribution
+
+ 
+
+ 
+
+ 
+
+ 
+ 
+  
+number of bases
+
+  
+
+  
+
+  
+
+ b  reconstruction performance
+
+positional accuracy at goal
+
+ 
+distance from goal in metres
+
+ 
+
+ 
+
+     
+
+ 
+ 
+ 
+ 
+ 
+
+ c  the complete trajectory
+
+figure    
+
+     
+
+ 
+
+     
+e pca
+
+amdp
+
+mdp
+
+ d  policy performance
+
+ a  the sample navigation problem in longwood  cf  figure    this problem
+involves multi modal distributions   c  the average kl divergence between the
+sample beliefs and their reconstructions against the number of bases used  for    
+samples beliefs for a navigating mobile robot in this environment   d  a comparison of policy performance using e pca  conventional mdp and the amdp
+heuristic 
+
+it is interesting to note that this policy contains a similar coastal attribute as some
+heuristic policies  e g   the entropy heuristic and the amdp  cassandra  kaelbling   
+kurien        roy   thrun         however  unlike these heuristics  the e pca representation was able to reach the goal more accurately  that is  get closer to the goal   this
+representation was successful because it was able more accurately to represent the beliefs
+and the effects of actions on the beliefs 
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+finding people
+
+ a  original belief
+
+ b  reconstruction with pca
+
+ c  reconstruction with e pca
+
+figure    
+
+the performance of pca and e pca on a sample belief  the map is        
+grid cells  at a    m resolution   a  a sample belief   b  the pca reconstruction 
+using    bases   c  the e pca reconstruction  using   bases 
+
+in addition to the synthetic problem and the robot navigation problems described in the
+previous sections  we also tested our algorithm on a more complicated pomdp problem 
+that of finding a person or object moving around in an environment  this problem is
+motivated from the nursebot domain  where residents experiencing cognitive decline can
+sometimes become disoriented and start to wander  in order to make better use of the
+health care providers time  we would like to use a robot such as pearl  figure  a  to find
+the residents quickly  we assume that the person is not adversarial 
+the state space in this problem is much larger than the previous robot navigation problems  it is the cross product of the persons position and the robots position  however 
+we assume for simplicity that the robots position is known  and therefore the belief distribution is only over the persons position  the transitions of the person state feature
+are modelled by brownian motion with a fixed  known velocity  which models the persons
+motion as random  independent of the robot position   if the person was moving to avoid
+being captured by the robot  a different transition model would be required   we assume
+that the position of the person is unobservable until the robot is close enough to see the
+person  when the robot has line of sight to the person  up to some maximum range  usually
+  metres   the observation model has    false negatives and no false positives  the reward
+function is maximal when the person and the robot are in the same location 
+  
+
+firoy  gordon    thrun
+
+figure    a  shows an example probability distribution that can occur in this problem
+ not shown is the robots position   the grey dots are particles drawn from the distribution
+of where the person could be in the environment  the distribution is initially uniform
+over the reachable areas  inside the black walls   after the robot receives sensor data 
+the probability mass is extinguished within the sensor range of the robot  as the robot
+moves around  more of the probability mass is extinguished  focusing the distribution on
+the remaining places the person can be  however  the probability distribution starts to
+recover mass in places the robot visits but then leaves  in the particle filter  this can be
+visualized as particles leaking into areas that were previously emptied out 
+we collected a set of     belief samples using a heuristic controller given by driving the
+robot to the maximum likelihood location of the person  and used e pca to find a good
+low dimensional representation of the beliefs  figure    b  shows the reconstruction of the
+example belief in figure    a   using conventional pca and    bases  this figure should
+reinforce the idea that pca performs poorly at representing probability distributions  figure    c  shows the reconstruction using e pca and   bases  which is a qualitatively better
+representation of the original belief 
+recall from section   that we use a function approximator for representing the value
+function  in the preceding examples we used a regular grid over the low dimensional surface
+which performed well for finding good policies  however  the problem of finding people empirically requires a finer resolution representation than would be computationally tractable
+with a regular grid  we therefore turn to a different function approximator  the   nearestneighbour variable resolution representation  we add new low dimensional belief states to
+the model by periodically re evaluating the model at each grid cell  and splitting the gridcell into smaller discrete cells where a statistic predicted from the model disagrees with the
+statistic computed from experience  a number of different statistics have been suggested
+for testing the model against data from the real world  munos   moore         such as
+reduction in reward variance  or value function disagreement  we have opted instead for a
+simpler criterion of transition probability disagreement  we examine the policy computed
+using a fixed representation  and also the policy computed using an incrementally refined
+representation  note that we have not fully explored the effect of different variable resolution representations of the value function  e g   using k nearest neighbour interpolations
+such as described by hauskrecht         these experiments are beyond the scope of this
+paper  as our focus is on the utility of the e pca decomposition  no variable resolution
+representation of a value function has been shown to scale effectively beyond a few tens of
+dimensions at best  munos   moore        
+this problem shares many attributes with the robot navigation problem  but we see in
+figure    and figures    and    that this problem generates spatial distributions of higher
+complexity  it is somewhat surprising that e pca is able to find a good representation of
+these beliefs using only   bases  and indeed the average kl divergence is generally higher
+than for the robot navigation task  regardless  we are able to find good controllers  and
+this is an example of a problem where pca performs very poorly even with a large number
+of bases 
+figure    shows an example trajectory from the heuristic control strategy  driving the
+robot to the maximum likelihood location of the person at each time step  the open circle
+is the robot position  starting at the far right  the solid black circle is the position of the
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+figure    
+
+ a 
+
+ b 
+
+ c 
+
+ d 
+
+ e 
+
+ f 
+
+an example of a suboptimal person finding policy  the grey particles are drawn
+from the distribution of where the person might be  initially uniformly distributed in  a   the black dot is the true  unobservable  position of the person 
+the open circle is the observable position of the robot  through the robots poor
+action selection  the person is able to escape into previously explored areas 
+
+person  which is unobservable by the robot until within a  m range  the person starts in
+the room above the corridor  a   and then moves down into the corridor once the robot has
+moved to the far end of the corridor  b   as the robot returns to search inside the room  c 
+and  d   the person moves unobserved into the previously searched corridor  e   although
+we have deliberately chosen an example where the heuristic performs poorly  the person is
+not following an unlikely or adversarial trajectory  at all times the solid black circle remains
+in regions of high probability  the robots belief accurately reflects the possibility that the
+person will slip past  but the heuristic control algorithm has no way to take this possibility
+into account 
+using the policy found for the low dimensional belief space as described in previous
+sections  we are able to find a much better controller  a sample trajectory for this controller
+  
+
+firoy  gordon    thrun
+
+figure    
+
+ a 
+
+ b 
+
+ c 
+
+ d 
+
+ e 
+
+ f 
+
+the policy computed using the e pca representation  the initial conditions in
+panel  a  are the same as in figure     notice that  unlike the previous figure 
+this strategy ensures that the probability mass is located in one place  allowing
+the robot to find the person with significantly higher probability 
+
+is shown in figure     the robot travels from the right most position in the corridor  a 
+to only part way down the corridor  b   and then returns to explore the room  c  and
+ d   in this example  the persons starting position was different from the one given in the
+previous examplethe e pca policy would find the person at this point  starting from the
+same initial conditions as the previous example   after exploring the room and eliminating
+the possibility that the person is inside the room  e   the policy has reduced the possible
+locations of the person down to the left hand end of the corridor  and is able to find the
+person reliably at that location 
+note that figures    and    have the target person in the worst case start position for
+each planner  if the person were in the same start position in figure    as in figure    
+the policy would have found the person by panel  d   similarly  if the person had started
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+at the end of corridor as in figure     the policy shown in figure    would have found the
+person by panel  b  
+performance for different policies
+
+average   of actions to find person
+
+   
+
+   
+
+   
+
+   
+fully observable policy
+  
+
+ 
+
+figure    
+
+closest
+
+densest
+
+mdp
+
+pca
+
+e pca refined e pca
+
+a comparison of   policies for person finding in a simple environment  the
+baseline is the fully observable  i e   cheating  solution  the solid line   the epca policy is for a fixed  variable resolution  discretization  the refined e pca
+is for a discretization where additional belief samples have been added  the pca
+policy was approximately   times worse than the best e pca policy 
+
+figure    shows a quantitative comparison of the performance of the e pca against
+a number of other heuristic controllers in simulation  comparing the average time to find
+the person for these different controllers  the solid line depicts the baseline performance 
+using a controller that has access to the true state of the person at all times  i e   a fully
+observable lower bound on the best possible performance   the travel time in this case is
+solely a function of the distance to the person  no searching is necessary or performed  of
+course  this is not a realizable controller in reality  the other controllers are 
+ closest  the robot is driven to the nearest state of non zero probability 
+ densest  the robot is driven to the location from which the most probability mass is
+visible 
+ mdp  the robot is driven to the maximum likelihood state 
+ pca  a controller found using the pca representation and a fixed discretization of the
+low dimensional surface 
+ e pca  the e pca controller using a fixed discretization of the low dimensional surface
+to compute the value function 
+ refined e pca  the e pca controller using an incrementally refined variable resolution
+discretization of the surface for computing the value function 
+the performance of the best e pca controller is surprisingly close to the theoretical best
+performance  in terms of time to find the person  but this result also demonstrates the need
+for careful choice of discretization of the belief space for computing the value function  the
+  
+
+firoy  gordon    thrun
+
+initial variable resolution representation proved to be a poor function approximator  however  using the iteratively refined variable resolution discretization  we are able to improve
+the performance substantially  the controller using the conventional pca representation
+case was computed over a fixed discretization of the low dimensional representation using
+   bases and     grid points  the quality of belief representation under pca was so poor
+we did not investigate more complex policy approximators 
+
+   discussion
+these experiments demonstrate that the e pca algorithm can scale to finding low dimensional surfaces embedded in very high dimensional spaces 
+time complexity
+the algorithm is iterative and therefore no simple expression for the total running time is
+available  for a data set of  b  samples of dimensionality n  computing a surface of size
+l  each iteration of the algorithm is o  b nl      b l    nl     each step of the newtons
+algorithm is dominated by a set of matrix multiplies and the final step of inverting an l  l
+matrix  which is o l     the u step consists of  b  iterations  where each iteration has o nl 
+multiplies and the o l    inversion  the v step consists of n iterations  where each iteration
+has o  b l  multiplies and the o l     inversion  leading to the total complexity given above 
+figure    shows the time to compute the e pca bases for     sample beliefs  for
+       states  this implementation used java       and colt        on a   ghz athlon
+cpu with    m of ram  also shown are the computation times for conventional pca
+decomposition  for small state space problems  the e pca decomposition can be faster
+than pca for a small number of bases  if the implementation of pca always computes
+the full decomposition  l   n  where l is the reduced dimensionality and n is the full
+dimensionality  
+exponential family pca running time
+     
+     
+time in secs
+
+     
+     
+     
+     
+conventional pca       sec
+
+    
+ 
+
+figure    
+
+ 
+
+ 
+
+ 
+
+ 
+ 
+number of bases
+
+  
+
+  
+
+the time to compute the e pca representations for different discretizations of
+the state space 
+
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+by far the dominant term in the running time of our algorithm is the time to compute
+the e pca bases  once the bases have been found and the low dimensional space has been
+discretized  the running time required by value iteration to converge to a policy for the
+problems we have described was on the order of    to    ms 
+sample belief collection
+in all example problems we have addressed  we have used a standard sample size of    
+sample beliefs  additionally  we have used hand coded heuristic controllers to sample beliefs
+from the model  in practice  we found     sample beliefs collected using a semi random controller sufficient for our example problems  however  we may be able to improve the overall
+performance of our algorithm on future problems by iterating between phases of building
+the belief space representation  i e   collecting beliefs and generating the low dimensional
+representation  and computing a good controller  once an initial set of beliefs have been
+collected and used to build an initial set of bases and a corresponding policy  we can continue
+to evaluate the error of the representation  e g   k l divergence between the current belief
+and its low dimensional representation   if the initial representation has been learned with
+too few beliefs  then the representation may over fit the beliefs  we can detect this situation
+by noticing that our representation does a poor job at representing new beliefs  validation
+techniques such as cross validation may also be useful in determining when enough beliefs
+have been acquired 
+model selection
+one of the open questions we have not addressed so far is that of choosing the appropriate
+number of bases for our representation  unless we have problem specific information  such
+as the true number of degrees of freedom in the belief space  as in the toy example of
+section     it is difficult to identify the appropriate dimensionality of the underlying surface
+for control  one common approach is to examine the eigenvalues of the decomposition 
+which can be recovered using the orthonormalization step of the algorithm in table   
+ this assumes our particular link function is capable of expressing the surface that our
+data lies on   the eigenvalues from conventional pca are often used to determine the
+appropriate dimensionality of the underlying surface  certainly the reconstruction will be
+lossless if we use as many bases as there are non zero eigenvalues 
+unfortunately  recall from the description of e pca in section   that we do not generate
+a set of singular values  or eigenvalues  the non linear projection introduced by the link
+function causes the eigenvalues of the u matrix to be uninformative about the contribution
+of each basis to the representation  instead of using eigenvalues to choose the appropriate
+surface dimensionality  we use reconstruction quality  as in figure     using reconstruction
+quality to estimate the appropriate dimensionality is a common choice for both pca and
+other dimensionality reduction techniques  tenenbaum  de silva    langford         one
+alternate choice would be to evaluate the reward for policies computed for different dimensionalities and choose the most compact representation that achieves the highest reward 
+essentially using control error rather than reconstruction quality to determine dimensionality 
+  
+
+firoy  gordon    thrun
+
+recall from our discussion in section   that we are using dimensionality reduction to
+represent beliefs from pomdps with a specific kind of structure  in particular  the e pca
+representation will be most useful in representing beliefs that are relatively sparse and have
+a small number of degrees of freedom  however  e pca will be unable to find good lowdimensional representations for pomdp models that do not exhibit this kind of structure 
+that is  if the beliefs cannot be represented as lying on low dimensional hyperplane linked to
+the full belief space via the appropriate link function  one additional problem then is how to
+know a priori whether or not a specific pomdp has the appropriate structure  it is unlikely
+that there is a general technique that can determine the usefulness of e pca  but we can
+take advantage of model selection techniques also to determine whether or not e pca will
+find a usefully low dimensional representation for a specific pomdp  for example  if the
+kl divergence between a set of sample beliefs and their reconstructions is large even using
+a large number of bases  then the problem may not have the right structure 
+
+   related work
+many attempts have been made to use reachability analysis to constrain the set of beliefs
+for planning  washington        hauskrecht        zhou   hansen        pineau  gordon 
+  thrun      a   if the reachable set of beliefs is relatively small  then forward search
+to find this set is a perfectly reasonable approach  the policy computed over these beliefs is of course optimal  although it is relatively rare in real world problems to be able
+to enumerate the reachable beliefs  reachability analysis has also been used with some
+success as a heuristic in guiding search methods  especially for focusing computation on
+finding function approximators  washington        hansen         in this approach  the
+problem still remains of how to compute the low dimensional representation given the finite
+set of representative beliefs  discretization of the belief space itself has been explored a
+number of times  both regular grid based discretization  lovejoy         regular variable
+resolution approaches  zhou   hansen        and non regular variable resolution representations  brafman        hauskrecht         in the same vein  state abstraction  boutilier  
+poole        has been explored to take advantage of factored state spaces  and of particular
+interest is the algorithm of hansen and feng        which can perform state abstraction
+in the absence of a prior factorization  so far  however  all of these approaches have fallen
+victim to the curse of dimensionality and have failed to scale to more than a few dozen
+states at most 
+the value directed pomdp compression algorithm of poupart and boutilier        is a
+dimensionality reduction technique that is closer in spirit to ours  if not in technique  this
+algorithm computes a low dimensional representation of a pomdp directly from the model
+parameters r  t   and o by finding the krylov subspace for the reward function under belief
+propagation  the krylov subspace for a vector and a matrix is the smallest subspace that
+contains the vector and is closed under multiplication by the matrix  for pomdps  the
+authors use the smallest subspace that contains the immediate reward vector and is closed
+under a set of linear functions defined by the state transitions and observation model  the
+major advantage of this approach is that it optimizes the correct criterion  the value directed
+compression will only distinguish between beliefs that have different value  the major
+disadvantage of this approach is that the krylov subspace is constrained to be linear  using
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+our algorithm with pca instead of e pca  we can realize much of the same compression
+as the poupart and boutilier        method  we can take advantage of regularities in the
+same transition matrices t a z but not in the reward function r  unfortunately  as we have
+seen  beliefs are unlikely to lie on a low dimensional hyperplane  and our results reported
+in section   indicate that linear compression will not scale to the size of problems we wish
+to address 
+possibly the most promising approaches for finding approximate value functions are
+the point based methods  which instead of optimizing the value function over the entire
+belief space  do so only for specific beliefs  cheng        described a method for backing
+up the value function at specific belief points in a procedure called point based dynamic
+programming  pb dp   these pb dp steps are interleaved with standard backups as in
+full value iteration  zhang and zhang        improved this method by choosing the witness
+points as the backup belief points  iteratively increasing the number of such points  the
+essential idea is that point based backups are significantly cheaper than full backup steps 
+indeed  the algorithm described by zhang and zhang        out performs hansens exact
+policy search method by an order of magnitude for small problems  however  the need for
+periodic backups across the full belief space still limits the applicability of these algorithms
+to small abstract problems 
+more recently  pineau et al       a  have abandoned full value function backups in
+favour of only point based backups in the point based value iteration  pbvi  algorithm 
+by backing up only at discrete belief points  the backup operator is polynomial instead
+of exponential  as in value iteration   and  even more importantly  the complexity of the
+value function remains constant  pbvi uses a fundamentally different approach to finding
+pomdp policies  and still remains constrained by the curse of dimensionality in large state
+spaces  however  it has been applied successfully to problems at least an order of magnitude
+larger than its predecessors  and is another example of algorithms that can be used to make
+large pomdps tractable 
+e pca is not the only possible technique for non linear dimensionality reduction  there
+exists a large body of work containing different techniques such as self organizing maps  kohonen         generative topographic mapping  bishop  svensen    williams        
+stochastic neighbour embedding  hinton   roweis         two of the most successful
+algorithms to emerge recently have are isomap  tenenbaum et al         and locally linear embedding  roweis   saul         isomap extends pca like methods to non linear
+surfaces using geodesic distances as the distance metric between data samples  rather than
+euclidean distances  locally linear embedding  lle  can be considered a local alternative
+to the global reduction of isomap in that it represents each point as the weighted combination of its neighbours and operates in two phases  computing the weights of the k nearest
+neighbours for each high dimensional point  and then reconstructing the data in the lowdimensional co ordinate frame from the weights  however  these algorithms do not contain
+explicit models of the kind of data  e g   probability distributions  that they are attempting
+model  one interesting line of research  however  may be to extend these algorithms using
+different loss functions in the same manner that pca was extended to e pca 
+  
+
+firoy  gordon    thrun
+
+    conclusion
+partially observable markov decision processes have been considered intractable for finding
+good controllers in real world domains  in particular  the best algorithms to date for
+finding an approximate value function over the full belief space have not scaled beyond a
+few hundred states  pineau et al       a   however  we have demonstrated that real world
+pomdps can contain structured belief spaces  by finding and using this structure  we have
+been able to solve pomdps an order of magnitude larger than those solved by conventional
+value iteration techniques  additionally  we were able to solve different kinds of pomdps 
+from a simple highly structured synthetic problem to a robot navigation problem to a
+problem with a factored belief space and relatively complicated probability distributions 
+the algorithm we used to find this structure is related to principal components analysis
+with a loss function specifically chosen for representing probability distributions  the real
+world pomdps we have been able to solve are characterized by sparse distributions  and
+the exponential family pca algorithm is particularly effective for compressing this data 
+there do exist pomdp problems which do not have this structure  and for which this
+dimensionality reduction technique will not work well  however  it is a question for further
+investigation if other  related dimensionality reduction techniques  e g   isomap or locallylinear embedding  tenenbaum et al         roweis  saul    hinton        can be applied 
+there are a number of interesting possibilities for extending this algorithm in order to
+improve its efficiency or increase the domain of applicability  the loss function that we
+chose for dimensionality reduction was based on reconstruction error  as in
+l b  u  b    e u b   b  u b 
+
+    
+
+ cf  equation     minimizing the reconstruction error should allow near optimal policies to
+be learned  however  we would ideally like to find the most compact representation that
+minimizes control errors  this could possibly be better approximated by taking advantage
+of transition probability structure  for example  dimensionality reduction that minimizes
+prediction errors would correspond to the loss function 
+l b  u  b  t     e u b   b  u b   kb     n  t b     n  k 
+
+    
+
+where b     n  is the l  n    matrix of the first n    column vectors in b  and b     n is
+the l  n    matrix of the n    column vectors in v starting from the second vector  this
+has the effect of finding a representation that allows bt   to be predicted from t bt   with the
+caveat that the b must be arranged all for the same action  we plan to address this issue
+in future work 
+another shortcoming of the approach described in this work is that it contains the
+assumption that all beliefs can be described using the same low dimensional representation 
+however  it is relatively easy to construct an example problem which generates beliefs that
+lie on two distinct low dimensional surfaces  which in the current formulation would make
+the apparent dimensionality of the beliefs appear much higher than a set of beliefs sampled
+from one surface alone 
+while this work has largely been motivated by finding better representations of beliefs 
+it is not the only approach to solving large pomdps  policy search methods  meuleau 
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+peshkin  kim    kaelbling        and hierarchical methods  pineau  gordon    thrun 
+    b  have also been able to solve large pomdps  it is interesting to note that controllers
+based on the e pca representations are often essentially independent of policy complexity
+but strongly dependent on belief complexity  whereas the policy search and hierarchical
+methods are strongly dependent on policy complexity but largely independent of belief
+space complexity  it seems likely that progress in solving large pomdps in general will lie
+in a combination of both approaches 
+the e pca algorithm finds a low dimensional representation b of the full belief space b
+from sampled data  we demonstrated that the reliance on sampled data is not an obstacle
+for some real world problems  furthermore  using only sampled beliefs could be an asset
+for large problems where generating and tracking beliefs can be considerably easier than
+planning  it may however be preferable to try to compute a low dimensional representation
+directly from the model parameters  poupart and boutilier        use the notion of a krylov
+subspace to do this  the subspace computed by their algorithm may correspond exactly
+with a conventional pca and we have seen instances where pca does a poor job of finding
+low dimensional representations  the most likely explanation is that real world beliefs do
+not lie on low dimensional planes for most problems  but instead on curved surfaces  an
+extremely useful algorithm would be one that finds a subset of belief space closed under the
+transition and observation function  but which is not constrained to find only planes 
+
+acknowledgements
+thanks to tom mitchell  leslie kaelbling  reid simmons  drew bagnell  aaron courville 
+mike montemerlo and joelle pineau for useful comments and insight into this work  nicholas
+roy was funded by the national science foundation under itr grant   iis          geoffrey gordon was funded by afrl contract f       c      darpas mica program 
+and by afrl contract f              darpas coabs program 
+
+references
+bagnell  j  a     schneider  j          autonomous helicopter control using reinforcement
+learning policy search methods  in proceedings of the ieee international conference
+on robotics and automation  icra   pp            seoul  south korea  ieee press 
+bishop  c   svensen  m     williams  c          gtm  the generative topographic mapping 
+neural computation                 
+boutilier  c     poole  d          computing optimal policies for partially observable
+markov decision processes using compact representations  in proceedings of the   th
+national conference on artificial intelligence  aaai      pp           
+boyen  x     koller  d          tractable inference for complex stochastic processes  in
+proceedings of the   th annual conference on uncertainty in ai  uai   pp       
+madison  wisconsin 
+brafman  r  i          a heuristic variable grid solution method for pomdps  in kuipers 
+b  k     webber  b   eds    proceedings of the   th national conference on artificial
+intelligence  aaai   pp          providence  ri 
+  
+
+firoy  gordon    thrun
+
+cassandra  a  r   kaelbling  l     kurien  j  a          acting under uncertainty  discrete bayesian models for mobile robot navigation  in proceedings of the ieee rsj
+international conference on intelligent robots and systems 
+chen  b  m          robust and h  control  springer verlag 
+cheng  h  t          algorithms for partially observable markov decision processes  ph d 
+thesis  university of british columbia  vancouver  canada 
+collins  m   dasgupta  s     schapire  r          a generalization of principal components
+analysis to the exponential family  in dietterich  t  g   becker  s     ghahramani  z 
+ eds    advances in neural information processing systems     nips   cambridge 
+ma  mit press 
+cox  t     cox  m          multidimensional scaling  chapman   hall  london 
+fox  d   burgard  w     thrun  s          markov localization for mobile robots in dynamic
+environments  journal of artificial intelligence research             
+galassi  m   davies  j   theiler  j   gough  b   jungman  g   booth  m     rossi 
+f         
+gnu scientific library reference manual   rd edition edition  
+http   www gnu org software gsl  
+golub  g     reinsch  c          singular value decomposition and least squares solutions 
+numerische mathematik  pp         
+gordon  g          stable function approximation in dynamic programming  in prieditis 
+a     russell  s   eds    proceedings of the    international conference on machine
+learning  icml   pp          san francisco  ca  morgan kaufmann 
+gordon  g          generalized  linear  models  in becker  s   thrun  s     obermayer  k 
+ eds    advances in neural information processing systems     nips   mit press 
+gutmann  j  s   burgard  w   fox  d     konolige  k          an experimental comparison
+of localization methods  in proceedings of the ieee rsj international conference
+on intelligent robots and systems  victoria  canada 
+gutmann  j  s     fox  d          an experimental comparison of localization methods
+continued  in proceedings of the ieee rsj international conference on intelligent
+robots and systems  lausanne  switzerland 
+hansen  e     feng  z          dynamic programming for pomdps using a factored state
+representation  in proceedings of the fifth international conference on artificial
+intelligence planning and scheduling  aips      breckenridge  co 
+hansen  e          solving pomdps by searching in policy space  in proceedings of the
+  th conference on uncertainty in artifical intelligence  uai   pp          madison 
+wi 
+hauskrecht  m          value function approximations for partially observable markov
+decision processes  journal of artificial intelligence research           
+hinton  g     roweis  s          stochastic neighbor embedding  in becker  s   thrun 
+s     obermayer  k   eds    advances in neural information processing systems   
+ nips   mit press 
+  
+
+fifinding approximate pomdp solutions through belief compression
+
+howard  r  a          dynamic programming and markov processes  mit 
+isard  m     blake  a          condensation  conditional density propagation for
+visual tracking  international journal of computer vision              
+joliffe  i  t          principal component analysis  springer verlag 
+kanazawa  k   koller  d     russell  s          stochastic simulation algorithms for dynamic
+probabilistic networks  in proceedings of the   th annual conference on uncertainty
+in ai  uai   pp          montreal  canada 
+kohonen  t          self organized formation of topologically correct feature maps  biological cybernetics           
+lee  d  d     seung  h  s          learning the parts of objects by non negative matrix
+factorization  nature              
+leonard  j     durrant whyte  h          mobile robot localization by tracking geometric
+beacons  ieee transactions on robotics and automation                
+lovejoy  w  s          computationally feasible bounds for partially observable markov
+decison processes  operations research             
+mardia  k  v     jupp  p  e          directional statistics   nd edition   wiley  chichester 
+ny 
+mccullagh  p     nelder  j  a          generalized linear models   nd edition   chapman
+and hall  london 
+meuleau  n   peshkin  l   kim  k  e     kaelbling  l  p          learning finite state controllers for partially observable environments  in laskey  k  b     prade  h   eds   
+proceedings of the fifteenth international conference on uncertainty in artificial intelligence  pp          stockholm  sweden  morgan kaufmann 
+munos  r     moore  a          variable resolution discretization for high accuracy solutions of optimal control problems  in dean  t   ed    proceedings of the   th international joint conference on artificial intelligence  ijcai   pp            stockholm
+sweden  morgan kaufmann 
+munos  r     moore  a          variable resolution discretization in optimal control  machine learning                   
+nourbakhsh  i   powers  r     birchfield  s          dervish an office navigating robot 
+ai magazine               
+olson  c  f          probabilistic self localization for mobile robots  ieee transactions
+on robotics and automation               
+pineau  j   gordon  g     thrun  s       a   point based value iteration  an anytime
+algorithm for pomdps  in proceedings of the   th international joint conference on
+artificial intelligence  ijcai        acapulco  mexico 
+pineau  j   gordon  g     thrun  s       b   policy contingent abstraction for robust robot
+control  in meek  c     kjlruff  u   eds    proceedings of the   th annual conference
+on uncertainty in artificial intelligence  uai   acapulco  mexico 
+  
+
+firoy  gordon    thrun
+
+poupart  p     boutilier  c          value directed compression of pomdps  in becker 
+s   thrun  s     obermayer  k   eds    advances in neural information processing
+systems     nips   vancouver  canada  mit press 
+rockafellar  r  t          convex analysis  princeton university press  new jersey 
+roweis  s     saul  l          nonlinear dimensionality reduction by locally linear embedding   science                       
+roweis  s  t   saul  l  k     hinton  g  e          global coordination of local linear
+models  in dietterich  t  g   becker  s     ghahramani  z   eds    advances in
+neural information processing systems  vol      cambridge  ma  mit press 
+roy  n     thrun  s          coastal navigation with mobile robots  in solla  s  a   todd
+k  leen    muller  k  r   eds    advances in neural processing systems     nips  
+pp            denver  co  mit press 
+russell  s     norvig  p          artificial intelligence  a modern approach  prentice hall 
+shatkay  h     kaelbling  l  p          learning geometrically constrained hidden markov
+models for robot navigation  bridging the geometrical topological gap  journal of ai
+research 
+tenenbaum  j  b   de silva  v     langford  j  c          a global geometric framework
+for nonlinear dimensionality reduction  science                       
+thrun  s   fox  d   burgard  w     dellaert  f          robust monte carlo localization
+for mobile robots  artificial intelligence                   
+washington  r          bi pomdp  bounded  incremental partially observable markovmodel planning  in proceedings of the  th european conference on planning  ecp  
+zhang  n  l     zhang  w          speeding up the convergence of value iteration in partially observable markov decision processes  journal of artificial intelligence research 
+        
+zhou  r     hansen  e          an improved grid based approximation algorithm for
+pomdps  in nebel  b   ed    proceedings of the   th international joint conference on artificial intelligence  ijcai   pp          seattle  washington  morgan
+kaufmann 
+
+  
+
+fi

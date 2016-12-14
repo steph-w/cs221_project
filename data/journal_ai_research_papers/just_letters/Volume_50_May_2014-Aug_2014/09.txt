@@ -1,0 +1,1773 @@
+journal of artificial intelligence research                  
+
+submitted        published     
+
+hc search  a learning framework for search based
+structured prediction
+janardhan rao doppa
+
+doppa eecs oregonstate edu
+
+school of eecs  oregon state university
+corvallis  or             usa
+
+alan fern
+
+afern eecs oregonstate edu
+
+school of eecs  oregon state university
+corvallis  or             usa
+
+prasad tadepalli
+
+tadepall eecs oregonstate edu
+
+school of eecs  oregon state university
+corvallis  or             usa
+
+abstract
+structured prediction is the problem of learning a function that maps structured inputs
+to structured outputs  prototypical examples of structured prediction include part ofspeech tagging and semantic segmentation of images  inspired by the recent successes of
+search based structured prediction  we introduce a new framework for structured prediction
+called hc search  given a structured input  the framework uses a search procedure guided
+by a learned heuristic h to uncover high quality candidate outputs and then employs a
+separate learned cost function c to select a final prediction among those outputs  the
+overall loss of this prediction architecture decomposes into the loss due to h not leading
+to high quality outputs  and the loss due to c not selecting the best among the generated
+outputs  guided by this decomposition  we minimize the overall loss in a greedy stage wise
+manner by first training h to quickly uncover high quality outputs via imitation learning 
+and then training c to correctly rank the outputs generated via h according to their true
+losses  importantly  this training procedure is sensitive to the particular loss function of
+interest and the time bound allowed for predictions  experiments on several benchmark
+domains show that our approach significantly outperforms several state of the art methods 
+
+   introduction
+we consider the problem of structured prediction  where the predictor must produce a
+structured output given a structured input  for example  in part of speech  pos  tagging  the structured input is a sequence of words and structured output corresponds to the
+pos tags for those words  image scene labeling is another example  where the structured
+input is an image and the structured output is a semantic labeling of the image regions 
+structured prediction tasks such as above arise in several domains ranging from natural
+language processing  e g   named entity recognition  coreference resolution  and semantic
+parsing  and computer vision  e g   multi object tracking and activity recognition in videos 
+to speech  e g   text to speech mapping and speech recognition  and compuational biology
+ e g   protein secondary structure prediction and gene prediction  
+viewed as a traditional classification problem  the set of possible classes in structured
+prediction is exponential in the size of the input  thus  the problem of producing an
+c
+    
+ai access foundation  all rights reserved 
+
+fidoppa  fern    tadepalli
+
+output is combinatorial in nature  which introduces the non trivial choice of selecting a
+computational framework for producing outputs  importantly  this framework needs to
+balance two conflicting criteria     it must be flexible enough to allow for complex and
+accurate structured predictors to be learned  and    it must support inference of outputs
+within the computational time constraints of an application  one of the core research
+challenges in structured prediction has been to achieve a balance between these criteria 
+a standard approach to structured prediction is to learn a cost function c x  y  for
+scoring a potential structured output y given a structured input x  given such a cost
+function and a new input x  the output computation involves solving the so called argmin
+problem  which is to find the minimum cost output for a given input 
+y   arg minyy x  c x  y 
+
+   
+
+for example  approaches such as conditional random fields  crfs   lafferty  mccallum 
+  pereira         max margin markov networks  taskar  guestrin    koller        and
+structured svms  tsochantaridis  hofmann  joachims    altun        represent the cost
+function as a linear model over template features of both x and y  unfortunately  exactly
+solving the argmin problem is often intractable  efficient solutions exist only in limited
+cases such as when the dependency structure among features forms a tree  in such cases  one
+is forced to simplify the features to allow for tractable inference  which can be detrimental
+to prediction accuracy  alternatively  a heuristic optimization method can be used such
+as loopy belief propagation or variational inference  while such methods have shown some
+success in practice  it can be difficult to characterize their solutions and to predict when
+they are likely to work well for a new problem 
+we are inspired by the recent successes of output space search approaches  doppa  fern 
+  tadepalli        wick  rohanimanesh  bellare  culotta    mccallum         which place
+few restrictions on the form of the cost function  these methods learn and use a cost
+function to conduct a search through the space of complete outputs via a search procedure
+ e g   greedy search   and return the least cost output that is uncovered during the search as
+the prediction  the search procedure only needs to be able to efficiently evaluate the cost
+function at specific input output pairs  which is generally straightforward even when the
+corresponding argmin problem is intractable  thus  these methods are free to increase the
+complexity of the cost function without considering its impact on the inference complexity 
+while these approaches have achieved state of the art performance on a number of
+benchmark problems  a primary contribution of this paper is to highlight a fundamental
+deficiency that they share  in particular  prior work uses a single cost function to serve the
+dual roles of both     guiding the search toward good outputs  and    scoring the generated
+outputs in order to select the best one  serving these dual roles often means that the cost
+function needs to make unclear tradeoffs  increasing the difficulty of learning  indeed  in
+the traditional ai search literature  these roles are typically served by different functions 
+mainly a heuristic function for guiding search  and a cost evaluation function  often part
+of the problem definition  for selecting the final output 
+in this paper  we study a new framework for structured prediction called hc search that
+closely follows the traditional search literature  the key idea is to learn distinct functions
+for each of the above roles     a heuristic function h to guide the search and generate a set
+of high quality candidate outputs  and    a cost function c to score the outputs generated
+   
+
+fihc search  a learning framework for search based structured prediction
+
+by the heuristic h  given a structured input  predictions are made by using h to guide a
+search strategy  e g   greedy search or beam search  until a time bound to generate a set of
+candidate outputs and then returning the generated output of least cost according to c 
+while the move to hc search might appear to be relatively small  there are significant
+implications in terms of both theory and practice  first  the regret of the hc search
+approach can be decomposed into the loss due to h not leading to high quality outputs  and
+the loss due to c not selecting the best among the generated outputs  this decomposition
+helps us target our training to minimize each of these losses individually in a greedy stagewise manner  second  as we will show  the performance of the approaches with a single
+function can be arbitrarily bad when compared to that of hc search in the worst case 
+finally  we show that in practice hc search performs significantly better than the single
+cost function search and other state of the art approaches to structured prediction 
+the effectiveness of the hc search approach for a particular problem depends critically
+on     the quality of the search space over complete outputs being used  where quality is
+defined as the expected depth at which target outputs  zero loss outputs  can be located    
+our ability to learn a heuristic function for effectively guiding the search to generate highquality candidate outputs  and    the accuracy of the learned cost function in selecting the
+best output among the candidate outputs generated by the heuristic function  in this work 
+we assume the availability of an efficient search space over complete outputs and provide an
+effective training regime for learning both heuristic function and cost function within the
+hc search framework 
+
+    summary of contributions
+the main contributions of our work are as follows     we introduce the hc search framework  where two different functions are learned to serve the purposes of search heuristic
+and cost function as in the search literature     we analyze the representational power and
+computational complexity of learning within the hc search framework     we identify a
+novel decomposition of the overall regret of the hc search approach in terms of generation
+loss  the loss due to heuristic not generating high quality candidate outputs  and selection
+loss  the loss due to cost function not selecting the best among the generated outputs    
+guided by the decomposition  we propose a stage wise approach to learning the heuristic
+and cost functions based on imitation learning     we empirically evaluate the hc search
+approach on a number of benchmarks  comparing it to state of the art methods and analyzing different dimensions of the framework 
+the remainder of the paper proceeds as follows  in section    we introduce our problem
+setup  give a high level overview of our framework  and analyze the complexity of hc search
+learning problem  we describe our approaches to heuristic and cost function learning in
+section    section   presents our experimental results followed by an engineering methodology for applying our framework to new problems in section    finally  sections   and  
+discuss related work and future directions 
+   
+
+fidoppa  fern    tadepalli
+
+   hc search framework
+in this section  we first state the formal problem setup and then describe the specifics of
+the search spaces and search strategies that we will investigate in this work  next  we give
+a high level overview of our hc search framework along with its learning objective 
+    problem setup
+a structured prediction problem specifies a space of structured inputs x   a space of structured outputs y  and a non negative loss function l   x y y      such that l x  y     y   
+is the loss associated with labeling a particular input x by output y   when the true output is y    we are provided with a training set of input output pairs   x  y     drawn from
+an unknown target distribution d  the goal is to return a function predictor from structured inputs to outputs whose predicted outputs have low expected loss with respect to
+the distribution d  since our algorithms will be learning heuristic and cost functions over
+input output pairs  as is standard in structured prediction  we assume the availability of a
+feature function    x  y    n that computes an n dimensional feature vector for any
+pair  importantly  we can employ two different feature functions h and c for heuristic
+and cost function noting that they are serving two different roles  the heuristic is making
+local decisions to guide the search towards high quality outputs and the cost function is
+making global decisions by scoring the candidate outputs generated by the heuristic in this
+framework 
+    search spaces and search strategies
+we overview some basic search concepts in the context of our search based framework below 
+      search spaces
+our approach is based on search in a space so of complete outputs  which we assume to
+be given  every state in a search space over complete outputs consists of an input output
+pair  x  y   representing the possibility of predicting y as the output for structured input
+x  such a search space is defined in terms of two functions     an initial state function i
+such that i x  returns an initial state for input x  and    a successor function s such that
+for any search state  x  y   s  x  y   returns a set of next states   x  y           x  yk    that
+share the same input x as the parent  for example  in a sequence labeling problem  such
+as part of speech tagging   x  y  is a sequence of words and corresponding part of speech
+ pos  labels  the successors of  x  y  might correspond to all ways of changing one of the
+output labels in y  the so called flipbit space  figure   provides an illustration of the
+flipbit search space for the handwriting recognition task 
+search space quality  the effectiveness of our hc search framework depends on
+the quality of the search space that is used  the quality of a search space can in turn be
+understood in terms of the expected amount of search needed to uncover the correct output
+y    for most search procedures  the time required to find a target output y  will grow as
+a function of the depth of the target  thus  one way to quantify the expected amount of
+search  independently of the specific search strategy  is by considering the expected depth
+of target outputs y    in particular  for a given input output pair  x  y     the target depth d
+   
+
+fihc search  a learning framework for search based structured prediction
+
+figure    an example flipbit search space for the handwriting recognition problem  each
+search state consists of a complete input output pair and the complete output at
+every state differs from that of its parent by exactly one label  the highlighted
+state corresponds to the one with true output y  at the smallest depth  which is
+equal to the number of errors in the initial state 
+
+   
+
+fidoppa  fern    tadepalli
+
+is defined as the minimum depth at which we can find a state corresponding to the target
+output y   d     in the example flipbit space shown in figure     clearly according to this
+definition  the expected target depth of the flipbit space is equal to the expected number of
+errors in the output corresponding to the initial state 
+a variety of search spaces  such as the above flipbit space  limited discrepancy search
+ lds  space  doppa et al          and those defined based on hand designed proposal
+distributions  wick et al         have been used in past research  while our work applies to
+any such space  we will focus on the lds space in our experiment  which has been shown to
+effectively uncover high quality outputs at relatively shallow search depths  doppa et al  
+      
+the lds space is defined in terms of a recurrent classifier h which uses the next input
+token  e g  word  and output tokens in a small preceding window  e g  pos labels  to
+predict the next output token  the initial state of the lds space consists of the input
+x paired with the output of the recurrent classifier h on x  one problem with recurrent
+classifiers is that when a recurrent classifier makes a mistake  its effects get propagated
+to down stream tokens  the lds space is designed to prevent this error propagation by
+immediately correcting the mistakes made before continuing with the recurrent classifier 
+since we do not know where the mistakes are made and how to correct them  all possible
+corrections  called discrepancies  are considered  hence the successors of any state  x  y  in
+the lds space consist of the results of running the recurrent classifier after changing exactly
+one more label  i e   introducing a single new discrepancy  somewhere in the current output
+sequence y while preserving all previously introduced discrepancies  in previous work  the
+lds space has been shown to be effective in uncovering high quality outputs at relatively
+shallow search depths  as one would expect with a good recurrent classifier  doppa et al  
+       the appendix contains more details and examples of the lds space we employ in
+this work 
+      search strategies
+recall that in our hc search framework  the role of the search procedure is to uncover highquality outputs  we can consider both uninformed and informed search strategies  however 
+uninformed search procedures like depth bounded breadth first search will only be practical
+when high quality outputs exist at small depths and even when they are feasible  they are
+not a good choice because they dont use the search time bound in an intelligent way to
+make predictions  for most structured prediction problems  informed search strategies that
+take heuristic functions into account  such as greedy search or best first search are a better
+choice  noting that their effectiveness depends the quality of the search heuristic h  prior
+work  doppa et al         wick et al         has shown that greedy search  hill climbing
+based on the heuristic value  works quite well for a number of structured prediction tasks
+when used with an effective search space  thus  in this work  we focus our empirical work
+on the hc search framework using greedy search  though the approach applies more widely 
+    hc search approach
+our approach is parameterized by a search space over complete outputs so  e g   lds
+space   a heuristic search strategy a  e g   greedy search   a learned heuristic function
+   
+
+fihc search  a learning framework for search based structured prediction
+
+figure    a high level overview of our hc search framework  given a structured input x
+and a search space definition so   we first instantiate a search space over complete
+outputs  each search node in this space consists of a complete input output pair 
+next  we run a search procedure a  e g   greedy search  guided by the heuristic
+function h for a time bound    the highlighted nodes correspond to the search
+trajectory traversed by the search procedure  in this case greedy search  the
+scores on the nodes correspond to cost values  which are different from heuristic scores  not shown in the figure   we return the least cost output y that is
+uncovered during the search as the prediction for input x 
+
+h   x  y      and a learned cost function c   x  y      given an input x and a
+prediction time bound    hc search makes predictions as follows  it traverses the search
+space starting at i x  using the search procedure a guided by the heuristic function h until
+the time bound is exceeded  then the cost function c is applied to find return the least cost
+output y that is generated during the search as the prediction for input x  figure   gives a
+high level overview of our hc search framework 
+more formally  let yh  x  be the set of candidate outputs generated using heuristic h
+for a given input x  the output returned by hc search is y the least cost output in this
+set according to c  i e  
+y   arg minyyh  x  c x  y 
+   
+
+fidoppa  fern    tadepalli
+
+figure    an example that illustrates that c search can suffer arbitrarily large loss compared to hc search 
+
+the expected loss of the hc search approach e h  c  for a given heuristic h and c can be
+defined as
+e  h  c    e x y  d l  x  y  y   
+   
+our goal is to learn a heuristic function h and corresponding cost function c  that minimize
+the expected loss from their respective spaces h and c  i e  
+ h   c      arg min h c hc e  h  c 
+
+   
+
+in contrast to our framework  existing approaches for output space search  doppa et al  
+      wick et al         use a single function  say c  to serve the dual purpose of heuristic
+and cost function  this raises the question of whether hc search  which uses two different functions  is strictly more powerful in terms of its achievable losses  the following
+proposition shows that the expected loss of hc search can be arbitrarily smaller than when
+restricting to using a single function c 
+proposition    let h and c be functions from the same function space  then for all
+learning problems  minc e c  c   min h c  e h  c   moreover there exist learning problems
+for which minc e c  c  is arbitrarily larger  i e  worse  than min h c  e h  c  
+proof  the first part of the proposition follows from the fact that the first minimization is
+over a subset of the choices considered by the second 
+to see the second part  consider a problem with a single training instance with search
+space shown in figure    the search procedure will be greedy search that is either guided
+by h for hc search  or by c when only one function is used  l n  and  n  represents the
+true loss and the feature vector of node n respectively  the cost and heuristic functions are
+linear functions of  n   node   corresponds to the lowest loss output and greedy search
+must follow the trajectory of highlighted nodes in order to reach that output  first consider
+hc search  for the highlighted path to be followed the heuristic h needs to satisfy the
+following constraints  h    h     h    h     and the weights wh             result in a
+   
+
+fihc search  a learning framework for search based structured prediction
+
+heuristic that satisfies the constraints  given this heuristic function  in order to return node
+  as the final output  the cost function must satisfy the following constraints  c    c    
+c    c     c    c     c    c     and the weights wc             solve the problem 
+thus we see that hc search can achieve zero loss on this problem 
+now consider the case where a single function c is used for the heuristic and cost
+function  here in order to generate a loss of zero  the function c must satisfy the combined
+set of constraints from above that were placed on the heuristic and cost function  however 
+it can be verified that there is no set of weights that satisfies both c    c    and c    c    
+and hence  there is no single function c in our space that can achieve a loss of zero  by
+scaling the losses by constant factors we can make the loss suffered arbitrarily high 
+thus  we see that there can be potential representational advantages to following the hcsearch framework  in what follows  we consider the implications of this added expressiveness
+in terms of the worst case time complexity of learning 
+    learning complexity
+we now consider the feasibility of efficient  optimal learning in the simplest setting of greedy
+search using linear heuristic and cost functions represented by their weight vectors wh and
+wc respectively  in particular  we consider the hc search consistency problem  where the
+input is a training set of structured examples  and we must decide whether or not there
+exists wh and wc such that hc search using greedy search will achieve zero loss on the
+training set  we first note  that this problem can be shown to be np hard by appealing
+to results on learning for beam search  xu  fern    yoon      a   in particular  results
+there imply that in all but trivial cases  simply determining whether or not there is a linear
+heuristic wh that uncovers a zero loss search node is np hard  since hc search can only
+return zero loss outputs when the heuristic is able to uncover them  we see that our problem
+is also hard 
+here we prove a stronger result that provides more insight into the hc search framework  in particular  we show that even when it is easy to learn a heuristic that uncovers
+all zero loss outputs  the consistency problem is still hard  this shows  that in the worst case
+the hardness of our learning problem is not simply a result of the hardness of discovering
+good outputs  rather our problem is additionally complicated by the potential interaction
+between h and c  intuitively  when learning h in the worst case there can be ambiguity
+about which of many small loss outputs to generate  and for only some of those will we
+be able to find an effective c to return the best one  this is formalized by the following
+theorem  whose proof is in the appendix 
+theorem    the hc search consistency problem for greedy search and linear heuristic
+and cost functions is np hard even when we restrict to problems for which all possible
+heuristic functions uncover a zero loss output 
+
+   learning approach
+the above complexity result suggests that  in general  learning the optimal  h   c    pair
+is impractical due to their potential interdependence  in this section  we develop a greedy
+   
+
+fidoppa  fern    tadepalli
+
+stage wise learning approach that first learns h and then a corresponding c  the approach
+is motivated by observing a decomposition of the expected loss into components due to h
+and c  below  we first describe the decomposition and the staged learning approach that it
+motivates  next we describe our approaches for learning the heuristic and cost functions 
+    loss decomposition and staged learning
+for any heuristic h and cost function c  the expected loss e  h  c  can be decomposed into
+two parts     the generation loss h   due to h not generating high quality outputs  and
+   the selection loss c h   the additional loss  conditional on h  due to c not selecting the
+ be the best loss output in the
+best loss output generated by the heuristic  formally  let yh
+set yh  x   i e  
+
+yh
+  arg minyyh  x  l x  y  y   
+
+we can express the decomposition as follows 
+
+
+e  h  c    e x y  d l  x  yh
+  y      e x y  d l  x  y  y     l  x  yh
+  y 
+ 
+ z
+ 
+ 
+ z
+ 
+h
+
+   
+
+c h
+
+note that given labeled data  it is straightforward to estimate both the generation and
+selection loss  which is useful for diagnosing the hc search framework  for example  if one
+observes that a system has high generation loss  then there will be little payoff in working
+to improve the cost function  in our empirical evaluation we will further illustrate how the
+decomposition is useful for understanding the results of learning 
+in addition to being useful for diagnosis  the decomposition motivates a learning approach that targets minimizing each of the errors separately  in particular  we optimize the
+overall error of the hc search approach in a greedy stage wise manner  we first train a
+heuristic h in order to optimize the generation loss component h and then train a cost
+function c to optimize the selection loss c h conditioned on h 
+h  arg minhh h
+c  arg mincc c h
+note that this approach is greedy in the sense that h is learned without considering the
+ while the proof of theorem   hinges on this coupling  we have
+implications for learning c 
+found that in practice  learning h independently of c is a very effective strategy 
+in what follows  we first describe a generic approach for heuristic function learning that
+is applicable for a wide range of search spaces and search strategies  and then explain our
+cost function learning algorithm 
+    heuristic function learning
+most generally  learning a heuristic can be viewed as a reinforcement learning  rl  problem where the heuristic is viewed as a policy for guiding search actions and rewards
+   
+
+fihc search  a learning framework for search based structured prediction
+
+are received for uncovering high quality outputs  zhang   dietterich         in fact  this
+approach has been explored for structured prediction in the case of greedy search  wick 
+rohanimanesh  singh    mccallum        and was shown to be effective given a carefully
+designed reward function and action space  while this is a viable approach  general purpose
+rl can be quite sensitive to the algorithm parameters and specific definition of the reward
+function and actions  which can make designing an effective learner quite challenging  indeed  recent work  jiang  teichert  daume iii    eisner         has shown that generic rl
+algorithms can struggle for some structured prediction problems  even with significant effort
+put forth by the designer  hence  in this work  we follow an approach based on imitation
+learning  that makes stronger assumptions  but has nevertheless been very effective and
+easy to apply across a variety of problems 
+algorithm   heuristic function learning via exact imitation
+input  d   training examples   i  s    search space definition  l   loss function  a  
+rank based search procedure  max   search time bound
+output  h  the heuristic function
+   initialize the set of ranking examples r   
+   for each training example  x  y     d do
+  
+s    i x     initial state of the search tree
+  
+m     s       set of open nodes in the internal memory of the search procedure
+  
+for each search step t     to max do
+  
+select the state s  to expand  nt  select a  l  mt   
+  
+expand every state s  nt using the successor function s  ct  expand nt   s 
+  
+prune states and update the internal memory state of the search procedure 
+mt  prune a  l  mt   ct   nt  
+  
+generate ranking examples rt to imitate this search step
+   
+add ranking examples rt to r  r   r  rt    aggregation of training data
+   
+end for
+    end for
+    h  rank learner r     learn heuristic function from all the ranking examples
+    return learned heuristic function h
+our heuristic learning approach is based on the observation that for many structured
+prediction problems  we can quickly generate very high quality outputs by guiding the
+search procedure using the true loss function l as a heuristic  obviously this can only be
+done for the training data for which we know y    this suggests formulating the heuristic
+learning problem in the framework of imitation learning by attempting to learn a heuristic
+that mimics the search decisions made by the true loss function on training examples  the
+learned heuristic need not approximate the true loss function uniformly over the output
+space  but need only make the distinctions that were important for guiding the search  the
+main assumptions made by this approach are     the true loss function can provide effective
+heuristic guidance to the search procedure  so that it is worth imitating  and    we can
+learn to imitate those search decisions sufficiently well 
+this imitation learning approach is similar to prior work on learning single cost functions
+for output space search  doppa et al          however  a key distinction here is that learning
+   
+
+fidoppa  fern    tadepalli
+
+is focused on only making distinctions necessary for uncovering good outputs  the purpose
+of the heuristic  and hence requires a different formulation  as in prior work  in order to
+avoid the need to approximate the loss function arbitrarily closely  we restrict ourselves to
+rank based search strategies  a search strategy is called rank based if it makes all its
+search decisions by comparing the relative values of the search nodes  their ranks  assigned
+by the heuristic  rather than being sensitive to absolute values of heuristic  most common
+search procedures such as greedy search  beam search  and best first search fall under this
+category 
+      imitating search behavior
+given a search space over complete outputs s  a rank based search procedure a  and a
+search time bound    our learning procedure generates imitation training data for each
+training example  x  y    as follows  we run the search procedure a for a time bound of 
+for input x using a heuristic equal to the true loss function  i e  h x  y    l x  y  y     during
+the search process we observe all of the pairwise ranking decisions made by a using this
+oracle heuristic and record those that are sufficient  see below  for replicating the search 
+if the state  x  y    has smaller loss than  x  y     then a ranking example is generated in the
+form of the constraint h x  y    h x  y     ties are broken using a fixed arbitrator    the
+aggregate set of ranking examples collected over all the training examples is then given to
+a learning algorithm to learn the weights of the heuristic function 
+if we can learn a function h from hypothesis space h that is consistent with these
+ranking examples  then the learned heuristic is guaranteed to replicate the oracle guided
+search on the training data  further  given assumptions on the base learning algorithm
+ e g  pac   generic imitation learning results can be used to give generalization guarantees
+on the performance of search on new examples  khardon        fern  yoon    givan       
+syed   schapire        ross   bagnell         our experiments show  that the simple
+approach described above  performs extremely well on our problems 
+algorithm   describes our approach for heuristic function learning via exact imitation of
+search guided by the loss function  it is applicable to a wide range of search spaces  search
+procedures and loss functions  the learning algorithm takes as input     d     x  y      a
+set of training examples for a structured prediction problem  e g   handwriting recognition  
+   so    i  s   a search space over complete outputs  e g   lds space   where i is the initial
+state function and s is the successor function     l  a task loss function defined over
+complete outputs  e g   hamming loss      a  a rank based search procedure  e g   greedy
+search      max   the search time bound  e g   number of search steps  
+the algorithmic description of algorithm   assumes that the search procedure a can
+be described in terms of three steps that are executed repeatedly on an open list of search
+nodes     selection     expansion and    pruning  in each execution  the search procedure
+selects one or more open nodes from its internal memory for expansion  step    based on
+heuristic value  and expands all the selected nodes to generate the candidate set  step    
+it retains only a subset of all the open nodes after expansion in its internal memory and
+prunes away all the remaining ones  step    again based on heuristic value  for example 
+   for the lds space that we employed in this work  we implemented an arbitrator which breaks the ties
+based on the position of the discrepancy  prefers earlier discrepancies  
+
+   
+
+fihc search  a learning framework for search based structured prediction
+
+greedy search maintains only the best node  best first beam search retains only the best b
+nodes for a fixed beam width b  and pure best first search does not do any pruning 
+algorithm   loops through each training example and collects a set of ranking constraints  specifically  for example  x  y     the search procedure is run for a time bound of
+max using the true loss function l as the heuristic  steps        during each search step a
+set of pairwise ranking examples is generated that are sufficient for allowing the search step
+to be imitated  step    as described in more detail below  after all such constraints are
+aggregated across all search steps of all training examples  they are given to a rank learning
+algorithm  e g   perceptron or svm rank  to learn the weights of the heuristic function
+ step     
+the most important step in our heuristic function learning algorithm is the generation
+of ranking examples to imitate each step of the search procedure  step     in what follows 
+we will give a generic description of sufficient pairwise decisions to imitate the search 
+and illustrate them for greedy search through a simple example 
+      sufficient pairwise decisions
+above we noted that we only need to collect and learn to imitate the sufficient pairwise
+decisions encountered during search  we say that a set of constraints is sufficient for a
+structured training example  x  y     if any heuristic function that is consistent with the
+constraints causes the search to follow the same trajectory of open lists encountered during
+search  the precise specification of these constraints depends on the actual search procedure
+that is being used  for rank based search procedures  the sufficient constraints can be
+categorized into two types 
+   selection constraints  which ensure that the search node s  from the internal memory
+state that will be expanded in the next search step is  are  ranked better than all
+other nodes 
+   pruning constraints  which ensure that the internal memory state  set of search nodes 
+of the search procedure is preserved at every search step  more specifically  these
+constraints involve ranking every search node in the internal memory state better
+ lower h value  than those that are pruned 
+below  we will illustrate these constraints concretely for greedy search noting that similar
+formulations for other rank based search procedures are straightforward  see  doppa  fern 
+  tadepalli      a  for beam search formulation  
+      constraints for greedy search
+this is the most basic rank based search procedure  for a given input x  it traverses the
+search space by selecting the next state as the successor of the current state that looks best
+according to the heuristic function h  in particular  if si is the search state at step i  greedy
+search selects si     arg minss si   h s   where s    i x   in greedy search  the internal
+memory state of the search procedure at step i consists of only the best open  unexpanded 
+node si  
+   
+
+fidoppa  fern    tadepalli
+
+figure    an example search tree that illustrates greedy search with loss function  each
+node represents a complete input output pair and can be evaluated using the loss
+function  the highlighted nodes correspond to the trajectory of greedy search
+guided by the loss function 
+
+let  x  yi   correspond to the input output pair associated with state si   since greedy
+search maintains only a single open node si in its internal memory at every search step i 
+there are no selection constraints  let ci   be the candidate set after expanding state si  
+i e   ci     s si    let si   be the best node in the candidate set ci   as evaluated by the
+loss function  i e   si     arg minsci   l s   as greedy search prunes all the nodes in the
+candidate set other than si     pruning constraints need to ensure that si   is ranked better
+than all the other nodes in ci     therefore  we include one ranking constraint for every
+node  x  y   ci      x  yi     such that h x  yi       h x  y  
+we will now illustrate these ranking constraints through an example  figure   shows
+an example search tree of depth two with associated losses for every search node  the
+highlighted nodes correspond to the trajectory of greedy search with loss function that our
+learner has to imitate  at the first search step   h      h     h      h     are the pruning
+constraints  similarly   h       h     h       h     form the pruning constraints at the
+second search step  therefore  the aggregate set of constraints needed to imitate the greedy
+search behavior shown in figure   are 
+ h      h     h      h     h       h     h       h     
+    cost function learning
+given a learned heuristic h  we now want to learn a cost function that correctly ranks the
+potential outputs generated by the search procedure guided by h  more formally  let yh  x 
+be the set of candidate outputs generated by the search procedure guided by heuristic h for
+a given input x  and lbest be the loss of the best output among those outputs as evaluated by
+the true loss function l  i e   lbest   minyyh  x  l x  y  y     in an exact learning scenario 
+the goal is to find the parameters of a cost function c such that for every training example
+   
+
+fihc search  a learning framework for search based structured prediction
+
+ x  y     the loss of the minimum cost output y equals lbest   i e   l x  y  y      lbest   where
+y   arg minyyh  x  c x  y   in practice  when exact learning isnt possible  the goal is to
+find a cost function such that the average loss over the training data of the predicted output
+using the cost function is minimized 
+algorithm   cost function learning via cross validation
+input  d   training examples  so   search space definition  l   loss function  a  
+search procedure  max   search time bound
+output  c  the cost function
+   divide the training set d into k folds d    d         dk
+      learn k different heuristics h         hk
+   for i     to k do
+  
+ti   j  i dj    training data for heuristic hi
+  
+hi   learn heuristic ti   so   l  a  max      heuristic learning via algorithm  
+   end for
+      generate ranking examples for cost function training
+   intialize the set of ranking examples r   
+   for i     to k do
+   
+for each training example  x  y     di do
+   
+generate outputs by running the search procedure a with heuristic hi for time
+bound max   yhi  x    generate outputs x  so   a  hi   max  
+   
+compute the set of best loss outputs  ybest    y  yhi  x  l x  y  y      lbest   
+where lbest   minyyh  x  l x  y  y   
+i
+   
+for each pair of outputs  ybest   y   ybest  yhi  x    ybest do
+   
+add ranking example c x  ybest     c x  y  to r
+   
+end for
+   
+end for
+    end for
+       train cost function on all the ranking examples
+    c   rank learner r 
+    return learned cost function c
+we formulate the cost function training problem as an instance of rank learning problem
+ agarwal   roth         more specifically  we want all the best loss outputs in yh  x  to
+be ranked better than all the non best loss outputs according to our cost function  which is
+a bi partite ranking problem  let ybest be the set of all best loss outputs from yh  x   i e  
+ybest    y  yh  x  l x  y  y      lbest    we generate one ranking example for every pair of
+outputs  ybest   y   ybest  yh  x    ybest   requiring that c x  ybest   c x  y   if the search
+procedure was able to generate the target output y  i e   lbest       this is similar to the
+standard learning in crfs and svm struct  but results in a much simpler rank learning
+problem  cost function needs to rank the correct output above only the incorrect outputs
+generated during search   when the set of best loss outputs ybest is very large  bi partite
+ranking may result in a highly over constrained problem  in such cases  one could relax the
+problem by attempting to learn a cost function that ranks at least one output in ybest higher
+than all the non best loss outputs  this can be easily implemented in an online learning
+   
+
+fidoppa  fern    tadepalli
+
+framework as follows  if there is an error  i e   the best cost output according to the current
+weights y 
+  ybest    the weights are updated to ensure that the best cost output ybest  ybest
+according to the current weights is ranked better than all the outputs in yh  x    ybest  
+it is important to note that both in theory and practice  the distribution of outputs
+generated by the learned heuristic h on the testing data may be slightly different from the
+one on training data  thus  if we train c on the training examples used to train h  then c
+is not necessarily optimized for the test distribution  to mitigate this effect  we train our
+cost function via cross validation  see algorithm    by training the cost function on the
+data  which was not used to train the heuristic  this training methodology is commonly
+used in re ranking style algorithms  collins        among others 
+algorithm   describes our approach for cost function training via cross validation  there
+are four main steps in the algorithm  first  we divide the training data d into k folds 
+second  we learn k different heuristics  where each heuristic hi is learned using the data
+from all the folds excluding the ith fold  steps       third  we generate ranking examples
+for cost function learning as described above using each heuristic hi on the data it was not
+trained on  steps        finally  we give the aggregate set of ranking examples r to a rank
+learner  e g   perceptron  svm rank  to learn the cost function c  step     
+    rank learner
+in this section  we describe the specifics of the rank learner that can be used to learn both
+the heuristic and cost functions from the aggregate sets of ranking examples produced by the
+above algorithms  we can use any off the shelf rank learning algorithm  e g   perceptron 
+svm rank  as our base learner to train the heuristic function from the set of ranking
+examples r  in our specific implementation we employed the online passive aggressive
+ pa  algorithm  crammer  dekel  keshet  shalev shwartz    singer        as our base
+learner  training was conducted for    iterations in all of our experiments 
+pa is an online large margin algorithm  which makes several passes over the training
+examples r  and updates the weights whenever it encounters a ranking error  recall that
+each ranking example is of the form h x  y      h x  y    for heuristic training and c x  y     
+c x  y    for cost function training  where x is a structured input with target output y   
+y  and y  are potential outputs for x such that l x  y    y      l x  y    y     let    be
+the difference between the losses of the two outputs involved in a ranking example  we
+experimented with pa variants that use margin scaling  margin scaled by   and slack
+scaling  errors weighted by    tsochantaridis  joachims  hofmann    altun         since
+margin scaling performed slightly better than slack scaling  we report the results of the pa
+variant that employs margin scaling  below we give the full details of the margin scaling
+update 
+let wt be the current weights of the linear ranking function  if there is a 
+ranking error
+when cycling through the training data  i e   wt   x  y     wt   x  y        the new
+weights wt   that corrects the error can be obtained using the following equation 
+wt     wt   t   x  y      x  y    
+   
+
+fihc search  a learning framework for search based structured prediction
+
+where the learning rate t is given by
+wt   x  y     wt   x  y     
+t  
+k x  y      x  y   k 
+
+
+
+
+
+this specific update has been previously used for cost sensitive multiclass classification
+ crammer et al          see equation     and for structured output problems  keshet 
+shalev shwartz  singer    chazan         see equation    
+
+   experiments and results
+in this section we empirically investigate our hc search approach and compare it against
+the state of the art in structured prediction 
+    datasets
+we evaluate our approach on the following four structured prediction problems including
+three benchmark sequence labeling problems and a  d image labeling problem 
+ handwriting recognition  hw   the input is a sequence of binary segmented
+handwritten letters and the output is the corresponding character sequence  a  z    
+this dataset contains roughly      examples divided into    folds  taskar et al  
+       we consider two different variants of this task as in the work of hal daume
+iii  langford  and marcu         in the hw small version  we use one fold for training
+and the remaining   folds for testing  and vice versa in hw large 
+ nettalk stress  this is a text to speech mapping problem  where the task is to
+assign one of the   stress labels to each letter of a word  there are      training
+words and      test words in the standard dataset  we use a sliding window of size
+  for observational features 
+ nettalk phoneme  this is similar to nettalk stress except that the task is to
+assign one of the    phoneme labels to each letter of the word 
+ scene labeling  this data set contains     images of outdoor scenes  vogel  
+schiele         each image is divided into patches by placing a regular grid of size
+     over the entire image  where each patch takes one of the   semantic labels  sky 
+water  grass  trunks  foliage  field  rocks  flowers  sand    simple appearance features
+including color  texture and position are used to represent each patch  training was
+performed with     images  and the remaining     images were used for testing 
+    experimental setup
+for our hc search experiments  we use the limited discrepancy space  lds  exactly as
+described in the work of doppa et al         as our search space over structured outputs 
+prior work with hc search has shown that greedy search works quite well for most structured prediction tasks  particularly when using the lds space  doppa et al          hence 
+we consider only greedy search in our experiments  we would like to point out that experiments not shown using beam search and best first search produce similar results  during
+   
+
+fidoppa  fern    tadepalli
+
+training and testing we set the search time bound  to be    search steps for all domains
+except for scene labeling  which has a much larger search space and uses         we
+found that using values of  larger than these did not produce noticeable improvement  for
+extremely small values of    performance tends to be worse  but it increases quickly as  is
+made larger  we will also show results for the full spectrum of time bounds later  for all
+domains  we learn linear heuristic and cost functions over second order features unless otherwise noted  in this case  the feature vector measures features over neighboring label pairs
+and triples along with features of the structured input  we measure error with hamming
+loss unless otherwise noted 
+    comparison to state of the art
+we compare the results of our hc search approach with other structured prediction algorithms including crfs  lafferty et al          svm struct  tsochantaridis et al         
+searn  hal daume iii et al          cascades  weiss   taskar        and c search 
+which is identical to hc search except that it uses a single function for output space search
+ doppa et al          we also show the performance of recurrent  which is a simple
+recurrent classifier trained exactly as in the work of doppa et al          the top section
+of table   shows the error rates of the different algorithms  for scene labeling it was not
+possible to run crfs  svm struct  and cascades due to the complicated grid structure
+of the outputs  hence the   in the table   we report the best published results of crfs 
+svm struct  and searn  cascades was trained using the implementation  weiss        provided by the authors  which can be used for sequence labeling problems with hamming loss 
+we would like to point out that the results of cascades differ from those that appear in the
+work of doppa  fern  and tadepalli        and are obtained using an updated  version of
+cascades training code  across all benchmarks  we see that results of hc search are comparable or significantly better than the state of the art including c search  which uses a single
+function as both heuristic function and cost function  the results in the scene labeling
+domain are the most significant improving the error rate from       to        these results
+show that hc search is a state of the art approach across these problems and that learning
+separate heuristic and cost functions can significantly improve output space search 
+    higher order features
+one of the advantages of our approach compared to many frameworks for structured prediction is the ability to use more expressive feature spaces without paying a huge computational
+price  the bottom part of table   shows results using third order features  compared to
+second order above  for hc search  c search and cascades  note that it is not practical to
+run the other methods using third order features due to the substantial increase in inference
+time  the overall error of hc search with higher order features slightly improved compared
+to using second order features across all benchmarks and is still better than the error rates
+of c search and cascades with third order features  with the exception of cascades on
+hw large  in fact  hc search using only second order features is still outperforming the
+third order results of the other methods on three out of five domains 
+   personal communication with the author
+
+   
+
+fihc search  a learning framework for search based structured prediction
+
+algorithms
+hw small
+
+hw large
+
+datasets
+stress phoneme
+
+scene labeling
+
+hc search
+c search
+crf
+svm struct
+recurrent
+searn
+cascades
+
+a  comparison to state of the art
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+
+     
+     
+     
+     
+ 
+
+hc search
+c search
+cascades
+
+b  results with third order features
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+
+     
+     
+ 
+
+table    error rates of different structured prediction algorithms 
+    loss decomposition analysis
+we now examine hc search and c search in terms of their loss decomposition  see equation    into generation loss h and selection loss c h   both of these quantities can be
+easily measured for both hc search and c search by keeping track of the best loss output
+generated by the search  guided either by a heuristic or the cost function for c search 
+across the testing examples  table   shows these results  giving the overall error hc and
+its decomposition across our benchmarks for both hc search and c search 
+we first see that generation loss h is very similar for c search and hc search across the
+benchmarks with the exception of scene labeling  where hc search generates slightly better
+outputs  this shows that at least for the lds search space the difference in performance
+between c search and hc search cannot be explained by c search generating lower quality
+outputs  rather  the difference between the two methods is most reflected by the difference
+in selection loss c h   meaning that c search is not as effective at ranking the outputs
+generated during search compared to hc search  this result clearly shows the advantage
+of separating the roles of c and h and is understandable in light of the training mechanism
+for c search  in that approach  the cost function is trained to satisfy constraints related to
+both the generation loss and selection loss  it turns out that there are many more generation
+loss constraints  which we hypothesize biases c search toward low generation loss at the
+expense of selection loss 
+these results also show that for both methods the selection loss c h contributes significantly more to the overall error compared to h   this shows that both approaches are
+able to uncover very high quality outputs  but are unable to correctly rank the generated
+outputs according to their losses  this suggests that a first avenue for improving the results
+of hc search would be to improve the cost function learning component  e g  by using
+non linear cost functions 
+   
+
+fidoppa  fern    tadepalli
+
+    ablation study
+to futher demonstrate that having two separate functions  heuristic and cost function  as
+in hc search will lead to more accurate predictions compared to using a single function
+as in c search  we perform some ablation experiments  in this study  we take the learned
+heuristic function h and cost function c in the hc search framwork  and use only one of
+them to make predictions  for example  hh search corresponds to the configuration when
+we use the function h as both heuristic and cost function  similarly  cc search corresponds
+to the configuration when we use the function c as both heuristic and cost function 
+table  b shows the results for these ablation experiments  we can make several interesting observations from these results  first  the overall error of hc search is significantly
+better than that of hh search and cc search  second  the selection loss for hh search
+increases compared to that of hc search  this is understandable because h is not trained
+to score the candidate outputs that are generated during search  third  the generation
+loss for cc search increases compared to that of hc search and this behavior is significant
+ increases to       compared to       for the scene labeling task  all these results provide
+further evidence for the importance of separating the training of the heuristic and cost
+functions 
+hw small
+c h
+h
+
+stress
+c h
+h
+
+hc
+
+    
+    
+
+a  hc search vs  c search
+                        
+                        
+
+    
+    
+
+    
+    
+
+    
+    
+
+    
+    
+
+    
+    
+
+    
+    
+
+    
+    
+
+b  results for ablation study
+        
+              
+                        
+
+    
+    
+
+    
+    
+
+    
+    
+
+    
+    
+
+    
+    
+
+    
+    
+
+c  results with heuristic function training via dagger
+                                            
+                                            
+
+    
+    
+
+    
+    
+
+    
+    
+
+    
+    
+
+    
+
+    
+
+    
+
+    
+
+datasets
+error
+
+hc
+
+hc search
+c search
+
+    
+    
+
+    
+    
+
+    
+    
+
+hh search
+cc search
+
+    
+    
+
+    
+    
+
+    
+    
+
+hc search
+c search
+
+    
+    
+
+    
+    
+
+hc
+
+hw large
+c h
+h
+
+hc
+
+phoneme
+c h
+h
+
+hc
+
+scene
+c h
+h
+
+d  results with oracle heuristic
+lc search
+ oracle h 
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+table    hc search  error decomposition of heuristic and cost function 
+    results for heuristic training via dagger
+our heuristic learning approach follows the simplest approach to imitation learning  exact
+imitation  where the learner attempts to exactly imitate the observed expert trajectories
+ here imitate search with the oracle heuristic   while our experiments show that exact
+imitation performs quite well  it is known that exact imitation has certain deficiencies in
+general  in particular  functions trained via exact imitation can be prone to error propagation  kaariainen        ross   bagnell         where errors made at test time change the
+distribution of decisions encountered in the future compared to the training distribution 
+to address this problem  more sophisticated imitation learning algorithms have been developed  with a state of the art approach being dagger  ross  gordon    bagnell        
+   
+
+fihc search  a learning framework for search based structured prediction
+
+here we consider whether dagger can improve our heuristic learning and in turn overall
+accuarcy 
+dagger is an iterative algorithm  where each iteration adds imitation data to an aggregated data set  the first iteration follows the exact imitation approach  where data are
+collected by observing an expert trajectory  or a number of them   after each iteration an
+imitation function  here a heuristic  is learned from the current data  successive iterations
+generate trajectories by following a mixture of expert suggestions  in our case ranking decisions  and suggestions of the most recently learned imitation function  each decision point
+along the trajectory is added to the aggregate data set by labeling it by the expert decision 
+in this way  later iterations allow dagger to learn from states visited by its possibly erroneous learned functions and correct its mistakes using the expert input  ross et al        
+show that during the iterations of dagger just using the learned policy without mixing
+the expert policy performs very well across diverse domains  therefore  we use the same
+approach in our dagger experiments  in our experiments we run   iterations of dagger 
+noting that no noticable improvement was observed after   iterations 
+table  c shows the results of hc search and c search obtained by training with dagger  for hc search  the generation loss  h   improved slightly on the sequence labeling
+problems as there is little room for improvement  but dagger leads to significant improvement in the generation loss on the more challenging problem of scene labeling  we can also
+see that the overall error of hc search for scene labeling reduces due to improvement in
+generation loss showing that cost function is able to leverage the better outputs produced
+by the heuristic  similarly  the overall error of c search also improved with dagger across
+the board and we see most significant improvements for handwiriting and scene labeling
+domains  it is interesting to note that unlike hc search  the improvement in c search is
+mostly due the improvement in the selection loss  c h   except for scene labeling task  where
+it is due to the improvement in both generation loss and selection loss 
+these results show that improving the heuristic learning is able to improve overall
+performance  what is not clear is whether further improvement  perhaps due to future
+advances in imitation learning  would yet again lead to overall improvement  that is  while
+it may be possible to further improve the generation loss  it is not clear that the cost function
+will be able to exploit such improvments  to help evaluate this we ran an experiment where
+we gave hc search the true loss function to use as a heuristic  an oracle heuristic   i e  
+h x  y    l x  y  y     during both training of the cost function and testing  this provides
+an assessment of how much better we might be able to do if we could improve heuristic
+learning  the results in table    which we label as lc search  oracle h  show that when
+using the oracle heuristic  h is negligible as we might expect and smaller than observed for
+hc search  this shows that it may be possible to further improve our heuristic learning
+via better imitation 
+we also see from the oracle results that the overall error hc is better than that of
+hc search  but for hw small and scene labeling tasks  the selection error c h got slightly
+worse   this indicates that our cost function learner is able to leverage  to varying degrees  the better outputs produced by the oracle heuristic  this suggests that improving
+the heuristic learner in order to reduce the generation loss could be a viable way of further
+reducing the overall loss of hc search  even without altering the current cost learner  however  as we saw above there is much less room to improve the heuristic learner for these
+   
+
+fidoppa  fern    tadepalli
+
+data sets and hence the potential gains are less than for directly trying to improve the cost
+learner 
+    results for training with different time bounds
+
+train
+
+we also trained hc search for different time bounds  i e   number of greedy search steps  to
+see how the overall loss  generation loss and selection loss vary as we increase the training
+time bound  in general  as the time bound increases  the generation loss will monotonically
+decrease  since strictly more outputs will be encountered  on the other hand the difficulty
+of cost function learning can increase as the time bound grows since it must learn to distinguish between a larger set of candidate outputs  thus  the degree to which the overall
+error decreases  or grows  with the time bound depends on a combination of how much
+the generation loss decreases and whether the cost function learner is able to accurately
+distinguish improved outputs 
+figure   shows the performance of hc search for the full spectrum of time bounds 
+qualitatively  we see that the generation loss  due to the heuristic  decreases remarkably
+fast and for most benchmarks improves very little after the initial decrease  we also see that
+the cost function learner achieves a relatively stable selection loss in a short time  though it
+does increase a bit with time in most cases  the combined effect is that we see the overall
+error hc improves quickly as we increase the time bound and the improvement tends to be
+very small beyond certain time bound  also  in some cases  e g   phoneme prediction and
+scene labeling  performance tends to get slightly worse for very large time bounds  which
+happens when the increase in selection loss is not counteracted by a decreased generation
+loss 
+loss function
+hamming
+vc
+
+test
+hamming
+vc
+    
+    
+    
+    
+
+table    results for training with non hamming loss functions 
+
+    results for training with non hamming loss functions
+one of the advantages of hc search compared to many other approaches for structured
+prediction is that it is sensitive to the loss function used for training  so we trained hcsearch with different loss functions on the handwriting domain to verify if this is true in
+practice or not  we used hamming loss  uniform misclassification cost of   for all characters 
+and vowel consonant  vc  loss  different misclassification costs for vowels and consonants 
+for this experiment  for vc loss  we used misclassification costs of   and   for vowels and
+consonants respectively  training was done on   folds and the remaining   folds were used
+for testing  table     shows the results for training and testing with the two loss functions 
+we report cumulative loss over all the testing examples  as we can see  for any testing
+loss function  training with the same loss function gives slightly better performance than
+training using a different loss function  this shows that our hc search learning approach
+   
+
+fihc search  a learning framework for search based structured prediction
+
+figure    hc search results for training with different time bounds  we have training time
+bound  i e   no  of greedy search steps  on x axis and error on y axis  there are
+three curves in each graph corresponding to overall loss hc   generation loss h
+and selection loss c h  
+
+   
+
+fidoppa  fern    tadepalli
+
+is sensitive to the loss function  however  this result may not hold generally and very much
+depends on the problem structure  loss function and the ability of our cost function to
+capture that loss 
+     discussion on efficiency of the hc search approach
+in our hc search framework  the basic computational elements include generating candidate
+states for a given state  computing the heuristic function features via h and cost function
+features via c for all the candidate states  and computing the heuristic and cost scores via
+the learned heuristic and cost function pair  h  c   the computational time for generating
+the candidate states depends on the employed search space so    i  s   where i is the initial
+state function and s is the successor function  for example  the generation of candidates
+will be very efficient with flipbit space compared to the lds space  involves running the
+recurrent classifier for every action specified by the successor function s   therefore  the
+efficiency of the overall approach depends on the size of the candidate set and can be
+greatly improved by generating fewer candidate states  e g   via pruning  or parallelizing the
+computation  we have done some preliminary work in this direction by introducing sparse
+versions of both lds and flipbit search spaces by pruning actions based on the recurrent
+classifier scores  as specified by the prunining parameter k   this simple pruning strategy
+resulted in    fold speedup with little or no loss in accuracy across several benchmark
+problems  doppa et al       a   however  more work needs to be done on learning pruning
+rules to improve the efficiency of the hc search approach 
+
+   engineering methodology for applying hc search
+in this section  we describe an engineering methodology for applying our hc search framework to new problems  at a very high level  the methodology involves selecting an effective
+time bounded search architecture  search space  search procedure  and search time bound  
+and leveraging the loss decomposition in terms of generation and selection loss for training
+and debugging the heuristic and cost functions  below we describe these steps in detail 
+    selection of time bounded search architecture
+a time bounded search architecture can be instantiated by selecting a search space  search
+strategy  and search time bound  as we mentioned before  the effectiveness of hc search
+depends critically on the quality of the search space  i e   search depth at which target
+outputs can be found  that is being employed  in fact  our prior work empirically demonstrated that the performance gap of the search architectures with flipbit space and lds
+space grows as the difference between their target depths increase  doppa et al       a  
+therefore  it is important to select design a high quality search space for the problem at
+hand 
+if there exists a greedy predictor for the structured prediction problem  one could leverage it to define an appropriate variant of the lds space  fortunately  there are greedy
+predictors for several problems in natural language processing  computer vision  relational
+networks  and planning with preferences  for example  transition based parsers for dependency parsing  nivre        goldberg   elhadad         greedy classifiers for co reference
+   
+
+fihc search  a learning framework for search based structured prediction
+
+resolution  chang  samdani    roth        stoyanov   eisner        and event extraction
+ li  ji    huang         sequential labelers for boundary detection of objects in images
+ payet   todorovic         iterative classifiers for collective inference in relational networks
+ sen  namata  bilgic  getoor  gallagher    eliassi rad        doppa  yu  tadepalli   
+getoor               classifier chains for multi label prediction  read  pfahringer  holmes 
+  frank         and greedy planners for planning with preferences  xu  fern    yoon 
+       in general  designing high quality search spaces is a key research topic and more
+work needs to be done in this direction  learning search operators  macro actions  or
+transformation rules as in transformation based learning  tbl   brill        to optimize
+the search space is one of the many possibilities  sometimes problem structure can also help
+in designing effective search spaces  for example  in most multi label prediction problems 
+the outputs which are binary vectors have a small number of active labels  highly sparse  
+so a simple flipbit space initialized with the null vector can be very effective  doppa  yu 
+ma  fern    tadepalli      b  
+after picking the search space  we need to select an appropriate search procedure and
+search time bound  the effectiveness of a search architecture can be measured by performing
+oracle search  true loss function used as both heuristic and cost function  on the training
+data  so one could perform oracle search  ll search  with different search procedures  e g  
+greedy and beam search  for different time bounds and select the search procedure that is
+more effective  we did not see benefit with beam search for the problems we considered  but
+we expect that this can change for harder problems with non hamming loss functions  e g  
+b cubed score for co reference resolution   if the search space is not redundant  then we
+can fix the search time bound to a value where the performance of the search architecture
+stagnates  otherwise  one should allow some slack so that the search procedure can recover
+from errors  in our experiments  we found that t  size of the structured output  is a
+reasonable value for the time bound  figure   provides justification for this choice  
+    training and debugging
+the training procedure involves learning the heuristic h and cost function c to optimize
+the performance of the selected time bounded search architecture on the training data 
+following our staged learning approach  one could start with learning a heuristic via exact
+imitation of the oracle search  after that  the learned heuristic h should be evaluated by
+measuring the generation loss  hl search configuration   if the performance of the hlsearch configuration is acceptable with respect to the performance of ll search  we can
+move to cost function learning part  otherwise  we can try to improve the heuristic by either
+employing more sophisticated imitation learning algorithms  e g   dagger   enriching the
+feature function h   or employing a more powerful rank learner  similarly  after learning
+the cost function c conditioned on the learned heuristic  we can measure the selection loss 
+if the selection loss is very high  we can try to improve the cost function by either adding
+expressive features to c or employing a more powerful rank learner 
+
+   comparison to related work
+as described earlier  the majority of structured prediction work has focused on the use
+of exact inference for computing outputs when it is tractable  and approximate inference
+   
+
+fidoppa  fern    tadepalli
+
+techniques  such as loopy belief propagation and relaxation methods  when it is not  learning then is focused on tuning the cost function parameters in order to optimize various
+objective functions  which differ among learning algorithms  lafferty et al         taskar
+et al         tsochantaridis et al         mcallester  hazan    keshet         there are also
+approximate cost function learning approaches that do not employ any inference routine
+during training  for example  piece wise training  sutton   mccallum         decomposed
+learning  samdani   roth        and its special case pseudo max training  sontag  meshi 
+jaakkola    globerson        fall under this category  these training approaches are very
+efficient  but they still need an inference algorithm to make predictions during testing 
+in these cases  one could employ the constrained conditional models  ccm  framework
+ chang  ratinov    roth        with some declarative  global  constraints to make predictions using the learned cost function  the ccm framework relies on the integer linear
+programming  ilp  inference method  roth   tau yih         more recent work has attempted to integrate  approximate  inference and cost function learning in a principled
+manner  meshi  sontag  jaakkola    globerson        stoyanov  ropson    eisner       
+hazan   urtasun        domke         researchers have also worked on using higher order
+features for crfs in the context of sequence labeling under the pattern sparsity assumption
+ ye  lee  chieu    wu        qian  jiang  zhang  huang    wu         however  these
+approaches are not applicable for the graphical models where the sparsity assumption does
+not hold 
+an alternative approach to addressing inference complexity is cascade training  felzenszwalb   mcallester        weiss   taskar        weiss  sapp    taskar         where
+efficient inference is achieved by performing multiple runs of inference from a coarse level
+to a fine level of abstraction  while such approaches have shown good success  they place
+some restrictions on the form of the cost functions to facilitate cascading  another potential drawback of cascades and most other approaches is that they either ignore the loss
+function of a problem  e g  by assuming hamming loss  or require that the loss function be
+decomposable in a way that supports loss augmented inference  our approach is sensitive
+to the loss function and makes minimal assumptions about it  requiring only that we have
+a blackbox that can evaluate it for any potential output 
+classifier based structured prediction algorithms avoid directly solving the argmin problem by assuming that structured outputs can be generated by making a series of discrete
+decisions  the approach then attempts to learn a recurrent classifier that given an input
+x is iteratively applied in order to generate the series of decisions for producing the target
+output y  simple training methods  e g  dietterich  hild    bakiri        have shown
+good success and there are some positive theoretical guarantees  syed   schapire       
+ross   bagnell         however  recurrent classifiers can be prone to error propagation
+ kaariainen        ross   bagnell         recent work  e g  searn  hal daume iii
+et al          smile  ross   bagnell         and dagger  ross et al          attempts to
+address this issue using more sophisticated training techniques and have shown state of theart structured prediction results  however  all these approaches use classifiers to produce
+structured outputs through a single sequence of greedy decisions  unfortunately  in many
+problems  some decisions are difficult to predict by a greedy classifier  but are crucial for
+good performance  in contrast  our approach leverages recurrent classifiers to define good
+   
+
+fihc search  a learning framework for search based structured prediction
+
+quality search spaces over complete outputs  which allows decision making by comparing
+multiple complete outputs and choosing the best 
+there are also non greedy methods that learn a scoring function to search in the space of
+partial structured outputs  daumeiii   marcu        daume iii        xu  fern    yoon 
+    b  huang  fayong    guo        yu  huang  mi    zhao         all these methods
+perform online training  and differ only in the way search errors are defined and how the
+weights are updated when errors occur  unfortunately  training the scoring function can
+be difficult because it is hard to evaluate states with partial outputs and the theoretical
+guarantees for the learned scoring function  e g   convergence and generalization results 
+rely on strong assumptions  xu et al       b  
+our work is most closely related to the output space search approaches  doppa et al  
+      wick et al          which use a single cost function to serve as both search heuristic
+and also to score the candidate outputs  serving these dual roles often means that the cost
+function needs to make unclear tradeoffs  increasing the difficulty of learning  our hcsearch approach overcomes this deficiency by learning two different functions  a heuristic
+function to guide the search to generate high quality candidate outputs  and a cost function
+to rank the candidate outputs  additionally  the error decomposition of hc search in terms
+of heuristic error and cost function error allows the human designers of the learning system
+to diagnose failures and take corrective measures 
+our approach is also related to re ranking  collins         which uses a generative
+model to propose a k best list of outputs  which are then ranked by a separate ranking
+function  in contrast  rather than restricting to a generative model for producing potential
+outputs  our approach leverages generic search over efficient search spaces guided by a
+learned heuristic function that has minimal representational restrictions  and employs a
+learned cost function to rank the candidate outputs  recent work on generating multiple
+diverse solutions in a probabilistic framework can be considered as another way of producing
+candidate outputs  a representative set of approaches in this line of work are diverse mbest  batra  yadollahpour  guzman rivera    shakhnarovich         m best modes  park
+  ramanan        chen  kolmogorov  zhu  metaxas    lampert        and determinantal
+point processes  kulesza   taskar        
+the general area of speedup learning studied in the planning and search community is
+also related to our work  fern         in these problems  the cost function is typically known
+and the objective is to learn control knowledge  i e   heuristic function  for directing a search
+algorithm to a low cost terminal node in the search space  for example  stage  boyan  
+moore        learns an evaluation function over the states to improve the performance of
+search  where value of a state corresponds to the performance of a local search algorithm
+starting from that state   zhang   dietterich        use reinforcement learning  rl 
+methods to learn heuristics for job shop scheduling with the goal of minimizing the duration
+of the schedule  unlike the problems in planning and combinatorial optimization  such a
+cost function is not given for the structured prediction problems  therefore  our hc search
+approach learns a cost function to score the structured outputs along with a heuristic
+function to guide the search towards low cost outputs 
+   
+
+fidoppa  fern    tadepalli
+
+   summary and future work
+we introduced the hc search framework for structured prediction whose principal feature
+is the separation of the cost function from search heuristic  we showed that our framework
+yields significantly superior performance to state of the art results  and allows an informative error analysis and diagnostics 
+our investigation showed that the main source of error of existing output space approaches including our own approach  hc search  is the inability of cost function to correctly rank the candidate outputs produced by the output generation process  this analysis
+suggests that learning more powerful cost functions  e g   regression trees  mohan  chen 
+  weinberger         with an eye towards anytime performance  grubb   bagnell       
+xu  weinberger    chapelle        would be productive  our results also suggested that
+there is room to improve overall performance with better heuristic learning  thus  another
+direction to pursue is heuristic function learning to speed up the process of generating
+high quality outputs  fern        
+future work includes applying this framework to more challenging problems in natural language processing  e g   co reference resolution  dependency parsing  and semantic
+parsing  and computer vision  e g   object detection in biological images lam  doppa  hu 
+todorovic  dietterich  reft    daly        and multi object tracking in complex sports
+videos chen  fern    todorovic         the effectiveness of hc search approach depends
+on the quality of the search space  and therefore  more work needs to be done in learning
+to optimize search spaces by leveraging the problem structure  similarly  studying pruning
+techniques to further improve the efficiency of both learning and inference is another useful
+direction 
+acknowledgements
+the authors would like to thank the anonymous reviewers and jason eisner  the associate
+editor  for their comments and feedback  the first author would also like to thank tom
+dietterich for his encouragement and support throughout this work  this work was supported in part by nsf grants iis          iis         and in part by the defense advanced
+research projects agency  darpa  and the air force research laboratory  afrl  under
+contract no  fa                any opinions  findings and conclusions or recommendations expressed in this material are those of the author s  and do not necessarily reflect
+the views of the nsf  the darpa  the air force research laboratory  afrl   or the
+us government  a preliminary version of this article was published at aaai       doppa
+et al        
+
+appendix a  limited discrepancy search  lds  space
+the limited discrepancy search  lds  space  doppa et al             a  is defined in terms
+of a learned recurrent classifier h  thus  we start by describing recurrent classifier and then
+explain the key idea behind lds space  for simplicity  we explain the main ideas using
+a sequence labeling problem  handwriting recognition task  noting that they generalize to
+non sequence labeling problems  for full details see doppa et al             a  
+   
+
+fihc search  a learning framework for search based structured prediction
+
+figure    illustration of recurrent classifier for handwriting recognition problem  the classifier predicts the labels in a left to right order  it makes the labeling decision
+at each position greedily based on the character image and the predicted label
+at previous position  shown by the dotted box   in this particular example  the
+classifier makes a mistake at the first position and this error propagates to other
+positions leading to a very bad output 
+
+a   recurrent classifier
+in a sequence labeling problem  the recurrent classifier produces a label at each position in
+sequence  based on an input in that position and the predicted labels at previous positions
+ dietterich et al          if the learned classifier is accurate  then the number of incorrect
+labeling decisions will be relatively small  however  even a small number of errors can
+propagate and cause poor outputs 
+figure   illustrates recurrent classifier for a handwriting recognition example  the
+classifier predicts the labels in a left to right order  it makes the labeling decision at each
+position greedily based on the character image and the predicted label at the previous
+position  shown by the dotted box   in this particular example  the classifier makes a
+mistake at the first position and this error propagates leading to a very bad output   
+errors  
+a   limited discrepancy search  lds 
+lds was originally introduced in the context of problem solving using heuristic search
+ harvey   ginsberg         the key idea behind lds is to realize that if the classifier
+prediction was corrected at a small number of critical errors  then a much better output
+   
+
+fidoppa  fern    tadepalli
+
+ a 
+
+ b 
+
+figure    illustration of limited discrepancy search  lds  for handwriting recognition
+problem  for any given discrepancy set d  we can generate a unique output
+by running the recurrent classifier with the changes from d   a  lds with one
+discrepancy  if introduce a discrepancy at the first position with label s  shown
+in red  and run the classifier  it is able to correct the two subsequent labels   b 
+lds with two discrepancies  if we introduce an additional discrepancy at fifth
+position with label c  shown in red  and run the classifier  we recover the target
+output struct 
+
+would be produced  lds conducts a  shallow  search in the space of possible corrections in
+the hope of finding an output better than the original 
+given a classifier h and a sequence of length t   a discrepancy is a pair  i  l  where
+i              t   is the index of sequence position and l is a label  which generally is different
+from the prediction of the classifier at position i  for any set of discrepancies d  we
+can generate a unique output h d  x  by running the classifier with changes in d  the
+discrepancies in d can be viewed as overriding the prediction of h at particular positions 
+possibly correcting for errors  or introducing new errors  at one extreme  when d is empty 
+we get the original output produced by the greedy classifier  see figure     at the other
+extreme  when d specifies a label at each position  the output is not influenced by h at
+all and is completely specified by the discrepancy set  figure   illustrates lds for the
+same handwriting example  if we introduce a discrepancy at the first position with label
+s  shown in red  and run the classifier  it is able to correct the two subsequent labels  see
+figure   a    if we introduce an additional discrepancy at fifth position with label c  shown
+in red  and run the classifier  we recover the target output struct  see figure   b   
+   
+
+fihc search  a learning framework for search based structured prediction
+
+figure    an example limited discrepancy search  lds  space for handwriting recognition
+problem  the highlighted state corresponds to the one with true output y  at
+the smallest depth 
+
+in practice  when h is reasonably accurate  we will be primarily interested in small
+discrepancy sets relative to the length of the sequence  the problem is that we do not know
+where the corrections should be made and thus lds conducts a search over the discrepancy
+sets  usually from small to large sets 
+
+a   lds space
+given a recurrent classifier h  we define the corresponding limited discrepancy search space
+over complete outputs as follows  each state in this search space is represented as  x  d 
+where x is a input sequence and d is a discrepancy set  we view a state  x  d  as equivalent
+to the input output state  x  h d  x    the initial state function i simply returns  x   
+which corresponds to the original output of the recurrent classifier  the successor function
+s for a state  x  d  returns the set of states of the form  x  d     where d  is the same as d 
+but with an additional discrepancy  in this way  a path through the lds search space starts
+at the output generated by the recurrent classifier and traverses a sequence of outputs that
+differ from the original by some number of discrepancies  given a reasonably accurate h 
+we expect that high quality outputs will be generated at relatively shallow depths of this
+search space and hence will be generated quickly 
+   
+
+fidoppa  fern    tadepalli
+
+figure   illustrates  the limited discrepancy search space  each state consists of the
+input x  a discrepancy set d and the output produced by running the classifier with the
+specified discrepancy set  i e   h d  x   the root node has an empty discrepancy set  nodes
+at level one contain discrepancy sets of size one  the highlighted state corresponds to the
+smallest depth state containing the target output 
+
+appendix b  hardness proof for hc search consistency problem
+theorem    the hc search consistency problem for greedy search and linear heuristic
+and cost functions is np hard even when we restrict to problems for which all possible
+heuristic functions uncover a zero loss output 
+proof  we reduce from the minimum disagreement problem for linear binary classifiers 
+which was proven to be np complete in the work of hoffgen  simon  and horn        
+in one statement of this problem we are given as input a set of n   p dimensional vectors
+t    x            xn   and a positive integer k  the problem is to decide whether or not there
+is a p dimensional real valued weight vector w such that w  xi     for at most k of the
+vectors 
+we first sketch the high level idea of the proof  given an instance of minimum disagreement  we construct an hc search consistency problem with only a single structured
+training example  the search space corresponding to the training example is designed such
+that there is a single node n that has a loss of zero and all other nodes have a loss of
+   further for all linear heuristic functions all greedy search paths terminate at n   while
+generating some other set of nodes outputs on the path there  the search space is designed
+such that each possible path from the initial node to n corresponds to selecting k or fewer
+vectors from t   which we will denote by t    by traversing the path  the set of nodes
+generated  and hence must be scored by c   say n   includes feature vectors corresponding
+to those in t  t  along with the negation of the feature vectors in t    we further define
+n to be assigned the zero vector  so that the cost of that node is   for any weight vector 
+in order to achieve zero loss given the path in consideration  there must be a weight
+vector wc such that wc  x    for all x  n   by our construction this is equivalent to
+wc  x     for x  t    if this is possible then we have found a solution to the minimum
+disagreement problem since  t     k  the remaining details show how to construct this
+space so that there is a setting of the heuristic weights that can generate paths corresponding
+to all possible t  in a way that all paths end at n   for completeness we describe this
+construction below 
+each search node in the space other than n is a tuple  i  m  t  where    i  n  
+   m  k  and t is one of   node types from the set  d  s    s   x    x    here i should
+be viewed as indexing an example xi  t and m effectively codes how many instances in
+t have been selected to be mistakes and hence put in t    finally  t encodes the type
+of the search node with the following meanings which will become more clear during the
+construction  d  decision   s   positive selection   s  negative selection   x   positive
+instance   x  negative instance   the search space is constructed so that each example xi
+   it may not be clear from this example  but we allow over riding the discrepancies to provide the opportunity to recover from the search errors 
+
+   
+
+fihc search  a learning framework for search based structured prediction
+
+figure    an example search space for t    x    x    x    and k      all greedy paths
+terminate at the zero loss node n and no path selects more than one instance to
+include in the mistake set t   
+
+is considered in order and a choice is made about whether to count it as a mistake  put
+it in t    or not  this choice is made at decision nodes  which all have the form  i  m  d  
+indicating that a decision is to be made about example i and that there have already been m
+examples selected for t    each such decision node with m   k has two children  i  m  s  
+and  i  m  s     which respectively correspond to selecting xi to be in the mistake set or not 
+later we will show how features are assigned to nodes so as to allow the heuristic to make
+any selection desired 
+each selection node has a single node as a child  in particular  a positive selection node
+ i  m  s    has the positive instance node  i  m  x    as a child  while negative selection nodes
+ i  m  s   has the negative instance node  i  m  x   as a child  each such instance node
+effectively implements the process of putting xi into t  or not as will become clear when
+feature vectors are described below  after arriving at either a positive or negative instance
+node  the consideration of xi is complete and we must move on to the decision for the next
+example xi     thus  a positive instance node  i  m  x    has the single child decision node
+   
+
+fidoppa  fern    tadepalli
+
+ i      m  d   while a negative instance node has a single child decision node  i      m      d  
+noting that the number of mistakes is incremented for negative nodes 
+the final details of the search space structure ensure that no more than k mistakes
+are allowed and force all search paths to terminate at n   in particular  for any decision
+node  i  m  d  with m   k  we know that no more mistakes are allowed and hence no more
+decisions should be allowed  thus  from any such node we form a path from it to n that
+goes through positive instance nodes  i  m  x              n  m  x     which reflects that none of
+ xi           xn   will be in t    figure   shows an example search space for our construction 
+given the above search space  which has polynomial size  since k  n    one can verify
+that for any set of k or fewer instances t  there is a path from the root to n that goes
+through the negative instance nodes for instances in t  and positive instance nodes for
+instances in t  t    further  each possible path goes through either a positive or negative
+instance node for each instance and no more than k negative nodes  thus there is a direct
+correspondence between paths and mistake sets t   
+we now describe how to assign features to each node in a way that allows for the
+heuristic function to select each path and effectively construct the set t    for any node
+u the feature vector  u     x  s  b   the component x is an p dimensional feature vector
+and will correspond to one of the xi   the component s is an n  dimensional vector where
+si         will implement the selection of instances  finally b is a binary value that is
+equal to   for all non instance nodes and is   for both positive and negative instance nodes 
+the mapping from nodes to feature vectors is as follows  each decision node  i  m  d   is all
+zeros  except for b      each positive selection node  i  m  s    is all zeros except for si    
+and b      negative selection nodes are similar except that si      for a positive instance
+node  i  m  x    the feature vector is  xi         and for negative instance nodes  i  m  x   the
+feature vector is  xi          finally the feature vector for n is all zeros 
+the key idea to note is that the heuristic function can effectively select a positive or
+negative selection node by setting the weight for si to be positive or negative respectively 
+in particular  the set of negative selection nodes visited  and hence negative instance nodes 
+correspond to the first k or fewer negative weight values for the s component of the feature
+vector  thus  the heuristic can select any set of negative nodes that it wants to go through 
+but no more than k  on such a path there will be three types of nodes encountered that the
+cost function must rank  first  there will be control nodes  decision and selection nodes 
+that all have b      next there will be positive instance nodes that will have a feature
+vector  xi         and no more than k negative instance nodes with feature vectors  xi         
+the cost function can easily rank n higher than the control nodes by setting the weight for
+b to be negative  further if it can find heuristic weights for the x component that allows n
+to be ranked highest then that is a solution to the original minimum disagreement problem 
+further if there is a solution to the disagreement problem it is easy to see that there will
+also be a solution to the hc search consistency problem by selecting a heuristic that spans
+the proper set t   
+
+references
+agarwal  s     roth  d          learnability of bipartite ranking functions  in proceedings
+of international conference on learning theory  colt   pp       
+   
+
+fihc search  a learning framework for search based structured prediction
+
+batra  d   yadollahpour  p   guzman rivera  a     shakhnarovich  g          diverse mbest solutions in markov random fields  in proceedings of european conference on
+computer vision  eccv   pp      
+boyan  j  a     moore  a  w          learning evaluation functions to improve optimization by local search  journal of machine learning research  jmlr            
+brill  e          transformation based error driven learning and natural language processing  a case study in part of speech tagging  computational linguistics         
+       
+chang  k  w   samdani  r     roth  d          a constrained latent variable model
+for coreference resolution  in proceedings of conference on empirical methods in
+natural language processing  emnlp   pp         
+chang  m  w   ratinov  l  a     roth  d          structured learning with constrained
+conditional models  machine learning journal  mlj                  
+chen  c   kolmogorov  v   zhu  y   metaxas  d     lampert  c  h          computing
+the m most probable modes of a graphical model  in proceedings of international
+conference on artificial intelligence and statistics  aistats  
+chen  s   fern  a     todorovic  s          multi object tracking via constrained sequential labeling  in to appear in proceedings of ieee conference on computer vision
+and pattern recognition  cvpr  
+collins  m          discriminative reranking for natural language parsing  in proceedings
+of international conference on machine learning  icml   pp         
+collins  m          ranking algorithms for named entity extraction  boosting and the
+voted perceptron  in acl 
+crammer  k   dekel  o   keshet  j   shalev shwartz  s     singer  y          online passiveaggressive algorithms  journal of machine learning research  jmlr             
+daume iii  h          practical structured learning techniques for natural language
+processing  ph d  thesis  university of southern california  los angeles  ca 
+daumeiii  h     marcu  d          learning as search optimization  approximate large
+margin methods for structured prediction  in icml 
+dietterich  t  g   hild  h     bakiri  g          a comparison of id  and backpropagation
+for english text to speech mapping  machine learning journal  mlj                
+domke  j          structured learning via logistic regression  in proceedings of advances
+in neural information processing systems  nips   pp         
+doppa  j  r   fern  a     tadepalli  p          output space search for structured prediction  in proceedings of international conference on machine learning  icml  
+doppa  j  r   fern  a     tadepalli  p          hc search  learning heuristics and cost
+functions for structured prediction  in proceedings of aaai conference on artificial
+intelligence  aaai  
+doppa  j  r   fern  a     tadepalli  p       a   structured prediction via output space
+search  journal of machine learning research  jmlr                
+   
+
+fidoppa  fern    tadepalli
+
+doppa  j  r   yu  j   ma  c   fern  a     tadepalli  p       b   hc search for multi label
+prediction  an empirical study  in to appear in proceedings of aaai conference on
+artificial intelligence  aaai  
+doppa  j  r   yu  j   tadepalli  p     getoor  l          chance constrained programs
+for link prediction  in proceedings of nips workshop on analyzing networks and
+learning with graphs 
+doppa  j  r   yu  j   tadepalli  p     getoor  l          learning algorithms for link
+prediction based on chance constraints  in proceedings of european conference on
+machine learning  ecml   pp         
+felzenszwalb  p  f     mcallester  d  a          the generalized a  architecture  journal
+of artificial intelligence research  jair              
+fern  a          speedup learning  in encyclopedia of machine learning  pp         
+fern  a   yoon  s  w     givan  r          approximate policy iteration with a policy
+language bias  solving relational markov decision processes  journal of artificial
+intelligence research  jair             
+goldberg  y     elhadad  m          an efficient algorithm for easy first non directional
+dependency parsing  in proceedings of human language technologies  conference of
+the north american chapter of the association of computational linguistic  hltnaacl   pp         
+grubb  a     bagnell  d          speedboost  anytime prediction with uniform nearoptimality  journal of machine learning research   proceedings track             
+hal daume iii  langford  j     marcu  d          search based structured prediction 
+machine learning journal  mlj                  
+harvey  w  d     ginsberg  m  l          limited discrepancy search  in proceedings of
+international joint conference on artificial intelligence  ijcai   pp         
+hazan  t     urtasun  r          efficient learning of structured predictors in general
+graphical models  corr  abs           
+hoffgen  k  u   simon  h  u     horn  k  s  v          robust trainability of single
+neurons  journal of computer and system sciences                 
+huang  l   fayong  s     guo  y          structured perceptron with inexact search 
+in proceedings of human language technology conference of the north american
+chapter of the association of computational linguistics  hlt naacl   pp     
+    
+jiang  j   teichert  a   daume iii  h     eisner  j          learned prioritization for
+trading off accuracy and speed  in proceedings of advances in neural information
+processing  nips  
+kaariainen  m          lower bounds for reductions  in atomic learning workshop 
+keshet  j   shalev shwartz  s   singer  y     chazan  d          phoneme alignment based
+on discriminative learning  in proceedings of annual conference of the international
+speech communication association  interspeech   pp           
+   
+
+fihc search  a learning framework for search based structured prediction
+
+khardon  r          learning to take actions  machine learning journal  mlj          
+     
+kulesza  a     taskar  b          determinantal point processes for machine learning 
+foundations and trends in machine learning                  
+lafferty  j   mccallum  a     pereira  f          conditional random fields  probabilistic
+models for segmenting and labeling sequence data  in proceedings of international
+conference on machine learning  icml   pp         
+lam  m   doppa  j  r   hu  x   todorovic  s   dietterich  t   reft  a     daly  m         
+learning to detect basal tubules of nematocysts in sem images  in iccv workshop
+on computer vision for accelerated biosciences  cvab   ieee 
+li  q   ji  h     huang  l          joint event extraction via structured prediction with
+global features  in proceedings of the   st annual meeting of the association for
+computational linguistics  acl   pp       
+mcallester  d  a   hazan  t     keshet  j          direct loss minimization for structured
+prediction  in proceedings of advances in neural information processing systems
+ nips   pp           
+meshi  o   sontag  d   jaakkola  t     globerson  a          learning efficiently with
+approximate inference via dual losses  in proceedings of international conference
+on machine learning  icml   pp         
+mohan  a   chen  z     weinberger  k  q          web search ranking with initialized
+gradient boosted regression trees  journal of machine learning research   proceedings track           
+nivre  j          algorithms for deterministic incremental dependency parsing  computational linguistics                 
+park  d     ramanan  d          n best maximal decoders for part models  in proccedings
+of ieee international conference on computer vision  iccv   pp           
+payet  n     todorovic  s          sledge  sequential labeling of image edges for
+boundary detection  international journal of computer vision  ijcv              
+   
+qian  x   jiang  x   zhang  q   huang  x     wu  l          sparse higher order conditional random fields for improved sequence labeling  in proceedings of international
+conference on machine learning  icml  
+read  j   pfahringer  b   holmes  g     frank  e          classifier chains for multi label
+classification  machine learning                 
+ross  s     bagnell  d          efficient reductions for imitation learning  journal of
+machine learning research   proceedings track            
+ross  s   gordon  g  j     bagnell  d          a reduction of imitation learning and
+structured prediction to no regret online learning  journal of machine learning
+research   proceedings track             
+   
+
+fidoppa  fern    tadepalli
+
+roth  d     tau yih  w          integer linear programming inference for conditional
+random fields  in proceedings of international conference on machine learning
+ icml   pp         
+samdani  r     roth  d          efficient decomposed learning for structured prediction 
+in proceedings of international conference on machine learning  icml  
+sen  p   namata  g   bilgic  m   getoor  l   gallagher  b     eliassi rad  t          collective classification in network data  ai magazine                
+sontag  d   meshi  o   jaakkola  t     globerson  a          more data means less inference 
+a pseudo max approach to structured learning  in proceedings of advances in neural
+information processing systems  nips   pp           
+stoyanov  v     eisner  j          easy first coreference resolution  in proceedings of
+international conference on computational linguistics  coling   pp           
+stoyanov  v   ropson  a     eisner  j          empirical risk minimization of graphical
+model parameters given approximate inference  decoding  and model structure 
+in proceedings of international conference on artificial intelligence and statistics
+ aistats   pp         
+sutton  c  a     mccallum  a          piecewise training for structured prediction 
+machine learning journal  mlj                    
+syed  u     schapire  r          a reduction from apprenticeship learning to classification  in proceedings of advances in neural information processing systems  nips  
+pp           
+taskar  b   guestrin  c     koller  d          max margin markov networks  in proceedings
+of advances in neural information processing systems  nips  
+tsochantaridis  i   hofmann  t   joachims  t     altun  y          support vector machine learning for interdependent and structured output spaces  in proceedings of
+international conference on machine learning  icml  
+tsochantaridis  i   joachims  t   hofmann  t     altun  y          large margin methods
+for structured and interdependent output variables  journal of machine learning
+research  jmlr               
+vogel  j     schiele  b          semantic modeling of natural scenes for content based
+image retrieval  international journal of computer vision  ijcv                  
+weiss  d          structured prediction cascades code  http   code google com p 
+structured cascades  
+weiss  d   sapp  b     taskar  b          sidestepping intractable inference with structured
+ensemble cascades  in proceedings of advances in neural information processing
+systems  nips   pp           
+weiss  d     taskar  b          structured prediction cascades  journal of machine
+learning research   proceedings track            
+wick  m  l   rohanimanesh  k   bellare  k   culotta  a     mccallum  a          samplerank  training factor graphs with atomic gradients  in proceedings of international
+conference on machine learning  icml  
+   
+
+fihc search  a learning framework for search based structured prediction
+
+wick  m  l   rohanimanesh  k   singh  s     mccallum  a          training factor graphs
+with reinforcement learning for efficient map inference  in proceedings of advances
+in neural information processing systems  nips   pp           
+xu  y   fern  a     yoon  s       a   learning linear ranking functions for beam search
+with application to planning  the journal of machine learning research          
+     
+xu  y   fern  a     yoon  s  w       b   learning linear ranking functions for beam
+search with application to planning  journal of machine learning research  jmlr  
+             
+xu  y   fern  a     yoon  s  w          iterative learning of weighted rule sets for
+greedy search  in proceedings of international conference on automated planning
+and systems  icaps   pp         
+xu  z   weinberger  k     chapelle  o          the greedy miser  learning under test time
+budgets  in proceedings of international conference on machine learning  icml  
+ye  n   lee  w  s   chieu  h  l     wu  d          conditional random fields with
+high order features for sequence labeling  in proceedings of advances in neural
+information processing systems  nips   pp           
+yu  h   huang  l   mi  h     zhao  k          max violation perceptron and forced
+decoding for scalable mt training  in proceedings of empirical methods in natural
+language processing  emnlp   pp           
+zhang  w     dietterich  t  g          a reinforcement learning approach to job shop
+scheduling  in proceedings of international joint conference on artificial intelligence
+ ijcai   pp           
+
+   
+
+fi

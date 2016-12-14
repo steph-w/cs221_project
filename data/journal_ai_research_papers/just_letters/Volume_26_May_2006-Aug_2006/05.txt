@@ -1,0 +1,3285 @@
+journal of artificial intelligence research                 
+
+submitted        published      
+
+the fast downward planning system
+malte helmert
+
+helmert   informatik   uni   freiburg   de
+
+institut fur informatik
+albert ludwigs universitat freiburg
+georges kohler allee  gebaude    
+      freiburg  germany
+
+abstract
+fast downward is a classical planning system based on heuristic search  it can deal with general deterministic planning problems encoded in the propositional fragment of pddl     including
+advanced features like adl conditions and effects and derived predicates  axioms   like other
+well known planners such as hsp and ff  fast downward is a progression planner  searching the
+space of world states of a planning task in the forward direction  however  unlike other pddl planning systems  fast downward does not use the propositional pddl representation of a planning
+task directly  instead  the input is first translated into an alternative representation called multivalued planning tasks  which makes many of the implicit constraints of a propositional planning
+task explicit  exploiting this alternative representation  fast downward uses hierarchical decompositions of planning tasks for computing its heuristic function  called the causal graph heuristic 
+which is very different from traditional hsp like heuristics based on ignoring negative interactions
+of operators 
+in this article  we give a full account of fast downwards approach to solving multi valued
+planning tasks  we extend our earlier discussion of the causal graph heuristic to tasks involving
+axioms and conditional effects and present some novel techniques for search control that are used
+within fast downwards best first search algorithm  preferred operators transfer the idea of helpful actions from local search to global best first search  deferred evaluation of heuristic functions
+mitigates the negative effect of large branching factors on search performance  and multi heuristic
+best first search combines several heuristic evaluation functions within a single search algorithm
+in an orthogonal way  we also describe efficient data structures for fast state expansion  successor
+generators and axiom evaluators  and present a new non heuristic search algorithm called focused
+iterative broadening search  which utilizes the information encoded in causal graphs in a novel
+way 
+fast downward has proven remarkably successful  it won the classical  i  e   propositional 
+non optimising  track of the  th international planning competition at icaps       following in
+the footsteps of planners such as ff and lpg  our experiments show that it also performs very
+well on the benchmarks of the earlier planning competitions and provide some insights about the
+usefulness of the new search enhancements 
+
+   introduction
+consider a typical transportation planning task  the postal service must deliver a number of parcels
+to their respective destinations using its vehicle fleet of cars and trucks  let us assume that a car
+serves all the locations of one city  and that different cities are connected via highways that are
+served by trucks  for the sake of simplicity  let us further assume that travelling on each segment of
+road or highway incurs the same cost  this is not a highly realistic assumption  but for the purposes
+of exposition it will do  there can be any number of parcels  posted at arbitrary locations and with
+c
+    
+ai access foundation  all rights reserved 
+
+fih elmert
+
+p 
+
+b
+
+f
+
+c 
+t
+a
+
+d
+
+e
+
+c 
+
+g
+
+c
+
+c 
+
+p 
+
+figure    a transportation planning task  deliver parcel p   from c to g and parcel p  from f to e 
+using the cars c    c    c  and truck t  the cars may only use inner city roads  thin edges  
+the truck may only use the highway  thick edge  
+
+arbitrary destinations  moreover  cities can be of varying size  there can be one or several cars
+within each city  and there can be one or several trucks connecting the cities  cars will never leave
+a city  fig    shows an example task of this kind with two cities  three cars and a single truck  there
+are two parcels to be delivered  one of which  p     must be moved between the two cities  while the
+other  p    can stay within its initial city 
+the astute reader familiar with the planning literature will have noticed by now that we are
+essentially describing the l ogistics domain  a standard benchmark for classical planning systems 
+extended to roadmaps that are not complete graphs   part of  a propositional strips like encoding
+of the task is shown in fig    
+how would human planners go about solving tasks of this kind  very likely  they would use a
+hierarchical approach  for p    it is clear that the parcel needs to be moved between cities  which is
+only possible by using the truck  since in our example each city can access the highway at only one
+location  we see that we must first load the parcel into some car at its initial location  then drop it off
+at the first citys highway access location  load it into the truck  drop it off at the other citys highway
+access location  load it into the only car in that city  and finally drop it off at its destination  we
+can commit to this high level plan for delivering p   without worrying about lower level aspects
+such as path planning for the cars  it is obvious to us that any good solution will have this structure 
+since the parcel can only change its location in a few clearly defined ways  fig      the same figure
+shows that the only reasonable plans for getting p   to its destination require loading it into the car
+in its initial city and dropping it off at its target location  there is no point in ever loading it into the
+truck or into any of the cars in the left city 
+so say we have committed to the  partially ordered  as movements of the two parcels can be
+interleaved  high level plan shown in fig     all we need to do to complete the plan is choose
+a linearization of the high level steps and fill in movements of the vehicle fleet between them  we
+have thus decomposed the planning task into a number of subproblems  the parcel scheduling
+problem  where  and by which vehicles  a parcel should be loaded and unloaded  is separated from
+the path planning problem for each vehicle in the fleet  how to move it from point x to y   both
+   
+
+fit he fast d ownward p lanning s ystem
+
+variables 
+at p  a  at p  b  at p  c  at p  d  at p  e 
+at p  a  at p  b  at p  c  at p  d  at p  e 
+at c  a  at c  b  at c  c  at c  d 
+at c  a  at c  b  at c  c  at c  d 
+at c  e  at c  f  at c  g 
+at t d  at t e 
+in p  c   in p  c   in p  c   in p  t 
+in p  c   in p  c   in p  c   in p  t
+init 
+at p  c  at p  f  at c  a  at c  b  at c  g 
+goal 
+at p  g  at p  e
+operator drive c  a d 
+pre  at c  a add  at c  d del  at c  a
+operator drive c  b d 
+pre  at c  b add  at c  d del  at c  b
+operator drive c  c d 
+pre  at c  c add  at c  d del  at c  c
+   
+operator load c  p  a 
+pre  at c  a  at p  a add  in p  c  del 
+operator load c  p  b 
+pre  at c  b  at p  b add  in p  c  del 
+operator load c  p  c 
+pre  at c  c  at p  c add  in p  c  del 
+   
+operator unload c  p  a 
+pre  at c  a  in p  c  add  at p  a del 
+operator unload c  p  b 
+pre  at c  b  in p  c  add  at p  b del 
+operator unload c  p  c 
+pre  at c  c  in p  c  add  at p  c del 
+   
+
+at p  f  at p  g 
+at p  f  at p  g 
+
+at t e
+
+at p  a
+at p  b
+at p  c
+
+in p  c 
+in p  c 
+in p  c 
+
+figure    part of a typical propositional encoding of the transportation planning task  no actual
+pddl syntax  
+
+   
+
+fih elmert
+
+in c 
+in t
+
+at a
+
+at b
+
+at c
+
+at d
+
+at e
+
+at f
+
+in c 
+
+at g
+
+in c 
+
+figure    domain transition graph for the parcels p   and p    indicates how a parcel can change
+its state  for example  the arcs between at d and in t correspond to the actions of
+loading unloading the parcel at location d with the truck t 
+
+b
+f
+
+a
+
+d
+
+d
+
+e
+
+e
+
+g
+c
+
+figure    domain transition graphs for the cars c   and c   left   truck t  centre   and car c   right  
+note how each graph corresponds to the part of the roadmap that can be traversed by the
+respective vehicle 
+
+load
+c  p  c
+
+unload
+c  p  d
+
+load
+t p  d
+
+unload
+t p  e
+
+load
+c  p  f
+
+unload
+c  p  e
+
+load
+c  p  e
+
+figure    high level plan for the transportation planning task 
+   
+
+unload
+c  p  g
+
+fit he fast d ownward p lanning s ystem
+
+c 
+
+c 
+
+c 
+
+p 
+
+p 
+
+t
+
+figure    causal dependencies in the transportation planning task 
+of these are graph search problems  and the corresponding graphs are shown in fig    and fig    
+graphs of this kind will be formally introduced as domain transition graphs in section   
+of course these graph search problems interact  but they only do so in limited ways  state
+transitions for the parcels have associated conditions regarding the vehicle fleet  which need to be
+considered in addition to the actual path planning in fig     for example  a parcel can only change
+state from at location a to inside car c    if the car c  is at location a  however  state transitions
+for the vehicles have no associated conditions from other parts of the planning task  and hence
+moving a vehicle from one location to another is indeed as easy as finding a path in the associated
+domain transition graph  we say that the parcels have causal dependencies on the vehicles because
+there are operators that change the state of the parcels and have preconditions on the state of the
+vehicles  indeed  these are the only causal dependencies in this task  since parcels do not depend on
+other parcels and vehicles do not depend on anything except themselves  fig      the set of causal
+dependencies of a planning task is visualized in its causal graph 
+we argue that humans often solve planning tasks in the hierarchical fashion outlined in the preceding paragraphs  and that algorithmic approaches to action planning can usefully apply similar
+ideas  indeed  as we will show in the following section  we are not the first to introduce domain transition graphs and causal graphs  however  earlier work has almost exclusively focused on acyclic
+causal graphs  and for a good reason  if the causal graph of a planning task exhibits a cycle  hierarchical decomposition is not possible  because the subproblems that must be solved to achieve
+an operator precondition are not necessarily smaller than the original task  as far as we are aware 
+we were the first  helmert        to present a general planning algorithm that focuses on exploiting hierarchical information from causal graphs  however  our causal graph heuristic also requires
+acyclicity  in the general case  it considers a relaxed planning problem in which some operator
+preconditions are ignored to break causal cycles 
+knowing that cycles in causal graphs are undesirable  we take a closer look at the transportation
+planning task  let us recall our informal definition of causal graphs  the causal graph of a planning
+task contains a vertex for each state variable and arcs from variables that occur in preconditions to
+variables that occur in effects of the same operator  so far  we may have given the impression that
+the causal graph of the example task has the well behaved shape shown in fig     unfortunately 
+having a closer look at the strips encoding in fig     we see that this is not the case  the correct
+causal graph  shown in fig     looks very messy  this discrepancy between the intuitive and actual
+graph is due to the fact that in our informal account of human style problem solving  we made
+use of  non binary  state variables like the location of car c    or the state of parcel p    while
+strips level state variables correspond to  binary  object location propositions like parcel p   is
+   
+
+fih elmert
+
+figure    causal graph for the strips encoding of the transportation planning task 
+at location a  it would be much nicer if we were given a multi valued encoding of the planning
+task that explicitly contains a variable for the location of car c    and similar properties  indeed 
+the nice looking acyclic graph in fig    is the causal graph of the multi valued encoding shown in
+fig    
+having provided some intuition for its underlying concepts  let us now state our design goal
+for the fast downward planning system  to develop an algorithm that efficiently solves general
+propositional planning tasks by exploiting the hierarchical structure inherent in causal graphs  we
+need to overcome three major obstacles in this undertaking 
+ first  propositionally encoded planning tasks usually have very unstructured causal graphs 
+however  the intuitive dependencies often become visible in encodings with multi valued
+state variables  to exploit this fact in an automated pddl planning system  we have devised
+an automatic algorithm for translating  or reformulating  propositional tasks to multi valued
+ones  the translation algorithm can be considered independently from the rest of the planner  in fact  it is now also used as part of other planning systems  van den briel  vossen   
+kambhampati         to keep the article focused  we do not discuss the translation algorithm
+here  referring to our earlier work for some of its central ideas  edelkamp   helmert        
+instead  we consider its output  a multi valued planning task  as a base formalism 
+ second  no matter how clever the encoding is  most planning tasks are not completely hierarchical in nature  to deal with causal cycles  we consider relaxations where some causal
+dependencies are ignored and use solutions to the relaxed problem within a heuristic search
+algorithm 
+ third  even for planning tasks that can be solved hierarchically  finding such a solution is difficult  indeed  still pspace complete   for this reason  our heuristic function only considers
+a fragment of a task at a time  namely subproblems induced by a single state variable and its
+predecessors in the causal graph  even this planning problem is still np complete  so that we
+   
+
+fit he fast d ownward p lanning s ystem
+
+variables 
+p   p    at a  at b  at c  at d  at e  at f  at g 
+in c   in c   in c   in t 
+c   c    at a  at b  at c  at d 
+c 
+  at e  at f  at g 
+t
+  at d  at e 
+init 
+p    at c  p    at f
+c    at a  c    at b  c    at g  t   at e
+goal 
+p    at g  p    at e
+operator drive c  a d 
+pre  c    at a eff  c    at d
+operator drive c  b d 
+pre  c    at b eff  c    at d
+operator drive c  c d 
+pre  c    at c eff  c    at d
+   
+operator load c  p  a 
+pre  c    at a  p    at a eff  p    in c 
+operator load c  p  b 
+pre  c    at b  p    at b eff  p    in c 
+operator load c  p  c 
+pre  c    at c  p    at c eff  p    in c 
+   
+operator unload c  p  a 
+pre  c    at a  p    in c  eff  p    at a
+operator unload c  p  b 
+pre  c    at b  p    in c  eff  p    at b
+operator unload c  p  c 
+pre  c    at c  p    in c  eff  p    at c
+   
+figure    part of an encoding of the transportation planning task with multi valued state variables 
+
+   
+
+fih elmert
+
+are content with an incomplete solution algorithm within the heuristic solver  this solution
+algorithm has theoretical shortcomings but never failed us in practice 
+having introduced the rationale of our approach  we discuss related work in the next section 
+this is followed by an overview of the general architecture of the fast downward planning system in
+section    the planning system consists of three components  translation  knowledge compilation 
+and search  the translation component converts pddl    tasks to multi valued planning tasks 
+which we formally introduce in section    the knowledge compilation component is discussed in
+section    the search component in section    we conclude with a presentation of experimental
+results in section   and some discussion in section   
+
+   related work
+as a planning system based on heuristic forward search  fast downward is clearly related to other
+heuristic planners such as hsp  bonet   geffner        or ff  hoffmann   nebel        on the
+architectural level  however  in this section we focus on work that is related on the conceptual level 
+i  e   work that uses similar forms of hierarchical decomposition of causal graphs and work that uses
+similar forms of search in domain transition graphs 
+    causal graphs and abstraction
+the term causal graph first appears in the literature in the work by williams and nayak         but
+the general idea is considerably older  the approach of hierarchically decomposing planning tasks
+is arguably as old as the field of ai planning itself  having first surfaced in newell and simons
+       work on the general problem solver 
+still  it took a long time for these notions to evolve to their modern form  sacerdotis       
+abstrips algorithm introduced the concept of abstraction spaces for strips like planning tasks 
+an abstraction space of a strips task is the state space of an abstracted task  which is obtained
+by removing all preconditions from the operators of the original task that belong to a given set of
+propositions  which are abstracted away     to solve a planning task  abstrips first generates a
+plan for an abstracted task  then refines this plan by inserting concrete plans between the abstract
+plan steps that bridge the gap between abstract states by satisfying the operator preconditions
+which were ignored at the abstract level  the idea is easily generalized to several levels of abstraction forming an abstraction hierarchy  with a very abstract level at the top where almost all
+preconditions are ignored  successively introducing more preconditions at every layer until the final
+layer of the hierarchy equals the original planning task 
+one problem with this approach to planning is that in general there is no guarantee that the
+abstract plans bear any resemblance to reasonable concrete plans  for example  if abstraction spaces
+are chosen badly  it is quite possible that finding a concrete plan that satisfies the precondition of the
+first operator in the abstract plan is more difficult than solving the original goal at the concrete level 
+such shortcomings spawned a large amount of research on the properties of abstraction hierarchies
+and how they can be generated automatically 
+   in later work by other authors  propositions which are abstracted away are also removed from the operator effects 
+this only makes a difference in subtle cases that require the presence of axioms  we do not distinguish between these
+two kinds of abstraction here 
+
+   
+
+fit he fast d ownward p lanning s ystem
+
+tenenberg        gives one of the first formal accounts of the properties of different kinds of
+abstraction  among other contributions  he defines the so called upward solution property  which
+can be informally stated as  if there exists a concrete solution  then there also exists an abstract
+solution  rather surprisingly  not all abstractions considered at the time satisfied this very basic
+property  without which one would be loathe to call a given state space an abstraction of another
+state space 
+a limitation of the upward solution property is that it states no relationship between the concrete
+and abstract plan at all  for abstrips style hierarchical planning to be successful  the abstract
+plan must bear some resemblance to a concrete one  otherwise there is little point in trying to
+refine it  indeed  tenenberg introduces stronger versions of the upward solution property  but more
+relevant to fast downward is knoblocks        work on the ordered monotonicity property  an
+abstraction space satisfies the ordered monotonicity property if  roughly speaking  any concrete
+solution can be derived from some abstract solution while leaving the actions in the abstract plan
+intact and relevant to the concrete plan  clearly  this is a very important property for abstripslike hierarchical planning 
+it is in knoblocks article that causal graphs first surface  although he does not introduce a name
+for them   translated to our terminology  knoblock proves the following relationship between
+useful abstractions and causal graphs  if the causal graph contains no path from a variable that
+is not abstracted away to a variable that is abstracted away  then the abstraction has the ordered
+monotonicity property  in particular  this means that for acyclic causal graphs  it is possible to devise
+an abstraction hierarchy where only one new variable is introduced at each level 
+besides these theoretical contributions  knoblock presents a planning system called alpine
+which computes an abstraction hierarchy for a planning task from its causal graph and exploits
+this within a hierarchical refinement planner  although the planning method is very different  the
+derivation of the abstraction hierarchy is very similar to fast downwards method for generating
+hierarchical decompositions of planning tasks  section      
+by itself  the ordered monotonicity property is not sufficient to guarantee good performance
+of a hierarchical planning approach  it guarantees that every concrete solution can be obtained in
+a natural way from an abstract solution  but it does not guarantee that all abstract solutions can
+be refined to concrete ones  such a guarantee is provided by the downward refinement property 
+introduced by bacchus and yang        
+the downward refinement property can rarely be guaranteed in actual planning domains  so
+bacchus and yang develop an analytical model for the performance of hierarchical planning in situations where a given abstract plan can only be refined with a certain probability p      based on
+this analysis  they present an extension to alpine called highpoint  which selects an abstraction hierarchy with high refinement probability among those that satisfy the ordered monotonicity
+property  in practice  it is not feasible to compute the refinement probability  so highpoint approximates this value based on the notion of k ary necessary connectivity 
+    causal graphs and unary strips operators
+causal graphs are first given a name by jonsson and backstrom            b   who call them
+dependency graphs  they study a fragment of propositional strips with negative conditions which
+has the interesting property that plan existence can be decided in polynomial time  but minimal
+solutions to a task can be exponentially long  so that no polynomial planning algorithm exists  they
+   
+
+fih elmert
+
+present an incremental planning algorithm with polynomial delay  i  e   a planning algorithm that
+decides within polynomial time whether or not a given task has a solution  and  if so  generates such
+a solution step by step  requiring only polynomial time between any two subsequent steps   
+the fragment of strips covered by jonsson and backstroms algorithm is called  s and is
+defined by the requirement that the causal graph of the task is acyclic and each state variables
+is static  symmetrically reversible  or splitting  static variables are those for which it is easy to
+guarantee that they never change their value in any solution plan  these variables can be detected
+and compiled away easily  symmetrically reversible variables are those where for each operator
+which makes them true there is a corresponding operator with identical preconditions which makes
+them false  and vice versa  in other words  a variable is symmetrically reversible iff its domain
+transition graph is undirected  finally  a variable v is splitting iff its removal from the causal graph
+weakly disconnects its positive successors  those variables which appear in effects of operators of
+which v is a precondition  from its negative successors  those variables which appear in effects of
+operators of which v is a precondition  
+williams and nayak        independently prove that incremental  or  in their setting  reactive 
+planning is a polynomial problem in a strips like setting where causal graphs are acyclic and
+all operators are reversible  if all operators are reversible  according to the definition by williams
+and nayak   all variables are symmetrically reversible  according to the definition by jonsson and
+backstrom   so this is actually a special case of the previous result  however  williams and nayaks
+work applies to a more general formalism than propositional strips  so that the approaches are
+not directly comparable 
+more recently  domshlak and brafman provide a detailed account of the complexity of finding plans in the propositional strips  with negation  formalism with unary operators and acyclic
+graphs  domshlak   brafman        brafman   domshlak           among other results  they
+prove that the restriction to unary operators and acyclic graphs does not reduce the complexity
+of plan existence  the problem is pspace complete  just like unrestricted propositional strips
+planning  bylander         they also show that for singly connected causal graphs  shortest plans
+cannot be exponentially long  but the problem is still np complete  for an even more restricted class
+of causal graphs  namely polytrees of bounded indegree  they present a polynomial planning algorithm  more generally  their analysis relates the complexity of strips planning in unary domains
+to the number of paths in their causal graph 
+    multi valued planning tasks
+with the exception of williams and nayaks paper  all the work discussed so far exclusively deals
+with propositional planning problems  where all state variables assume values from a binary domain  as we observed in the introduction  the question of propositional vs  multi valued encodings
+usually has a strong impact on the connectivity of the causal graph of a task  in fact  apart from the
+trivial m ovie domain  none of the common planning benchmarks exhibits an acyclic causal graph
+   however  there is no guarantee that the length of the generated solution is polynomially related to the length of an
+optimal solution  it might be exponentially longer  therefore  the algorithm might spend exponential time on tasks
+that can be solved in polynomial time 
+   according to our formal definition of causal graphs in section      operators with several effects always induce
+cycles in the causal graph  so acyclic causal graph implies unary operators  some researchers define causal graphs
+differently  so we name both properties explicitly here 
+
+   
+
+fit he fast d ownward p lanning s ystem
+
+when considering its propositional representation  by contrast  the multi valued encoding of our
+introductory example does have an acyclic causal graph 
+due to the dominance of the pddl  and previously  strips  formalism  non binary state variables are not studied very often in the classical planning literature  one of the most important exceptions to this rule is the work on the sas   planning formalism  of which the papers by backstrom
+and nebel        and jonsson and backstrom      a  are most relevant to fast downward  the
+sas  planning formalism is basically equivalent to the multi valued planning tasks we introduce
+in section   apart from the fact that it does not include derived variables  axioms  or conditional
+effects  backstrom and nebel analyse the complexity of various subclasses of the sas   formalism and discover three properties  unariness  post uniqueness and single valuedness  that together
+allow optimal planning in polynomial time  one of these three properties  unariness  is related to
+acyclicity of causal graphs  and one  post uniqueness  implies a particularly simple shape of domain
+transition graphs  namely  in post unique tasks  all domain transition graphs must be simple cycles
+or trees  
+backstrom and nebel do not analyse domain transition graphs formally  indeed  the term is only
+introduced in the later article by jonsson and backstrom      a   which refines the earlier results
+by introducing five additional restrictions for sas   tasks  all of which are related to properties of
+domain transition graphs 
+neither of these two articles discusses the notion of causal graphs  indeed  the only earlier work
+we are aware of which includes both causal graphs and domain transition graphs as central concepts
+is the article by domshlak and dinitz        on the state transition support  sts  problem  which
+is essentially equivalent to sas  planning with unary operators  in the context of sts  domain
+transition graphs are called strategy graphs and causal graphs are called dependence graphs  but
+apart from minor details  the semantics of the two formalisms are identical  domshlak and dinitz
+provide a map of the complexity of the sts problem in terms of the shape of its causal graph 
+showing that the problem is np complete or worse for almost all non trivial cases  one interesting
+result is that if the causal graph is a simple chain of n nodes and all variables are three valued 
+the length of minimal plans can already grow as    n    by contrast  propositional tasks with the
+same causal graph shape admit polynomial planning algorithms according to the result by brafman
+and domshlak         because such causal graphs are polytrees with a constant indegree bound
+ namely  a bound of    
+to summarize and conclude our discussion of related work  we observe that the central concepts of fast downward and the causal graph heuristic  such as causal graphs and domain transition
+graphs  are firmly rooted in previous work  however  fast downward is the first attempt to marry
+hierarchical problem decomposition to the use of multi valued state variables within a general planning framework  it is also the first attempt to apply techniques similar to those of knoblock       
+and bacchus and yang        within a heuristic search planner 
+the significance of this latter point should not be underestimated  for classical approaches to
+hierarchical problem decomposition  it is imperative that an abstraction satisfies the ordered monotonicity property  and it is important that the probability of being able to refine an abstract plan
+to a concrete plan is high  as the analysis by bacchus and yang shows  unfortunately  non trivial
+abstraction hierarchies are rarely ordered monotonic  and even more rarely guarantee high refinement probabilities  within a heuristic approach  these must haves turn into nice to haves  if
+an abstraction hierarchy is not ordered monotonic or if an abstract plan considered by the heuristic
+evaluator is not refinable  this merely reduces the quality of the heuristic estimate  rather than caus   
+
+fih elmert
+
+translation
+
+
+
+
+
+normalization
+invariant synthesis
+grounding
+translation to mpt
+
+knowledge
+compilation
+ domain transition
+graphs
+ causal graph
+ successor generator
+ axiom evaluator
+
+search
+
+
+
+
+
+
+causal graph heuristic
+ff heuristic
+greedy best first search
+multi heuristic best first search
+focused iterative broadening search
+
+figure    the three phases of fast downwards execution 
+ing the search to fail  in the worst case  or spend a long time trying to salvage non refinable abstract
+plans  in the not much better case  
+
+   fast downward
+we will now describe the overall architecture of the planner  fast downward is a classical planning
+system based on the ideas of heuristic forward search and hierarchical problem decomposition  it
+can deal with the full range of propositional pddl     fox   long        edelkamp   hoffmann 
+       i  e   in addition to strips planning  it supports arbitrary formulae in operator preconditions
+and goal conditions  and it can deal with conditional and universally quantified effects and derived
+predicates  axioms  
+the name of the planner derives from two sources  of course  one of these sources is hoffmanns very successful ff  fast forward  planner  hoffmann   nebel         like ff  fast
+downward is a heuristic progression planner  i  e   it computes plans by heuristic search in the space
+of world states reachable from the initial situation  however  compared to ff  fast downward uses
+a very different heuristic evaluation function called the causal graph heuristic  the heuristic evaluator proceeds downward in so far as it tries to solve planning tasks in the hierarchical fashion
+outlined in the introduction  starting from top level goals  the algorithm recurses further and further
+down the causal graph until all remaining subproblems are basic graph search tasks 
+similar to ff  the planner has shown excellent performance  the original implementation of the
+causal graph heuristic  plugged into a standard best first search algorithm  outperformed the previous champions in that area  ff and lpg  gerevini  saetti    serina         on the set of strips
+benchmarks from the first three international planning competitions  helmert         fast downward itself followed in the footsteps of ff and lpg by winning the propositional  non optimizing
+track of the  th international planning competition at icaps       referred to as ipc  from now
+on  
+as mentioned in the introduction  fast downward solves a planning task in three phases  fig     
+ the translation component is responsible for transforming the pddl    input into a nonbinary form which is more amenable to hierarchical planning approaches  it applies a number of normalizations to compile away syntactic constructs like disjunctions which are not
+directly supported by the causal graph heuristic and performs grounding of axioms and operators  most importantly  it uses invariant synthesis methods to find groups of related propo   
+
+fit he fast d ownward p lanning s ystem
+
+sitions which can be encoded as a single multi valued variable  the output of the translation
+component is a multi valued planning task  defined in the following section 
+ the knowledge compilation component generates four kinds of data structures that play a
+central role during search  domain transition graphs encode how  and under what conditions 
+state variables can change their values  the causal graph represents the hierarchical dependencies between the different state variables  the successor generator is an efficient data
+structure for determining the set of applicable operators in a given state  finally  the axiom
+evaluator is an efficient data structure for computing the values of derived variables  the
+knowledge compilation component is described in section   
+ the search component implements three different search algorithms to do the actual planning 
+two of these algorithms make use of heuristic evaluation functions  one is the well known
+greedy best first search algorithm  using the causal graph heuristic  the other is called multiheuristic best first search  a variant of greedy best first search that tries to combine several
+heuristic evaluators in an orthogonal way  in the case of fast downward  it uses the causal
+graph and ff heuristics  the third search algorithm is called focused iterative broadening
+search  it is closely related to ginsberg and harveys        iterative broadening  it is not
+a heuristic search algorithm in the sense that it does not use an explicit heuristic evaluation
+function  instead  it uses the information encoded in the causal graph to estimate the usefulness of operators towards satisfying the goals of the task  the search component is described
+in section   
+
+   multi valued planning tasks
+let us now formally introduce the problem of planning with multi valued state variables  our
+formalism is based on the sas  planning model  backstrom   nebel        jonsson   backstrom 
+    a   but extends it with axioms and conditional effects 
+definition   multi valued planning tasks  mpts 
+a multi valued planning task  mpt  is given by a   tuple    hv  s     s    a  oi with the following
+components 
+ v is a finite set of state variables  each with an associated finite domain d v   state variables are partitioned into fluents  affected by operators  and derived variables  computed by
+evaluating axioms   the domains of derived variables must contain the undefined value  
+a partial variable assignment or partial state over v is a function s on some subset of v such
+that s v   dv wherever s v  is defined  a partial state is called an extended state if it is
+defined for all variables in v and a reduced state or state if it is defined for all fluents in v 
+in the context of partial variable assignments  we write v   d for the variable value pairing
+ v  d  or v   d 
+ s  is a state over v called the initial state 
+ s  is a partial variable assignment over v called the goal 
+ a is a finite set of  mpt  axioms over v  axioms are triples of the form hcond  v  di  where
+cond is a partial variable assignment called the condition or body of the axiom  v is a derived
+   
+
+fih elmert
+
+variable called the affected variable  and d  d v is called the derived value for v  the pair
+ v  d  is called the head of the axiom and can be written as v    d 
+the axiom set a is partitioned into a totally ordered set of axiom layers a        ak
+such that within the same layer  each affected variable may only be associated with a single
+value in axiom heads and bodies  in other words  within the same layer  axioms with the
+same affected variable but different derived values are forbidden  and if a variable appears
+in an axiom head  then it may not appear with a different value in a body  this is called the
+layering property 
+ o is a finite set of  mpt  operators over v  an operator hpre  effi consists of a partial
+variable assignment pre over v called its precondition  and a finite set of effects eff  effects
+are triples hcond  v  di  where cond is a  possibly empty  partial variable assignment called
+the effect condition  v is a fluent called the affected variable  and d  d v is called the new
+value for v 
+for axioms and effects  we also use the notation cond  v    d in place of hcond  v  di 
+to provide a formal semantics for mpt planning  we first need to formalize axioms 
+definition   extended states defined by a state
+let s be a state of an mpt  with axioms a  layered as a        ak   the extended state defined
+by s  written as a s   is the result s   of the following algorithm 
+algorithm evaluate axioms a            ak   s  
+for each variable
+  v 
+s v  if v is a fluent variable
+s   v    
+
+if v is a derived variable
+for i              k  
+while there exists an axiom  cond  v    d   a i with cond  s  and s   v     d 
+choose such an axiom cond  v    d 
+s   v     d
+in other words  axioms are evaluated in a layer by layer fashion using fixed point computations 
+which is very similar to the semantics of stratified logic programs  it is easy to see that the layering
+property from definition   guarantees that the algorithm terminates and produces a deterministic
+result  having defined the semantics of axioms  we can now define the state space of an mpt 
+definition   mpt state spaces
+the state space of an mpt    hv  s    s    a  oi  denoted as s    is a directed graph  its vertex
+set is the set of states of v  and it contains an arc  s  s     iff there exists some operator hpre  effi  o
+such that 
+ pre  a s  
+ s   v    d for all effects cond  v    d  eff such that cond  a s   and
+ s   v    s v  for all other fluents 
+   
+
+fit he fast d ownward p lanning s ystem
+
+finally  we can define the mpt planning problem 
+definition   mpt planning
+mpt p lan e x is the following decision problem  given an mpt  with initial state s   and goal
+s    does s   contain a path from s  to some state s  with s   a s    
+mpt p lanning is the following search problem  given an mpt  with initial state s   and goal
+s    compute a path in s   from s  to some state s  with s   a s     or prove that none exists 
+the mpt p lan e x problem is easily shown to be pspace hard because it generalizes the plan
+existence problem for propositional strips  which is known to be pspace complete  bylander 
+       it is also easy to see that the addition of multi valued domains  axioms and conditional effects
+does not increase the theoretical complexity of mpt planning beyond propositional strips  thus 
+we conclude our formal introduction of mpt planning by stating that mpt p lan e x is pspacecomplete  and turn to the practical side of things in the following section 
+
+   knowledge compilation
+the purpose of the knowledge compilation component is to set the stage for the search algorithms
+by compiling the critical information about the planning task into a number of data structures for efficient access  in other contexts  computations of this kind are often called preprocessing  however 
+preprocessing is such a nondescript word that it can mean basically anything  for this reason  we
+prefer a term that puts a stronger emphasis on the role of this module  to rephrase the critical information about the planning task in such a way that it is directly useful to the search algorithms  of
+the three building blocks of fast downward  translation  knowledge compilation  search   it is the
+least time critical part  always requiring less time than translation and being dominated by search
+for all but the most trivial tasks 
+knowledge compilation comprises three items  first and foremost  we compute the domain
+transition graph of each state variable  the domain transition graph for a state variable encodes
+under what circumstances that variable can change its value  i  e   from which values in the domain
+there are transitions to which other values  which operators or axioms are responsible for the transition  and which conditions on other state variables are associated with the transition  domain
+transition graphs are described in section      they are a central concept for the computation of the
+causal graph heuristic  described in section     
+second  we compute the causal graph of the planning task  where domain transition graphs encode dependencies between values for a given state variable  the causal graph encodes dependencies
+between different state variables  for example  if a given location in a planning task can be unlocked
+by means of a key that can be carried by the agent  then the variable representing the lock state of
+the location is dependent on the variable that represents whether or not the key is being carried 
+this dependency is encoded as an arc in the causal graph  like domain transition graphs  causal
+graphs are a central concept for the computation of the causal graph heuristic  giving it its name 
+the causal graph heuristic requires causal graphs to be acyclic  for this reason  the knowledge compilation component also generates an acyclic subgraph of the real causal graph when cycles occur 
+this amounts to a relaxation of the planning task where some operator preconditions are ignored 
+in addition to their usefulness for the causal graph heuristic  causal graphs are also a key concept
+of the focused iterative broadening search algorithm introduced in section      we discuss causal
+graphs in section     
+   
+
+fih elmert
+
+third  we compute two data structures that are useful for any forward searching algorithm for
+mpts  called successor generators and axiom evaluators  successor generators compute the set
+of applicable operators in a given world state  and axiom evaluators compute the values of derived
+variables for a given reduced state  both are designed to do their job as quickly as possible  which
+is especially important for the focused iterative broadening search algorithm  which does not compute heuristic estimates and thus requires the basic operations for expanding a search node to be
+implemented efficiently  these data structures are discussed in section     
+    domain transition graphs
+the domain transition graph of a state variable is a representation of the ways in which the variable
+can change its value  and of the conditions that must be satisfied for such value changes to be allowed  domain transition graphs were introduced by jonsson and backstrom      a  in the context
+of sas  planning  our formalization of domain transition graphs generalizes the original definition
+to planning tasks involving axioms and conditional effects 
+definition   domain transition graphs
+let    hv  s    s    a  oi be a multi valued planning task  and let v  v be a state variable of  
+the domain transition graph of v  in symbols dtg v   is a labelled directed graph with vertex
+set dv   if v is a fluent  dtg v  contains the following arcs 
+ for each effect cond  v    d  of an operator o with precondition pre such that pre  cond
+contains some condition v   d  an arc from d to d   labelled with pre  cond    v   d  
+ for each effect cond  v    d  of an operator o with precondition pre such that pre  cond
+does not contain the condition v   d for any d  d v   an arc from each d  dv    d    to d 
+labelled with pre  cond 
+if v is a derived variable  dtg v  contains the following arcs 
+ for each axiom cond  v    d   a such that cond contains some condition v   d  an arc
+from d to d  labelled with cond    v   d  
+ for each axiom cond  v    d   a such that cond does not contain the condition v   d
+for any d  dv   an arc from each d  dv    d    to d  labelled with cond 
+arcs of domain transition graphs are called transitions  their labels are referred to as the
+conditions of the transition 
+domain transition graphs can be weighted  in which case each transition has an associated
+non negative integer weight  unless stated otherwise  we assume that all transitions derived from
+operators have weight   and all transitions derived from axioms have weight   
+the definition is somewhat lengthy  but its informal content is easy to grasp  the domain transition graph for v contains a transition from d to d   if there exists some operator or axiom that can
+change the value of v from d to d    such a transition is labelled with the conditions on other state
+variables that must be true if the transition shall be applied  multiple transitions between the same
+values using different conditions are allowed and occur frequently 
+we have already seen domain transition graphs in the introductory section  figs    and     although they were only introduced informally and did not show the arc labels usually associated
+   
+
+fit he fast d ownward p lanning s ystem
+
+d   open
+      
+
+      
+
+      
+
+      
+
+      
+
+      
+
+r 
+
+r           k   carried
+
+closed
+
+r           k   carried
+
+r 
+
+open
+
+      
+
+   
+
+  
+
+  
+
+  
+   
+r 
+
+  
+   
+
+r         
+
+   
+
+r         
+
+r 
+
+r 
+
+r 
+
+      
+
+  
+   
+
+r 
+r 
+
+carried
+
+r         
+
+      
+
+      
+
+r         
+
+d   open
+
+d   open
+
+   
+
+   
+   
+
+  
+
+  
+
+  
+
+      
+
+r           k   carried
+      
+
+figure     domain transition graphs of a g rid task  top left  dtg r   robot   right  dtg k 
+ key   bottom left  dtg d   door  
+
+with transitions  fig     shows some examples from a simple task in the g rid domain  featuring a      grid with a single initially locked location in the centre of the upper row  unlockable
+by a single key  in the mpt encoding of the task  there are three state variables  variable r with
+dr      x  y    x             y           encodes the location of the robot  variable k with
+dk   dr   carried  encodes the state of the key  and variable d with d d    closed  open 
+encodes the state of the initially locked grid location 
+if all operators of an mpt are unary  i  e   only have a single effect  and we leave aside axioms
+for a moment  then there is a strong correspondence between the state space of an mpt and its
+domain transition graphs  since vertices in domain transition graphs correspond to values of state
+variables  a given state is represented by selecting one vertex in each domain transition graph  called
+the active vertex of this state variable  applying an operator means changing the active vertex
+of some state variable by performing a transition in the corresponding domain transition graph 
+whether or not such a transition is allowed depends on its condition  which is checked against the
+active vertices of the other domain transition graphs 
+let us use the g rid example to illustrate this correspondence  consider an initial state where
+the robot is at location         the key is at location         and the door is locked  we represent this
+by placing pebbles on the appropriate vertices of the three domain transition graphs  we want to
+move the pebble in the domain transition graph of the key to location         this can be done by
+moving the robot pebble to vertex         then         then         moving the key pebble to the vertex
+carried  moving the robot pebble back to vertex         moving the door pebble to open  moving the
+robot pebble to vertex        and finally moving the key pebble to vertex        
+   
+
+fih elmert
+
+d   open  r         
+d   open  r         
+
+d   open  r         
+
+d   closed
+
+
+ 
+
+
+
+r         
+
+ 
+
+r         
+
+d   open  r         
+
+r         
+r         
+
+figure     domain transition graphs for the freezing variable in the g rid task  normal  left  and
+extended  right   note that only the extended graph shows how to change state from
+freezing     to not freezing    
+
+the example shows how plan execution can be viewed as simultaneous traversal of domain
+transition graphs  cf  domshlak   dinitz         this is an important notion for fast downward
+because the causal graph heuristic computes its heuristic estimates by solving subproblems of the
+planning task by looking for paths in domain transition graphs in basically the way we have described 
+as mentioned before  this view of mpt planning is only completely accurate for unary tasks
+without axioms  for which the domain transition graphs are indeed a complete representation of the
+state space  for non unary operators  we would need to link certain transitions in different domain
+transition graphs which belong to the same operator  these could then only be executed together 
+for axioms  we would need to mark certain transitions as mandatory  requiring that they be taken
+whenever possible   this is only intended as a rough analogy and leaves out details like layered
+axioms  
+in our previous work  helmert         we have successfully applied this view of planning to
+strips tasks  extending the notion to plans with conditional effects provides no challenges because domain transition graphs always consider planning operators one effect at a time  in which
+case effect condition can simply be seen as part of the operator precondition  however  axioms
+provide a challenge that is easily overlooked  if we want to change the value of a fluent from d to
+d    the domain transition graph contains all the important information  just find a path from d to d  
+and try to find out how the associated conditions can be achieved  consider the same problem for
+a derived state variable  let us assume that unlocking the location in the g rid example leads to a
+drought  causing the robot to freeze if it enters a horizontally adjacent location  we could encode
+this with a new derived variable f  for freezing  with domain d f          defined by the axioms
+d   open  r           f      and d   open  r           f       the domain transition graph
+dtg f   is depicted in fig      left  
+the problem with that domain transition graph is that it does not tell us how we can change the
+state of variable f from   to   in general  in mpts derived from strips tasks where derived
+predicates occur negatively in any condition  the domain transition graph does not contain sufficient
+information for changing the value of a derived variable from true to false  derived variables
+   
+
+fit he fast d ownward p lanning s ystem
+
+never assume the value  due to a derivation of this value  because of negation as failure semantics 
+they only assume the value by default if no other value can be derived  if we want to reason about
+ways of setting the value of a derived variable to   we will need to make this information explicit 
+in logical notation  whether or not a derived variable assumes a given value by triggering an
+axiom at a given layer is determined by a formula in disjunctive normal form  with one disjunct
+for each axiom setting the value  for example  our axioms d   open  r           f      and
+d   open  r           f      correspond to the dnf formula  d   open  r             d  
+open r            if we want to know when these rules do not trigger  we must negate this formula 
+leading to the cnf formula  d    open r            d    open r             to be able to encode
+this information in the domain transition graph  we need to replace the inequalities with equalities
+and translate the formula back to dnf  since such transformations can increase the formula size
+dramatically  we apply simplifications along the way  removing duplicated and dominated disjuncts 
+the result in this case is the dnf formula d   closed  r           r           r           r  
+       
+a domain transition graph for a derived variable which has been enriched to contain the possible
+ways of causing the variable to assume the value  is called an extended domain transition graph 
+as shown for the g rid example in fig      right   since computing the extended domain transition
+graph can be costly and is not always necessary  the knowledge compilation component scans the
+conditions of the planning task  axioms  operator preconditions and effect conditions  goal  for
+occurrences of pairings of the type v    for derived variables v  extended domain transition
+graphs are only computed for those derived variables for which they are required 
+note that negative occurrences of derived variables can cascade  if u  v and w are derived
+variables with domain       and the condition v    is present in some operator precondition 
+and moreover v is defined by the axiom u      w      v       then v assumes the value 
+whenever u or w do  so we would require extended domain transition graphs for u and w as well 
+on the other hand  multiple layers of negation as failure can cancel each other out  if derived
+variable v only occurs in conditions of the form v    but never in positive form and is defined by
+the axiom u     w     v       then we do not necessarily require extended domain transition
+graphs for u and w 
+in general  whether or not we need extended domain transition graphs for a derived variable is
+determined by the following rules 
+ if v is a derived variable for which the condition v   d for d     appears in an operator
+precondition  effect condition or in the goal  then v is used positively 
+ if v is a derived variable for which the condition v    appears in an operator precondition 
+effect condition or in the goal  then v is used negatively 
+ if v is a derived variable for which the condition v   d for d     appears in the body of an
+axiom whose head is used positively  negatively   then v is used positively  negatively  
+ if v is a derived variable for which the condition v    appears in the body of an axiom
+whose head is used positively  negatively   then v is used negatively  positively  
+the knowledge compilation component computes extended domain transition graphs for all derived variables which are used negatively and  standard  domain transition graphs for all other state
+variables  normal domain transition graphs are computed by going through the set of axioms and
+   
+
+fih elmert
+
+the set of operator effects following definition    which is reasonably straight forward  the computation of extended domain transition graphs has been outlined above  therefore  the algorithmic
+aspects of this topic should not require further discussion 
+    causal graphs
+causal graphs have been introduced informally in the introduction  here is a formal definition 
+definition   causal graphs
+let  be a multi valued planning task with variable set v  the causal graph of   in symbols
+cg    is the directed graph with vertex set v containing an arc  v  v     iff v    v   and one of the
+following conditions is true 
+ the domain transition graph of v   has a transition with some condition on v 
+ the set of affected variables in the effect list of some operator includes both v and v    
+in the first case  we say that an arc is induced by a transition condition  in the second case we say
+that it is induced by co occurring effects 
+of course  arcs induced by transition conditions and arcs induced by co occurring effects are
+not mutually exclusive  the same causal graph arc can be generated for both reasons 
+informally  the causal graph contains an arc from a source variable to a target variable if changes
+in the value of the target variable can depend on the value of the source variable  such arcs are
+included also if this dependency is of the form of an effect on the source variable  this agrees with
+the definition of dependency graphs by jonsson and backstrom      b   although these authors
+distinguish between the two different ways in which an arc in the graph can be introduced by using
+labelled arcs 
+whether or not co occurring effects should induce arcs in the causal graph depends on the intended semantics  if such arcs are not included  the set of causal graph ancestors anc v  of a variable
+v are precisely those variables which are relevant if our goal is to change the value of v  plans for
+this goal can be computed without considering any variables outside anc v   by eliminating all variables outside anc v  from the planning task and simplifying axioms and operators accordingly  we
+call this the achievability definition of causal graphs  because causal graphs encode what variables
+are important for achieving a given assignment to a state variable 
+however  with the achievability definition  a planner that only considers anc v  while generating
+an action sequence that achieves a given valuation for v may modify variables outside of anc v   i  e  
+the generated plans have side effects which could destroy previously achieved goals or otherwise
+have a negative impact on overall planning  therefore  we prefer our definition  which we call the
+separability definition of causal graphs 
+      acyclic c ausal g raphs
+following the separability definition of causal graphs  solving a subproblem over variables anc v 
+is always possible without changing any values outside of anc v   this leads us to the following
+observation 
+   
+
+fit he fast d ownward p lanning s ystem
+
+observation   acyclic causal graphs and strongly connected domain transition graphs
+let  be an mpt such that cg   is acyclic  all domain transition graphs are strongly connected 
+there are no derived variables  and no trivially false conditions occur in operators or goals  then
+ has a solution 
+by trivially false conditions  we mean conditions of the kind  v   d  v   d     for d    d   
+note the similarity of observation   to the results of williams and nayak        on planning in domains with unary operators  acyclic causal graphs and reversible transitions  under the separability
+definition of causal graphs  acyclic causal graphs imply unariness of operators because operators
+with several effects introduce causal cycles  moreover  strong connectedness of domain transition
+graphs is closely related to williams and nayaks reversibility property  although it is a weaker
+requirement 
+the truth of the observation can easily be seen inductively  if the planning task has only one state
+variable and the domain transition graph is strongly connected  then any state  of the one variable 
+can be transformed into any other state by applying graph search techniques  if the planning task
+has several state variables and the causal graph is acyclic  we pick a sink of the causal graph  i  e  
+a variable v without outgoing arcs  and check if a goal is defined for this variable  if not  we
+remove the variable from the task  thus reducing the problem to one with fewer state variables 
+solved recursively  if yes  we search for a path from s    v  to s   v  in the domain transition graph
+of v  which is guaranteed to exist because the graph is strongly connected  this yields a high level
+plan for setting v to s   v  which can be fleshed out by recursively inserting the plans for setting
+the variables of the predecessors of v in the causal graph to the values required for the transitions
+that form the high level plan  once the desired value of v has been set  v can be eliminated from
+the planning task and the remaining problem can be solved recursively 
+the algorithm is shown in fig      although it is backtrack free  it can require exponential
+time to execute because the generated plans can be exponentially long  this is unavoidable  even
+for mpts that satisfy the conditions of observation    shortest plans can be exponentially long  a
+family of planning tasks with this property is given in the proof of theorem     in the article by
+backstrom and nebel        
+this method for solving multi valued planning tasks is essentially planning by refinement  we
+begin by constructing a very abstract skeleton plan  which is merely a path in some domain transition
+graph  then lower the level of abstraction by adding operators to satisfy the preconditions required
+for the transitions taken by the path  strong connectedness of domain transition graphs guarantees
+that every abstract plan can actually be refined to a concrete plan  this is precisely bacchus and
+yangs        downward refinement property  cf  section      
+      g enerating
+
+and
+
+p runing c ausal g raphs
+
+the usefulness of causal graphs for planning by refinement is not limited to the acyclic case  consider a subset v   of the task variables which contains all its causal graph descendants  in general  if
+we restrict the task to v   by removing all occurrences of other variables from the initial state  goal 
+operators and axioms  we obtain an abstraction of the original problem which satisfies knoblocks
+       ordered monotonicity property  section      
+unfortunately  one major problem with this approach is that the requirement to include all causal
+graph descendants is quite limiting  it is not uncommon for the causal graph of a planning task to
+be strongly connected  in which case this technique will not allow us to abstract away any variables
+   
+
+fih elmert
+
+algorithm solve easy mpt v  s    s    o  
+if s     
+  the goal is empty  the empty plan is a solution   
+return hi 
+else 
+let v  v be a variable not occurring in preconditions or effect conditions in o 
+  such a variable always exists if the causal graph of the task is acyclic   
+v      v    v  
+o        o  o   o does not affect v   
+plan    hi
+if s   v  is defined 
+let t            tk be a path of transitions in dtg v  from s    v  to s   v  
+  t            tk is a high level plan that reaches the goal for v 
+but ignores preconditions on other variables   
+for each t   t            tk   
+  recursively find a plan that achieves the conditions of t   
+let cond and o be the condition and operator associated with t 
+let s   be the state reached after executing plan  restricted to v    
+extend plan by solve easy mpt v     s     cond  o     
+extend plan by o 
+  after dealing with v  recursively plan for goals on the remaining variables   
+let s   be the state reached after executing plan  restricted to v    
+s      s  restricted to v    
+extend plan by solve easy mpt v     s     s     o     
+return plan
+figure     planning algorithm for mpts with acyclic causal graph and strongly connected domain
+transition graphs 
+
+   
+
+fit he fast d ownward p lanning s ystem
+
+at all  however  in a heuristic approach  we are free to simplify the planning task  in particular 
+by ignoring some operator preconditions for the purposes of heuristic evaluation  we can make an
+arbitrary causal graph acyclic  clearly  the more aspects of the real task we ignore  the worse we can
+expect our heuristic to approximate the actual goal distance  considering this  our aim is to ignore
+as little information as possible  we will now explain how this is done 
+the knowledge compilation component begins its causal graph processing by generating the
+full causal graph  definition     one consequence of the separability definition of causal graphs
+is that all state variables which are not ancestors of variables mentioned in the goal are completely
+irrelevant  therefore  having computed the graph  we then compute the causal graph ancestors of
+all variables in the goal  any state variables which are not found to be goal ancestors are eliminated from the planning task and causal graph  and associated operators and axioms are removed   
+afterwards  we compute a pruned causal graph  an acyclic subgraph of the causal graph with the
+same vertex set  we try do this in such a fashion that important causal dependencies are retained
+whenever possible  more specifically  we apply the following algorithm 
+first  we compute the strongly connected components of the causal graph  cycles only occur
+within strongly connected components  so each component can be dealt with separately  second 
+for each connected component  we compute a total order  on the vertices  retaining only those
+arcs  v  v     for which v  v     if v  v     we say that v   has a higher level than v  the total order is
+computed in the following way 
+   we assign a weight to each arc in the causal graph  the weight of an arc is n if it is induced
+by n axioms or operators  the lower the cumulated weight of the incoming arcs of a vertex 
+the fewer conditions are ignored by assigning a low level to this vertex 
+   we then pick a vertex v with minimal cumulated weight of incoming arcs and select it for the
+lowest level  i  e   we set v  v   for all other vertices v   in the strongly connected component 
+   since v has been dealt with  we remove the vertex and its incident arcs from consideration for
+the rest of the ordering algorithm 
+   the remaining problem is solved by iteratively applying the same technique to order the other
+vertices until only a single vertex remains 
+the reader will notice that the pruning choices within a strongly connected component are
+performed by a greedy algorithm  we could also try to find sets of arcs of minimal total weight such
+that eliminating these arcs results in an acyclic graph  however  this is an np equivalent problem 
+even in the case of unweighted graphs  garey   johnson        problem gt   
+after generating the pruned causal graph  we also prune the domain transition graphs by removing from the transition labels of dtg v  all conditions on variables v   with v  v     these are the
+conditions that are ignored by the heuristic computation  finally  we simplify the domain transition
+graphs by removing dominated transitions  if t and t   are transitions between the same two values
+of a variable  and the condition of t is a proper subset of the condition of t     then transition t is
+easier to apply than t    so that we remove t    similarly  if there are several transitions with identical
+conditions  we only keep one of them 
+   this simplification is closely related to knoblocks criterion for the problem specific ordered monotonicity property
+ knoblock        
+
+   
+
+fih elmert
+
+t 
+
+t 
+
+a 
+
+p 
+
+p 
+
+a 
+
+figure     causal graph of a l ogistics task  state variables t i and ai encode the locations of
+trucks and airplanes  state variables p i the locations of packages 
+
+f 
+
+p 
+
+f 
+
+f 
+
+f 
+
+f 
+
+f 
+
+l 
+
+l 
+
+l 
+
+l 
+
+c 
+
+c 
+
+c 
+
+c 
+
+p 
+
+p 
+
+p 
+
+figure     causal graph of a m ystery task  left  and of a relaxed version of the task  right   state
+variables fi encode the fuel at a location  state variables l i and ci encode the locations
+and remaining capacities of trucks  and state variables p i encode the locations of packages 
+
+      c ausal g raph e xamples
+to give some impression of the types of causal graphs typically found in the standard benchmarks
+and the effects of pruning  we show some examples of increasing graph complexity 
+as our first and simplest example  fig     shows the causal graph of a task from the l ogistics
+domain  featuring two trucks  two airplanes and two packages  as can be seen  the graph is acyclic 
+so it requires no pruning for the causal graph heuristic  since l ogistics tasks also feature strongly
+connected domain transition graphs  they can even be solved by the polynomial solve easy mpt
+algorithm 
+as a slightly more complicated example  the next figure  fig      shows a task from the m ys tery domain with three locations  two trucks and two packages  the causal graph contains a
+number of cycles  but these are mostly local  by pruning arcs from vertices l i to fj   we ignore the
+   
+
+fit he fast d ownward p lanning s ystem
+
+r
+
+r
+
+a
+
+l
+
+a
+
+k 
+
+k 
+
+l
+
+k 
+
+k 
+
+figure     causal graph of a g rid task  left  and of a relaxed version of the task  right   state
+variable r encodes the location of the robot  a encodes the status of the robot arm  empty
+or carrying a key   l encodes the status of the locked location  locked or open   and k  
+and k  encode the locations of the two keys 
+
+fact that we must move trucks to certain locations if we want to use up fuel at that location  as
+using up fuel is not a very useful thing to do  this is not a big loss in information  by pruning arcs
+from vertices pi to cj   we ignore the fact that vehicles can only increase or decrease their current
+capacity by unloading or loading packages  compared to heuristics based on ignoring delete effects  this is not a great loss in information  since ignoring delete effects in the m ystery domain
+almost amounts to ignoring capacity and fuel constraints altogether  by pruning just these arcs 
+we can eliminate all cycles in the causal graph  so the m ystery domain can be considered fairly
+well behaved 
+a worse case is shown in fig      which shows an example from the g rid domain with an
+arbitrary number of locations  of which a single one is locked  there are two keys  one of which
+can unlock the locked location  eliminating cycles here requires a few minor relaxations regarding
+the status of the robot arm  empty or non empty   but also one major simplification  namely the
+elimination of the arc from l to r representing the fact that the robot can only enter the locked
+location if it has been unlocked 
+as a  nearly  worst case example  consider a task in the b locksworld domain  no figure   a
+typical mpt encoding uses one state variable h for encoding whether or not the hand is empty and
+two state variables per block in the task  for the i th block  t i encodes whether or not the block is
+lying on the table  and bi encodes which block is lying on top of it  or if it is clear or being held by
+the arm  in the causal graph of such a task  variable h has ingoing arcs from and outgoing arcs to all
+other state variables  and all state variables b i are connected to each other in both directions  only
+the state variables ti have a slightly simpler connection structure  being only connected to h and
+to bi for the same value of i  any relaxation of the problem that eliminates cycles from the causal
+graph loses a large amount of information  and it is not surprising that the d epot domain  which
+includes a b locksworld subproblem  is the one for which the precursor of fast downward fared
+worst  helmert         still  it should be pointed out that planners that ignore delete effects have
+similar problems with b locksworld like domains  as the comparison between the ff and causal
+graph heuristics in the same article shows 
+   
+
+fih elmert
+
+    successor generators and axiom evaluators
+in addition to good heuristic guidance  a forward searching planning system needs efficient methods
+for generating successor states if it is to be applied to the benchmark suite from the international
+planning competitions  for some domains  our causal graph heuristic or other popular methods
+like the ff heuristic provide excellent goal estimates  yet still planning can be too time consuming
+because of very long plans and vast branching factors 
+the variant of best first search implemented in fast downward does not compute the heuristic
+estimate for each state that is generated  essentially  heuristic evaluations are only computed for
+closed nodes  while computation is deferred for nodes on the search frontier  for domains with
+strong heuristic guidance and large branching factors  the number of nodes on the frontier can by
+far dominate the number of nodes in the closed set  as a case in point  consider the problem instance
+s atellite      for solving this task  the default configuration of fast downward only computes
+heuristic estimates for        world states while adding             states to the frontier  clearly 
+determining the set of applicable operators quickly is of critical importance in such a scenario 
+in some s atellite tasks  there are almost           ground operators  so we should try to
+avoid individually checking each operator for applicability  similarly  in the biggest psr tasks 
+more than         axioms must be evaluated in each state to compute the values of the derived
+variables  so this computation must be made efficient  for these purposes  fast downward uses two
+data structures called successor generators and axiom evaluators 
+      s uccessor g enerators
+successor generators are recursive data structures very similar to decision trees  the internal nodes
+have associated conditions  which can be likened to the decisions in a decision tree  and the leaves
+have associated operator lists which can be likened to a set of classified samples in a decision tree
+leaf  they are formally defined as follows 
+definition   successor generators
+a successor generator for an mpt    hv  s     s    a  oi is a tree consisting of selector nodes and
+generator nodes 
+a selector node is an internal node of the tree  it has an associated variable v  v called the
+selection variable  moreover  it has  d v     children accessed via labelled edges  one edge labelled
+v   d for each value d  dv   and one edge labelled    the latter edge is called the dont care
+edge of the selector 
+a generator node is a leaf node of the tree  it has an associated set of operators from o called
+the set of generated operators 
+each operator o  o must occur in exactly one generator node  and the set of edge labels
+leading from the root to this node  excluding dont care edges  must equal the precondition of o 
+given a successor generator for an mpt  and a state s of   we can compute the set of
+applicable operators in s by traversing the successor generator as follows  starting from the root 
+ at a selector node with selection variable v  follow the edge v   s v  and the dont care edge 
+ at a generator node  report the generated operators as applicable 
+   
+
+fit he fast d ownward p lanning s ystem
+
+algorithm evaluate axiom layer s  a i   
+for each axiom a  ai  
+a counter     a cond 
+for each variable v 
+for each axiom a  ai with a condition v   s v  in the body 
+a counter    a counter   
+while there exists an axiom a  ai with a counter     that was not yet considered 
+let hv  di be the head of such an axiom 
+if s v     d 
+s v     d
+for each axiom a  ai with a condition v   d in the body 
+a counter    a counter   
+figure     computing the values of the derived variables in a given planning state 
+to build a successor generator for   we apply a top down algorithm which considers the task
+variables in an arbitrary order v   v       vn   at the root node  we choose v  as selection variable and classify the set of operators according to their preconditions with respect to v     operators
+with a precondition v    d will be represented in the child of the root accessed by the edge with the
+corresponding label  while operators without preconditions on v   will be represented in the child
+of the root accessed by the dont care edge  in the children of the root  we choose v   as selection
+variable  in the grandchildren v    and so on 
+there is one exception to this rule to avoid creating unnecessary selection nodes  if no operator
+in a certain branch of the tree has a condition on v i   then vi is not considered as a selection variable
+in this branch  the construction of a branch ends when all variables have been considered  at which
+stage a generator node is created for the operators associated with that branch 
+      a xiom e valuators
+axiom evaluators are a simple data structure used for efficiently implementing the well known
+marking algorithm for propositional horn logic  dowling   gallier         extended and modified
+for the layered logic programs that correspond to the axioms of an mpt  they consist of two parts 
+firstly  an indexing data structure maps a given variable value pairing and a given axiom layer to
+the set of axioms in the given layer in whose body the pairing appears  secondly  a set of counters 
+one for each axiom  counts the number of conditions of the axiom that have not yet been derived 
+within fast downward  axioms are evaluated in two steps  first  all derived variables are set to
+their default value   second  algorithm evaluate axiom layer  fig      is executed for each axiom
+layer in sequence to determine the final values of the derived variables 
+we assume that the reader is familiar enough with the marking algorithm not to require much
+explanation  so we only point out that the test whether or not an axiom is ready to trigger is implemented by means of a queue in which axioms are put as soon as their counter reaches    the actual
+implementation of evaluate axiom layer within fast downward initializes axiom counters slightly
+more efficiently than indicated by the pseudo code  however  this is a minor technical detail  so we
+turn to the remaining piece of fast downwards architecture  the search component 
+   
+
+fih elmert
+
+   search
+unlike the translation and knowledge compilation components  for which there is only a single
+mode of execution  the search component of fast downward can perform its work in various alternative ways  there are three basic search algorithms to choose from 
+   greedy best first search  this is the standard textbook algorithm  russell   norvig        
+modified with a technique called deferred heuristic evaluation to mitigate the negative influence of wide branching  we have also extended the algorithm to deal with preferred operators  similar to ffs helpful actions  hoffmann   nebel         we discuss greedy best first
+search in section      fast downward uses this algorithm together with the causal graph
+heuristic  discussed in section     
+   multi heuristic best first search  this is a variation of greedy best first search which evaluates
+search states using multiple heuristic estimators  maintaining separate open lists for each 
+like our variant of greedy best first search  it supports the use of preferred operators  multiheuristic best first search is discussed in section      fast downward uses this algorithm
+together with the causal graph and ff heuristics  discussed in sections     and     
+   focused iterative broadening search  this is a simple search algorithm that does not use
+heuristic estimators  and instead reduces the vast set of search possibilities by focusing on
+a limited operator set derived from the causal graph  it is an experimental algorithm  in the
+future  we hope to further develop the basic idea of this algorithm into a more robust method 
+focused iterative broadening search is discussed in section     
+for the two heuristic search algorithms  a second choice must be made regarding the use of
+preferred operators  there are five options supported by the planner 
+   do not use preferred operators 
+   use the helpful transitions of the causal graph heuristic as preferred operators 
+   use the helpful actions of the ff heuristic as preferred operators 
+   use helpful transitions as preferred operators  falling back to helpful actions if there are no
+helpful transitions in the current search state 
+   use both helpful transitions and helpful actions as preferred operators 
+each of these five options can be combined with any of the two heuristic search algorithms 
+so that there is a total of eleven possible settings for the search component  ten using one of the
+heuristic algorithms and one using focused iterative broadening search 
+in addition to these basic settings  the search component can be configured to execute several
+alternative configurations in parallel by making use of an internal scheduler  both configurations of
+fast downward that participated in ipc  made use of this feature by running one configuration of
+the heuristic search algorithms in parallel with focused iterative broadening search  as its heuristic
+search algorithm  the configuration fast downward employed greedy best first search with helpful
+transitions  falling back to helpful actions when necessary  option      the configuration fast diagonally downward employed multi heuristic best first search using helpful transitions and helpful
+actions as preferred operators  option     
+   
+
+fit he fast d ownward p lanning s ystem
+
+to avoid confusion between the complete fast downward planning system and the particular
+configuration called fast downward  we will refer to the ipc  planner configurations as fd and
+fdd for the rest of this paper  the name of the planning system as a whole is never abbreviated 
+    the causal graph heuristic
+the causal graph heuristic is the centrepiece of fast downwards heuristic search engine  it estimates the cost of reaching the goal from a given search state by solving a number of subproblems of
+the planning task which are derived by looking at small windows of the  pruned  causal graph  for
+some additional intuitions about the design of the heuristic and a discussion of theoretical aspects 
+we refer to the article in which the heuristic was first introduced  helmert        
+      c onceptual v iew
+
+of the
+
+c ausal g raph h euristic
+
+for each state variable v and each pair of values d  d    dv   the causal graph heuristic computes
+a heuristic estimate cost v  d  d    for the cost of changing the value of v from d to d     assuming that
+all other state variables carry the same values as in the current state   this is a simplification  cost
+estimates are not computed for state variables v or values d for which they are never required  we
+ignore this fact when discussing the heuristic on the conceptual level   the heuristic estimate of
+a given state s is the sum over the costs cost v  s v   s   v   for all variables v for which a goal
+condition s   v  is defined 
+conceptually  cost estimates are computed one variable after the other  traversing the  pruned 
+causal graph in a bottom up fashion  by bottom up  we mean that we start with the variables that
+have no predecessors in the causal graphs  we call this order of computation bottom up because
+we consider variables that can change their state of their own accord low level  while variables
+whose state transitions require the help of other variables have more complex transition semantics
+and are thus considered high level  note that in our figures depicting causal graphs  high level
+variables are typically displayed near the bottom 
+for variables without predecessors in the causal graph  cost v  d  d    simply equals the cost of
+a shortest path from d to d  in the  pruned  domain transition graph dtg v   for other variables 
+cost estimates are also computed by graph search in the domain transition graph  however  the
+conditions of transitions must be taken into account during path planning  so that in addition to
+counting the number of transitions required to reach the destination value  we also consider the costs
+for achieving the value changes of the other variables necessary to set up the transition conditions 
+the important point here is that in computing the values cost v  d  d     we completely consider
+all interactions of the state variable v with its predecessors in the causal graph  if changing the
+value from d to d  requires several steps and each of these steps has an associated condition on a
+variable v     then we realize that v   must assume the values required by those conditions in sequence 
+for example  if v represents a package in a transportation task that must be moved from a to b by
+means of a vehicle located at c  then we recognize that the vehicle must first move from c to a
+and then from a to b in order to drop the package at b  this is very different to the way hspor ff based heuristics work on such examples  however  we only consider interactions with the
+immediate predecessors of v in the causal graph  interactions that occur via several graph layers are
+not captured by the heuristic estimator 
+in essence  we compute cost v  d  d    by solving a particular subproblem of the mpt  induced by
+the variable v and its predecessors in the pruned causal graph  for this subproblem  we assume that
+   
+
+fih elmert
+
+algorithm compute costs bottom up   s  
+for each variable v of   traversing the pruned causal graph in bottom up order 
+let v   be the set of immediate predecessors of v in the pruned causal graph 
+for each pair of values  d  d     dv  dv  
+generate a planning task v d d  with the following components 
+ variables  v     v  
+ initial state  v   d and v     s v     for all v    v    
+ goal  v   d   
+ axioms and operators 
+   those corresponding to transitions in the pruned dtg of v 
+   for all variables v    v   and values e  e   dv    an operator
+with precondition v     e  effect v     e  and cost cost v  e  e    
+  note that all variables v    v   have been considered previously 
+so that their cost values are known   
+set costv  d  d    to the cost of a plan  that solves v d d   
+figure     the compute costs bottom up algorithm  a high level description of the causal graph
+heuristic 
+
+v is initially set to d  we want v to assume the value d     and all other state variables carry the same
+value as in the current state  we call this planning problem the local subproblem for v  d and d     or
+the local subproblem for v and d if we leave the target value d   open 
+for a formalization of these intuitive notions of how the cost estimates are generated  consider
+the pseudo code in fig      it does not reflect the way the heuristic values are actually computed
+within fast downward  the algorithm in the figure would be far too expensive to evaluate for each
+search state  however  it computes the same cost values as fast downward does  provided that the
+algorithm generating the plans  in the last line of the algorithm is the same one as the one used for
+the real cost estimator 
+      c omputation
+
+of the
+
+c ausal g raph h euristic
+
+the actual computation of the causal graph heuristic traverses the causal graph in a top down direction starting from the goal variables  rather than bottom up starting from variables without causal
+predecessors  in fact  this top down traversal of the causal graph is the reason for fast downwards
+name 
+computing cost estimates in a top down traversal implies that while the algorithm is computing
+plans for local subproblems of a given variable  it typically does not yet know the costs for changing
+the state of its causal predecessors  the algorithm compute costs addresses this by evaluating the
+cost values of dependent variables through recursive invocations of itself 
+for a given variable value pairing v   d  we always compute the costs cost v  d  d    for all values
+of d   dv at the same time  similar to the way dijkstras algorithm computes the shortest path not
+from a single source to a single destination vertex  but from a single source to all possible destination
+vertices  computing the costs for all values of d   is not  much  more expensive than computing only
+   
+
+fit he fast d ownward p lanning s ystem
+
+one of these values  and once all cost values have been determined  we can cache them and re use
+them if they are needed again later during other parts of the computation of the heuristic value for
+the current state 
+in fact  the similarity to shortest path problems is not superficial but runs quite deeply  if we
+ignore the recursive calls for computing cost values of dependent variables  compute costs is basically an implementation of dijkstras algorithm for the single source shortest path problem on
+domain transition graphs  the only difference to the regular algorithm lies in the fact that we do
+not know the cost for using an arc in advance  transitions of derived variables have a base cost
+of   and transitions of fluents have a base cost of    but in addition to the base cost  we must pay
+the cost for achieving the conditions associated with a transition  however  the cost for achieving a
+given condition v     e  depends on the current value e of that state variable at the time the transition
+is taken  thus  we can only compute the real cost for a transition once we know the values of the
+dependent state variables in the relevant situation 
+of course  there are many different ways of taking transitions through domain transition graphs 
+all potentially leading to different values for the dependent state variables  when we first introduced
+the causal graph heuristic  we showed that deciding plan existence for the local subproblems is npcomplete  helmert         so we are content with an approach that does not lead to a complete
+planning algorithm  as long as it works well for the subproblems we face in practice 
+the approach we have chosen is to achieve each value of state variable v in the local subproblem
+for v and d as quickly as possible  following a greedy policy  in the context of the dijkstra algorithm 
+this means that we start by finding the cheapest possible plan to make a transition from d to some
+other value d    once we have found the cheapest possible plan  d    we commit to it  annotating the
+vertex d  of the domain transition graph with the local state obtained by applying plan  d  to the
+current state  in the next step  we look for the cheapest possible plan to achieve another value d     
+by either considering transitions that start from the initial value d  or by considering transitions that
+continue the plan d  by moving to a neighbour of d    this process is iterated until all vertices of
+the domain transition graph have been reached or no further progress is possible 
+our implementation follows dijkstras algorithm  fig       we have implemented the priority queue as a vector of buckets for maximal speed and use a cache to avoid generating the same
+costv  d  d    value twice for the same state  in addition to this  we use a global cache that is shared
+throughout the whole planning process so that we need to compute the values cost v  d  d    for variables v with few ancestors in the pruned causal graph only once   note that cost v  d  d    only depends
+on the current values of the ancestors of v  
+apart from these and some other technical considerations  fig     gives an accurate account
+of fast downwards implementation of the causal graph heuristic  for more details  including
+complexity considerations and a worked out example  we refer to the original description of the
+algorithm  helmert        
+      s tates
+
+with i nfinite
+
+h euristic value
+
+we noted that fast downward uses an incomplete planning algorithm for determining solutions to
+local planning problems  therefore  there can be states s with cost v  s v   s   v      even though
+the goal condition v   s   v  can still be reached  this means that we cannot trust infinite values
+returned by the causal graph heuristic  in our experience  states with infinite heuristic evaluation
+from which it is still possible to reach the goal are rare  so we indeed treat such states as dead ends 
+   
+
+fih elmert
+
+algorithm compute costs   s  v  d  
+let v   be the set of immediate predecessors of v in the pruned causal graph of  
+let dtg be the pruned domain transition graph of v 
+costv  d  d      
+costv  d  d        for all d   dv    d 
+local state d    s restricted to v  
+unreached    dv
+while unreached contains a value d   dv with cost v  d  d       
+choose such a value d   unreached minimizing cost v  d  d    
+unreached    unreached    d   
+for each transition t in dtg leading from d   to some d    unreached 
+transition cost      if v is a derived variable    if v is a fluent
+for each pair v     e  in the condition of t 
+e    local state d   v    
+call compute costs   s  v     e  
+transition cost    transition cost   cost v   e  e   
+if costv  d  d      transition cost   cost v  d  d     
+costv  d  d        costv  d  d      transition cost
+local state d      local state d 
+for each pair v     e  in the condition of t 
+local state d    v        e 
+figure     fast downwards implementation of the causal graph heuristic  the compute costs algorithm for computing the estimates cost v  d  d    for all values d   dv in a state s of an
+mpt  
+
+   
+
+fit he fast d ownward p lanning s ystem
+
+if it turns out that all states at the search frontier are dead ends  we cannot make further progress
+with the causal graph heuristic  in this case  we use a sound dead end detection routine to verify the
+heuristic assessment  if it turns out that all frontier states are indeed dead ends  then we report the
+problem as unsolvable  otherwise  search is restarted with the ff heuristic  cf  section       which
+is sound for purposes of dead end detection   
+the dead end detection routine has been originally developed for strips like tasks  however 
+extending it to full mpts is easy  in fact  no changes to the core algorithm are required  as it works
+at the level of domain transition graphs and is still sound when applied to tasks with conditional
+effects and axioms  since it is not a central aspect of fast downward  we do not discuss it here 
+referring to our earlier work instead  helmert        
+      h elpful t ransitions
+inspired by hoffmanns very successful use of helpful actions within the ff planner  hoffmann  
+nebel         we have extended our algorithm for computing the causal graph heuristic so that in
+addition to the heuristic estimate  it also generates a set of applicable operators considered useful
+for steering search towards the goal 
+to compute helpful actions in ff  hoffmanns algorithm generates a plan for the relaxed planning task defined by the current search state and considers those operators helpful which belong to
+the relaxed plan and are applicable in the current state 
+our approach follows a similar idea  after computing the heuristic estimate cost v  s v   s   v  
+for a variable v for which a goal condition is defined  we look into the domain transition graph of
+v to trace the path of transitions leading from s v  to s    v  that gave rise to the cost estimate  in
+particular  we consider the first transition on this path  starting at s v   if this transition corresponds
+to an applicable operator  we consider that operator a helpful transition and continue to check the
+next goal  if the transition does not correspond to an applicable operator because it has associated
+conditions of the form v     e  which are not currently satisfied  then we recursively look for helpful transitions in the domain transition graph of each such variable v     checking the path that was
+generated during the computation of cost v   s v      e    
+the recursive process continues until we have found all helpful transitions  unlike the case
+for ff  where helpful actions can be found for all non goal states  we might not find any helpful
+transition at all  it may be the case that a transition does not correspond to an applicable operator
+even though it has no associated conditions  this can happen when some operator preconditions are
+not represented in the pruned domain transition graph due to cycles in the causal graph  even so 
+we have found helpful transitions to be a useful tool in guiding our best first search algorithms 
+    the ff heuristic
+the ff heuristic is named after hoffmanns planning algorithm of the same name  in the context
+of which it was originally introduced  hoffmann   nebel         it is based on the notion of
+relaxed planning tasks that ignore negative interactions  in the context of mpts  ignoring negative
+interactions means that we assume that each state variable can hold several values simultaneously 
+an operator effect or axiom that sets a variable v to a value d in the original task corresponds to
+   in practice  we have never observed the causal graph heuristic to fail on a solvable task  therefore  the fallback
+mechanism is only used for some unsolvable tasks in the m iconic  f ull adl domain which are not recognized by
+our dead end detection technique 
+
+   
+
+fih elmert
+
+an effect or axiom that adds the value d to the range of values assumed by v in the relaxed task  a
+condition v   d in the original task corresponds to a condition requiring d to be an element of the
+set of values currently assumed by v in the relaxed task 
+it is easy to see that applying some operator in a solvable relaxed planning task can never render
+it unsolvable  it can only lead to more operators being applicable and more goals being true  if it has
+any significant effect at all  for this reason  relaxed planning tasks can be solved efficiently  even
+though optimal solutions are still np hard to compute  bylander         a plan for the relaxation
+of a planning task is called a relaxed plan for that task 
+the ff heuristic estimates the goal distance of a world state by generating a relaxed plan for
+the task of reaching the goal from this world state  the number of operators in the generated plan
+is then used as the heuristic estimate  our implementation of the ff heuristic does not necessarily
+generate the same  or even an equally long  relaxed plan as ff  in our experiments  this did not turn
+out to be problematic  as both implementations appear to be equally informative 
+while the ff heuristic was originally introduced for adl domains  extending it to tasks involving derived predicates is straight forward  one possible extension is to simply assume that each
+derived predicate is initially set to its default value  and treat axioms as relaxed operators of cost
+   in a slightly more complicated  but also more accurate approach  derived variables are initialized
+to their actual value in a given world state  allowing the relaxed planner to achieve the value 
+ or other values  by applying the transitions of the extended domain transition graph of the derived
+variable  we have followed the second approach 
+in addition to heuristic estimates  the ff heuristic can also be exploited for restricting or biasing
+the choice of operators to apply in a given world state s  the set of helpful actions of s consists of
+all those operators of the relaxed plan computed for s that are applicable in that state  as mentioned
+in the introduction to this section  fast downward can be configured to treat helpful actions as
+preferred operators 
+there is a wealth of work on the ff heuristic in the literature  so we do not discuss it further 
+for a more thorough treatment  we point to the references  hoffmann   nebel        hoffmann 
+                  
+    greedy best first search in fast downward
+fast downward uses greedy best first search with a closed list as its default search algorithm  we
+assume that the reader is familiar with the algorithm and refer to the literature for details  russell  
+norvig        
+our implementation of greedy best first search differs from the textbook algorithm in two ways 
+first  it can treat helpful transitions computed by the causal graph heuristic or helpful actions computed by the ff heuristic as preferred operators  second  it performs deferred heuristic evaluation
+to reduce the influence of large branching factors  we now turn to describing these two search
+enhancements 
+      p referred o perators
+to make use of helpful transitions computed by the causal graph heuristic or helpful actions computed by the ff heuristic  our variant of greedy best first search supports the use of so called preferred operators  the set of preferred operators of a given state is a subset of the set of applicable
+operators for this state  which operators are considered preferred depends on the settings for the
+   
+
+fit he fast d ownward p lanning s ystem
+
+search component  as discussed earlier  the intuition behind preferred operators is that a randomly
+picked successor state is more likely to be closer to the goal if it is generated by a preferred operator  in which case we call it a preferred successor  preferred successors should be considered before
+non preferred ones on average 
+our search algorithm implements this preference by maintaining two separate open lists  one
+containing all successors of expanded states and one containing preferred successors exclusively 
+the search algorithm alternates between expanding a regular successor and a preferred successor 
+on even iterations it will consider the one open list  on odd iterations the other  no matter which
+open list a state is taken from  all its successors are placed in the first open list  and the preferred
+successors are additionally placed in the second open list   of course we could limit the first open
+list to only contain non preferred successors  however  typically the total number of successors is
+vast and the number of preferred successors is tiny  therefore  it is cheaper to add all successors
+to the first open list and detect duplicates upon expansion than scan through the list of successors
+determining for each element whether or not it is preferred  
+since the number of preferred successors is smaller than the total number of successors  this
+means that preferred successors are typically expanded much earlier than others  this is especially
+important in domains where heuristic guidance is weak and a lot of time is spent exploring plateaus 
+when faced with plateaus  fast downwards open lists operate in a first in first out fashion   in
+other words  for a constant heuristic function  our search algorithm behaves like breadth first
+search   preferred operators typically offer much better chances of escaping from plateaus since
+they lead to significantly lower effective branching factors 
+      d eferred h euristic e valuation
+upon expanding a state s  the textbook version of greedy best first search computes the heuristic
+evaluation of all successor states of s and sorts them into the open list accordingly  this can be
+wasteful if s has many successors and heuristic evaluations are costly  two conditions that are often
+true for heuristic search approaches to planning 
+this is where our second modification comes into play  if a successor with a better heuristic
+estimate than s is generated early and leads to a promising path towards the goal  we would like
+to avoid generating the other successors  let us assume that s has      successors  and that s    
+the   th successor of s being generated  has a better heuristic estimate than s  furthermore  let us
+assume that the goal can be reached from s   on a path with non increasing heuristic estimates  then
+we would like to avoid computing heuristic values for the     later successors of s altogether 
+deferred heuristic evaluation achieves this by not computing heuristic estimates for the successors of an expanded state s immediately  instead  the successors of s are placed in the open list
+together with the heuristic estimate of state s  and their own heuristic estimates are only computed
+when and if they are expanded  at which time it is used for sorting their successors into the open
+list  and so on  in general  each state is sorted into the open list according to the heuristic evaluation
+of its parent  with the initial state being an exception  in fact  we do not need to put the successor
+state itself into the open list  since we do not require its representation before we want to evaluate
+its heuristic estimate  instead  we save memory by storing only a reference to the parent state and
+the operator transforming the parent state into the successor state in the open list 
+it might not be clear how this approach can lead to significant savings in time  since deferred
+evaluation also means that information is only available later  the potential savings become most
+   
+
+fih elmert
+
+apparent when considering deferred heuristic evaluation together with the use of preferred operators 
+if an improving successor s  of a state s is reached by a preferred operator  it is likely that it will be
+expanded  via the second open list  long before most other successors  or even most siblings 
+of s  in the situation described above  where there exists a non increasing path from s   to the goal 
+heuristic evaluations will never be computed for most successors of s  in fact  deferred heuristic
+evaluation can significantly improve search performance even when preferred operators are not
+used  especially in tasks where branching factors are large and the heuristic estimate is informative 
+at first glance  deferred heuristic evaluation might appear related to another technique for reducing the effort of expanding a node within a best first search algorithm  namely a  with partial
+expansion  yoshizumi  miura    ishida         however  this algorithm is designed for reducing
+the space requirements of best first search at the expense of additional heuristic evaluations  when
+expanding a node  a with partial expansion computes the heuristic value of all successors  but
+only stores those in the open queue whose heuristic values fall below a certain relevance threshold 
+in later iterations  it might turn out that the threshold was chosen too low  in which case the node
+needs to be re expanded and the heuristic values of its successors re evaluated  in general  a  with
+partial expansion will never compute fewer heuristic estimates than standard a    but it will usually
+require less memory 
+however  for heuristic search approaches to planning  and certainly for fast downward   heuristic evaluations are usually so costly in time that memory for storing open and closed lists is not a
+limiting factor  we are thus willing to trade off memory with time in the opposite way  deferred
+heuristic evaluation normally leads to more node expansions and higher space requirements than
+standard best first search because the heuristic values used for guiding the search are less informative  they evaluate the predecessor of a search node rather than the node itself   however  heuristic
+computations are only required for nodes that are actually removed from the open queue rather than
+for all nodes on the fringe  and the latter are usually significantly more numerous 
+    multi heuristic best first search
+as an alternative to greedy best first search  fast downward supports an extended algorithm called
+multi heuristic best first search  this algorithm differs from greedy best first search in its use of
+multiple heuristic estimators  based on our observation that different heuristic estimators have different weaknesses  it may be the case that a given heuristic is sufficient for directing the search
+towards the goal except for one part of the plan  where it gets stuck on a plateau  another heuristic
+might have similar characteristics  but get stuck in another part of the search space 
+various ways of combining heuristics have been proposed in the literature  typically adding
+together or taking the maximum of the individual heuristic estimates  we believe that it is often
+beneficial not to combine the different heuristic estimates into a single numerical value  instead 
+we propose maintaining a separate open list for each heuristic estimator  which is sorted according
+to the respective heuristic  the search algorithm alternates between expanding a state from each
+open list  whenever a state is expanded  estimates are calculated according to each heuristic  and
+the successors are put into each open list 
+when fast downward is configured to use multi heuristic best first search  it computes estimates both for the causal graph heuristic and ff heuristic  maintaining two open lists  of course 
+the approach can be combined with the use of preferred operators  in this case  the search algorithm
+maintains four open lists  as each heuristic distinguishes between normal and preferred successors 
+   
+
+fit he fast d ownward p lanning s ystem
+
+algorithm reach one goal   v  d  cond  
+for each                  max threshold  
+let o be the set of operators of  whose modification distance with respect to v
+is at most  
+assign the cost c to each operator o  o  with modification distance c with
+respect to v 
+call the uniform cost search algorithm with a closed list  using the operator set o   
+to find a state satisfying  v   d   cond 
+return the plan if uniform cost search succeeded 
+figure     the reach one goal procedure for reaching a state with v   d  the value max threshold
+is equal to the maximal modification distance of any operator with respect to v 
+
+    focused iterative broadening search
+the focused iterative broadening search algorithm is the most experimental piece of fast downwards search arsenal  in its present form  the algorithm is unsuitable for many planning domains 
+especially those containing comparatively few different goals  yet we think that it might contain the
+nucleus for a successful approach to domain independent planning which is very different to most
+current methods  so we include it for completeness and as a source of inspiration 
+the algorithm is intended as a first step towards developing search techniques that emphasize the
+idea of using heuristic criteria locally  for limiting the set of operators to apply  rather than globally 
+for choosing which states to expand from a global set of open states  we made first experiments in
+this direction after observing the large boost in performance that can be obtained by using preferred
+operators in heuristic search  the algorithm performed surprisingly well in some of the standard
+benchmark domains  while performing badly in most others 
+as the name suggests  the algorithm focuses the search by concentrating on one goal at a time 
+and by restricting its attention to operators which are supposedly important for reaching that goal 
+definition   modification distances
+let  be an mpt  let o be an operator of   and let v be a variable of  
+the modification distance of o with respect to v is defined as the minimum  over all variables
+v   that occur as affected variables in the effect list of o  of the distance from v   to v in cg   
+for example  operators that modify v directly have a modification distance of   with respect to
+v  operators that modify variables which occur in preconditions of operators modifying v have a
+modification distance of    and so on  we assume that in order to change the value of a variable 
+operators with a low modification distance with respect to this variable are most useful 
+fig     shows the reach one goal procedure for achieving a single goal of an mpt  for the time
+being  assume that the cond parameter is always   the procedure makes use of the assumption
+that high modification distance implies low usefulness in two ways  first  operators with high
+modification distance with respect to the goal variable are considered to have a higher associated
+cost  and are hence applied less frequently  second  operators whose modification distance is beyond
+a certain threshold are forbidden completely  instead of choosing a threshold a priori  the algorithm
+   
+
+fih elmert
+
+first tries to find a solution with the lowest possible threshold of    increasing the threshold by  
+whenever the previous search has failed  the uniform cost search algorithm mentioned in fig    
+is the standard textbook method  russell   norvig        
+although we were ignorant of this fact at the time our algorithm was conceived  the core idea of
+reach one goal is not new  ginsberg and harvey        present a search technique called iterative
+broadening  which is also based on the idea of repeatedly doing a sequence of uninformed searches
+with an ever growing set of operators  their work demonstrates the superiority of iterative broadening over standard depth bounded search both empirically and analytically under the reasonable
+assumption that the choices made at each branching point are equally important    the original iterative broadening algorithm applies to scenarios without any knowledge of the problem domain 
+so it chooses the set of operators which may be applied at every search node randomly  rather than
+using heuristic information from the causal graph as in our case  however  ginsberg and harvey
+already discuss the potential incorporation of heuristics into the operator selection  the introduction of operator costs  in the form of modification distances  is new  but it is a fairly straightforward
+extension where heuristic information is available 
+the focused iterative broadening search algorithm is based on the reach one goal method  the
+idea is to achieve the goals of the planning task one after the other  by using the reach one goal
+algorithm as the core subroutine for satisfying individual goals  since it is not obvious what a good
+order of achieving the goals would be  one invocation of reach one goal is started for each goal in
+parallel  as each one goal solver focuses on the  supposedly  relevant operators for reaching its
+particular goal  there is hope that the number of states considered before a goal is reached is small 
+once one of the one goal solvers reaches its goal  the resulting plan is reported and all sub searches
+are stopped  the overall search algorithm commits to this part of the plan  the situation in which
+the first goal has been reached is considered a new initial state 
+from this situation  we try to satisfy the second goal  by once more starting parallel invocations
+of reach one goal for each possible second goal  of course  this can lead to a situation where the
+search algorithm oscillates between goals  first achieving goal a  then abandoning it in favour of goal
+b  without any sign of making real progress  therefore  we demand that reach one goal achieves
+the second goal in addition to the one we reached first  by setting the cond argument accordingly 
+once two goals have been reached  the sub searches are again stopped  sub searches for the third
+goal are started  and so on  until all goals have been reached 
+in some sense  our focusing technique is similar to the beam search algorithm  lowerre        
+which also performs a fixed number of concurrent searches to avoid committing to a particular path
+in the search space too early  beam search uses a heuristic function to evaluate which branches of
+search should be abandoned and where new branches should be spawned  while focused iterativebroadening search does not appear to use heuristic evaluations at first glance  the number of satisfied
+goals of a state is used as an evaluation criterion in essentially the same way  one important difference to beam search is our use of modification distances relative to a particular goal  which means
+that the different beams explore the state space in qualitatively different ways 
+there is one final twist  to motivate reach one goal not to needlessly wander away from satisfied goals  we forbid applying operators that undo any of the previously achieved goals in cond 
+this is an old idea called goal protection  joslin   roach         it is well known that protecting
+   see the original analysis for a precise definition of equally important  ginsberg   harvey         while ginsberg
+and harveys assumption is certainly not valid in practice  we find it much more convincing than the competing model
+where goal states are uniformly distributed across the search fringe 
+
+   
+
+fit he fast d ownward p lanning s ystem
+
+algorithm reach one goal   v  d  cond  
+for each                  max threshold  
+let o be the set of operators of  whose modification distance with respect to v
+is at most  and which do not affect any state variable occurring in cond 
+assign the cost c to each operator o  o  with modification distance c with
+respect to v 
+call the uniform cost search algorithm with a closed list  using the operator set o   
+to find a state satisfying  v   d   cond 
+return the plan if uniform cost search succeeded 
+for each                  max threshold  
+let o be the set of operators of  whose modification distance with respect to v
+is at most  
+assign the cost c to each operator o  o  with modification distance c with
+respect to v 
+call the uniform cost search algorithm with a closed list  using the operator set o   
+to find a state satisfying  v   d   cond 
+return the plan if uniform cost search succeeded 
+figure     the reach one goal procedure for reaching a state with v   d  corrected  
+goals renders a search algorithm incomplete  even in state spaces where all operators are reversible
+and local search approaches like focused iterative broadening search would be otherwise complete 
+in particular  search must fail in planning tasks which are not serializable  korf         therefore 
+if the first solution attempt fails  the algorithm is restarted without goal protection  the complete
+procedure is shown in fig      which concludes our discussion of fast downwards search component 
+
+   experiments
+to evaluate the performance of fast downward  and specifically the differences between the various
+configurations of the search component  we have performed a number of experiments on the set of
+benchmarks from the previous international planning competitions  the purpose of these experiments is to compare fast downward to the state of the art in pddl planning  and to contrast the
+performance of the different search algorithms of fast downward  greedy best first search with and
+without preferred operators  multi heuristic best first search with and without preferred operators 
+and focused iterative broadening search  
+to clearly state the purpose of our experiments  let us also point out two areas worthy of study
+that we do not choose to investigate here 
+ we do not compare the causal graph heuristic to other heuristics  such as the ff or hsp
+heuristics  such a comparison would require evaluating the different heuristics within otherwise identical planning systems  we have performed such an experiment before  helmert 
+      and thus prefer to dedicate this section to an evaluation of the complete fast downward
+planning system  rather than just its heuristic function 
+   
+
+fih elmert
+
+ we do not give a final answer to the question why fast downward performs well or badly in
+the domains we analyse  where we do observe bad performance  we try to give a plausible
+explanation for this  but we do not conduct a full blown study of heuristic quality in the spirit
+of hoffmanns work on the ff and h  heuristics  hoffmann         while we do believe that
+much could be learned from such an investigation  it is a major undertaking that would go
+beyond the scope of this article 
+our aim in this section is to evaluate the fast downward planner as a whole  so there are a
+number of algorithmic questions which we do not address  for example  one might wonder what  if
+any  speed up can be obtained by using successor generators over simpler methods which test each
+operator for applicability whenever a node is expanded  another question concerns the extent to
+which deferred heuristic evaluation affects search performance  to keep this section at a reasonable
+length  we do not discuss either of these questions here  however  we have conducted experiments
+addressing them  and include their results in an electronic appendix to this paper   
+    benchmark set
+the benchmark set we use consists of all propositional planning tasks from the fully automated
+tracks of the first four international planning competitions hosted at aips       aips       aips
+     and icaps       the set of benchmark domains is shown in fig      altogether  the benchmark suite comprises      tasks   the numbers in fig     add up to       but the    s atellite
+instances that were introduced for ipc  were also part of the benchmark set of ipc   so we only
+count them once  
+we distinguish between three classes of domains 
+ strips domains  these domains do not feature derived predicates or conditional effects  and
+all conditions appearing in goal and operators are conjunctions of positive literals 
+ adl domains  these domains make use of conditional effects in their operator and or contain
+more general conditions than simple conjunctions in their goals and operators  however  they
+do not require axioms 
+ pddl    domains  these domains use the full range of propositional pddl     including
+those features present in adl domains and axioms 
+at ipc   some domains were presented in different formulations  meaning that the same realworld task was encoded in several different ways  participants were asked to only work on one
+formulation per domain  being able to choose their preferred formulation for a given domain freely 
+for example  the a irport domain was available in a strips formulation and an adl formulation 
+however  the organizers did not strictly follow the rule of considering different encodings of
+the same real world task different formulations  rather than different domains proper  namely  for
+the psr m iddle and p romela domains  encodings with and without axioms were available  and
+these were considered as different domains on the grounds that the encodings without axioms were
+   see http   www jair org   the short summary is that successor generators speed up search by up to two
+orders of magnitude in extreme cases like the largest s atellite tasks  but have little impact on performance most of
+the time  deferred heuristic evaluation is very beneficial in some domains  with speed ups of more than one order of
+magnitude being common  is somewhat beneficial in the majority of domains  with speed ups between   and    and
+is very rarely detrimental to performance 
+
+   
+
+fit he fast d ownward p lanning s ystem
+
+competition
+
+domain
+
+class
+
+number of tasks
+
+ipc   aips      
+
+a ssembly
+g rid
+g ripper
+l ogistics
+m ovie
+m ystery
+mp rime
+
+adl
+strips
+strips
+strips
+strips
+strips
+strips
+
+  
+ 
+  
+  
+  
+  
+  
+
+ipc   aips      
+
+b locksworld
+f reecell
+l ogistics
+m iconic  strips
+m iconic  s imple adl
+m iconic  f ull adl
+s chedule
+
+strips
+strips
+strips
+strips
+adl
+adl
+adl
+
+  
+  
+  
+   
+   
+   
+   
+
+ipc   aips      
+
+d epot
+d riverlog
+f reecell
+rovers
+s atellite
+z enotravel
+
+strips
+strips
+strips
+strips
+strips
+strips
+
+  
+  
+  
+  
+  
+  
+
+ipc   icaps      
+
+a irport
+p romela  o pticalt elegraph
+p romela  p hilosophers
+p ipesworld  n otankage
+p ipesworld  tankage
+psr s mall
+psr m iddle
+psr l arge
+s atellite
+
+strips
+pddl   
+pddl   
+strips
+strips
+strips
+pddl   
+pddl   
+strips
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+
+figure     planning domains of the first four international planning competitions 
+
+   
+
+fih elmert
+
+much larger and hence likely more difficult to solve  we apply the formulation vs  encoding view
+more strictly and thus only consider one psr m iddle domain and one domain for each of the two
+p romela variants  p romela  p hilosophers and p romela  o pticalt elegraph 
+of the ipc  benchmark set  all tasks are solvable except for    m ystery instances  of the
+ipc  benchmark set  all tasks are solvable except for    m iconic  f ull adl instances  all
+ipc  benchmarks are solvable  for ipc   we have not checked all instances of the p ipesworld tankage domain  but we assume that all are tasks are solvable 
+if run in any of the heuristic search modes  fast downward proves the unsolvability of the
+unsolvable m ystery and m iconic  f ull adl tasks by using the dead end detection routine described in our earlier article on the causal graph heuristic  helmert         or in some cases in the
+m iconic  f ull adl domain by exhaustively searching all states with a finite ff heuristic  of
+course  if an unsolvable task is proved unsolvable by the planner  we report this as a successfully
+solved instance in the experimental results 
+    experimental setup
+as discussed in section    there are eleven possible configurations of fast downwards search
+component  however  not all of them are equally reasonable  for example  if we use ffs helpful
+actions  it would seem wasteful not to use the ff heuristic estimate  since these two are calculated
+together  therefore  for the greedy best first search setup  we exclude configurations where ff
+helpful actions are always computed  for the multi heuristic best first search setup  we exclude
+configurations where only one type of preferred operators is considered  but not the other  since this
+would seem to be a very arbitrary choice  this leaves us with six different configurations of the
+planner 
+   g  use greedy best first search without preferred operators 
+   g   p  use greedy best first search with helpful transitions as preferred operators 
+   g   p    use greedy best first search with helpful transitions as preferred operators  use
+helpful actions as preferred operators in states with no helpful transitions 
+   m  use multi heuristic best first search without preferred operators 
+   m   p  use multi heuristic best first search with helpful transitions and helpful actions as
+preferred operators 
+   f  use focused iterative broadening search 
+we apply each of these planner configurations to each of the      benchmark tasks  using a
+computer with a       ghz intel xeon cpu  the same machine that was used at ipc   and set
+a memory limit of   gb and a timeout of     seconds 
+to compare fast downward to the state of the art  we try to solve each benchmark with the
+best performing planners from the literature  unfortunately  this involves some intricacies  some
+planners are not publicly available  and others only cover a restricted subset of pddl     for the
+main experiment  we thus partition the benchmark domains into three sets depending on which
+planners are available for comparison 
+   
+
+fit he fast d ownward p lanning s ystem
+
+domain
+
+task
+
+configuration
+
+f reecell  ipc  
+g rid
+mp rime
+psr l arge
+s atellite  ipc  
+
+probfreecell     
+prob  
+prob  
+p   s    n   l  f  
+p   hc pfile  
+
+m p
+m
+m
+g p
+m p
+
+preprocessing
+     s
+      s
+      s
+      s
+       s
+
+search
+       s
+       s
+       s
+       s
+       s
+
+figure     tasks which could be solved by some configuration of fast downward with a search
+timeout of     seconds  but not with a total processing timeout of     seconds  the
+column preprocessing shows the total time for translation and knowledge compilation 
+
+    translation and knowledge compilation vs  search
+of course  the results we report for fast downward include the time spent in all three components
+of the planner  translation  knowledge compilation  and search  therefore  in the following presentation of results  we only consider a task solved if the total processing time is below     seconds 
+however  we have also investigated which tasks can be solved with a timeout of     seconds for the
+search component alone  allowing the other components to use an arbitrary amount of resources  it
+turns out that this only makes a difference in five cases  most of which could have been solved in a
+total time below     seconds  fig       only in one of these five cases  a s atellite instance of
+exorbitant size  did search take less time than the other two phases combined  these results show
+that the search component is the only time critical part of fast downward in practice  therefore 
+we do not report separate performance results for the individual components 
+    strips domains from ipc  
+let us now present the results of the main experiment  we abstain from listing runtimes for individual planning tasks due to the prohibitively large amount of data  these are available as an electronic
+appendix to this article   instead  we report the following information 
+ tables showing the number of tasks not solved by each planner within the     second timeout 
+here  we present individual results for each domain 
+ graphs showing the number of tasks solved in a given time by each planner  here  we do not
+present separate results for each domain  as this would require too many graphs 
+we do not discuss plan lengths  our observations in this regard are similar to those made for the
+original implementation of the causal graph heuristic  helmert        
+fig     shows the number of unsolved tasks for each of the strips domains from ipc   
+figs     and    show the number of tasks solved by each planner within a given time bound between
+  and     seconds  in addition to the six configurations of fast downward under consideration  the
+table includes four other columns 
+under the heading any  we include results for a hypothetical meta planner that guesses the
+best of the six configuration of fast downward for each input task and then executes fast downward
+   http   www jair org 
+
+   
+
+fih elmert
+
+domain
+
+ tasks
+
+g
+
+b locksworld
+d epot
+d riverlog
+f reecell  ipc  
+f reecell  ipc  
+g rid
+g ripper
+l ogistics  ipc  
+l ogistics  ipc  
+m iconic  strips
+m ovie
+m ystery
+mp rime
+rovers
+s atellite  ipc  
+z enotravel
+
+  
+  
+  
+  
+  
+ 
+  
+  
+  
+   
+  
+  
+  
+  
+  
+  
+
+ 
+  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+  
+ 
+  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+total
+
+   
+
+  
+
+  
+
+  
+
+g p g p  m
+
+m p
+
+f
+
+any
+
+cg
+
+ff
+
+lpg
+
+ 
+  
+ 
+  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+  
+  
+ 
+  
+  
+ 
+ 
+  
+ 
+ 
+ 
+  
+  
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+  
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+  
+  
+ 
+ 
+ 
+ 
+ 
+ 
+  
+ 
+ 
+ 
+ 
+
+  
+
+  
+
+   
+
+  
+
+  
+
+  
+
+   
+
+figure     number of unsolved tasks for the strips domains from ipc   ipc   and ipc  
+psfrag replacements
+fdd  fast downward 
+
+          
+
+fd  fast downward 
+yahsp
+macro ff
+
+         
+
+lpg td
+cg
+ff
+lpg
+
+solved tasks
+
+sgplan
+
+         
+
+any  fast downward 
+g   p  fast downward 
+m   p  fast downward 
+g  fast downward 
+g   p   fast downward 
+m  fast downward 
+f  fast downward 
+
+         
+
+ s
+
+  s
+
+   s
+
+   s
+search time
+
+   s
+
+   s
+
+   s
+
+figure     number of tasks solved vs  runtime for the strips domains from ipc   ipc  and ipc  
+this graph shows the results for the various configurations of fast downward 
+
+   
+
+fit he fast d ownward p lanning s ystem
+
+psfrag replacements
+fdd  fast downward 
+
+          
+
+fd  fast downward 
+yahsp
+macro ff
+
+         
+
+lpg td
+
+solved tasks
+
+sgplan
+
+         
+
+g   p   fast downward 
+any  fast downward 
+g   p  fast downward 
+cg
+ff
+lpg
+
+         
+g  fast downward 
+m   p  fast downward 
+m  fast downward 
+f  fast downward 
+
+ s
+
+  s
+
+   s
+
+   s
+search time
+
+   s
+
+   s
+
+   s
+
+figure     number of tasks solved vs  runtime for the strips domains from ipc   ipc  and ipc  
+this graph shows the results for cg  ff and lpg and the hypothetical any planner
+which always chooses the best configuration of fast downward  the result for greedy
+best first search with helpful transitions is repeated for ease of comparison with fig     
+
+   
+
+fih elmert
+
+with this setting  under the heading cg  we report the results for our first implementation of the
+causal graph heuristic  helmert           finally  ff and lpg refer to the well known planners
+ hoffmann   nebel        gerevini et al         which won the fully automated tracks of ipc 
+and ipc   they were chosen for comparison on this benchmark set because they showed the best
+performance by far of all publicly available planners we experimented with  for lpg  which uses a
+randomized search strategy  we attempted to solve each task five times and report the median result 
+the results show excellent performance of fast downward on this set of benchmarks  compared to cg  which was already shown to solve more tasks than ff and lpg on this benchmark set
+ helmert         we get another slight improvement for half of the planner configurations  one of
+the configurations  multi heuristic best first search using preferred operators  solves all benchmarks
+in all domains except d epot and f reecell  even more importantly  the number of tasks not
+solved by any of the fast downward configurations is as small as     note that the planning competitions typically allowed a planner to spend    minutes on each task  under these time constraints 
+we could allocate five minutes to each of the six configurations of fast downward  getting results
+which are at least as good as those reported for the any planner  results might even be better
+under a cleverer allocation scheme 
+even the configuration using focused iterative broadening search performs comparatively well
+on these benchmarks  although it cannot compete with the other planners  not surprisingly  this
+version of the planner has difficulties in domains with many dead ends  f reecell  m ystery 
+mp rime  or where goal ordering is very important  b locksworld  d epot   it also fares comparatively badly in domains with very large instances  namely l ogistics  ipc   and s atellite 
+the reader should keep in mind that ff and lpg are excellent planning systems  of all the other
+planners we experimented with  including all those that were awarded prizes at the first three planning competitions  none solved more benchmarks from this group than focused iterative broadening
+search 
+the one domain that proves quite resistant to fast downwards solution attempts in any configuration is d epot  as we already observed in the initial experiments with the causal graph heuristic
+ helmert         we believe that one key problem here is that fast downward  unlike ff  does not
+use any goal ordering techniques  which are very important in this domain  the fact that the domain
+includes a b locksworld like subproblem is also problematic  as it gives rise to very dense causal
+graphs as we demonstrated in section       
+    adl domains from ipc  
+second  we present results for the adl domains of the first three planning competitions  this is a
+much smaller group than the previous  including only four domains  this time  we cannot consider
+cg or lpg  since neither cg nor the publicly available version of lpg supports adl domains 
+therefore  we compare to ff exclusively  again  we report the number of unsolved tasks in each
+domain  fig      and present graphs showing how quickly the tasks are solved  figs     and     
+these results do not look as good as for the first group of domains  results in both m iconic
+domains are good  even improving on those of ff  however  greedy best first search performs very
+badly in the a ssembly domain  and all configurations perform badly in the s chedule domain 
+   apart from missing support for adl and axioms  cg is very similar to fast downward using greedy best first search
+and no preferred operators  configuration g   the translation and knowledge compilation components are essentially
+identical  the older search component mainly differs from fast downward in that it does not use deferred heuristic
+evaluation 
+
+   
+
+fit he fast d ownward p lanning s ystem
+
+domain
+
+ tasks
+
+a ssembly
+m iconic  s imple adl
+m iconic  f ull adl
+s chedule
+total
+
+  
+   
+   
+   
+   
+
+g
+  
+ 
+ 
+   
+   
+
+g p g p  m
+  
+ 
+ 
+  
+   
+
+  
+ 
+ 
+  
+   
+
+ 
+ 
+ 
+   
+   
+
+m p
+
+f
+
+any
+
+ff
+
+ 
+ 
+ 
+  
+  
+
+  
+ 
+  
+   
+   
+
+ 
+ 
+ 
+  
+  
+
+ 
+ 
+  
+ 
+  
+
+figure     number of unsolved tasks for the adl domains from ipc   ipc  and ipc  
+
+psfrag replacements
+fdd  fast downward 
+
+          
+
+fd  fast downward 
+
+         
+
+yahsp
+macro ff
+
+         
+
+lpg td
+cg
+ff
+lpg
+
+solved tasks
+
+sgplan
+
+         
+         
+
+any  fast downward 
+
+         
+m   p  fast downward 
+g   p   fast downward 
+g   p  fast downward 
+m  fast downward 
+g  fast downward 
+f  fast downward 
+
+         
+         
+ s
+
+  s
+
+   s
+
+   s
+search time
+
+   s
+
+   s
+
+   s
+
+figure     number of tasks solved vs  runtime for the adl domains from ipc   ipc  and ipc  
+this graph shows the results for the various configurations of fast downward 
+
+   
+
+fih elmert
+
+psfrag replacements
+fdd  fast downward 
+
+          
+
+fd  fast downward 
+
+         
+
+yahsp
+macro ff
+
+         
+
+lpg td
+cg
+
+lpg
+
+g   p   fast downward 
+
+solved tasks
+
+sgplan
+
+         
+         
+         
+
+g   p  fast downward 
+g  fast downward 
+
+m  fast downward 
+f  fast downward 
+
+         
+
+ff
+any  fast downward 
+m   p  fast downward 
+
+         
+ s
+
+  s
+
+   s
+
+   s
+search time
+
+   s
+
+   s
+
+   s
+
+figure     number of tasks solved vs  runtime for the adl domains from ipc   ipc  and ipc  
+this graph shows the results for ff and the hypothetical any planner which always
+chooses the best configuration of fast downward  the result for multi heuristic bestfirst search with preferred operators is repeated for ease of comparison with fig     
+
+   
+
+fit he fast d ownward p lanning s ystem
+
+currently  we have no good explanation for the a ssembly behaviour  for the s chedule domain  the weak performance again seems to be related to missing goal ordering techniques  in
+many s chedule tasks  several goals are defined for the same object which can only be satisfied
+in a certain order  for instance  for objects that should be cylindrical  polished and painted  these
+three goals must be satisfied in precisely this order  making an object cylindrical reverts the effects
+of polishing and painting  and polishing reverts the effect of painting  not recognising these constraints  the heuristic search algorithm assumes to be close to the goal when an object is already
+polished and painted but not cylindrical  and is loathe to transform the object into cylindrical shape
+because this would undo the already achieved goals  with some rudimentary manual goal ordering 
+ignoring painting goals until all other goals have been satisfied  the number of tasks not solved by
+multi heuristic best first search with preferred operators drops from    to    these three failures
+appear to be due to the remaining ordering problems with regard to cylindrical and polished objects 
+    domains from ipc 
+third and finally  we present results for the ipc  domains  here  we do not compare to ff  for these
+benchmarks  ff does not perform as well as the best planners from the competition  besides  several
+of the ipc  competitors are extensions of ff or hybrids using ff as part of a bigger system  so ffbased planning is well represented even if we limit our attention to the ipc  planners  for this
+comparison  we chose the four most successful competition participants besides fast downward 
+namely lpg td  sgplan  macro ff and yahsp  cf  the results in hoffmann   edelkamp        
+similar to the previous two experiments  we report the number of unsolved tasks in each domain
+ fig      and present graphs showing how quickly the tasks are solved  figs     and     
+fast downward is competitive with the other planners across domains  and better than all others
+in some  the p ipesworld domains are the only ones in which any of the other planners is noticeably better than the two competition versions of fast downward  this is the case for yahsp in both
+p ipesworld domain variants and for sgplan in p ipesworld  n otankage   the p ipesworld
+domain is not very hierarchical in nature  this might be a domain where the decomposition approach of the causal graph heuristic is not very appropriate  the results of the heuristic search
+configurations in the p romela  o pticalt elegraph domain are extremely bad and require further investigation 
+interestingly  focused iterative broadening search performs very well on some of the benchmarks from this suite  one of the reasons for this is that in many of the tasks of the ipc  suite  there
+are many individual goals which are easy to serialize and can be solved mostly independently    
+comparing the configuration g to g   p   and especially m to m   p  we also observe that using preferred operators is very useful for these benchmarks  even more so than in the two previous
+experiments 
+as a final remark  we observe that if we implemented the any meta planner by calling the six
+fast downward configurations in a round robin fashion  we would obtain a planning system that
+could solve all but    of the ipc  benchmarks within a           minute timeout  this is almost on
+par with the top performer of ipc   fast diagonally downward  which solved all but    of the ipc 
+benchmarks under the same timeout  thus  this is a benchmark set for which exploring different
+planner configurations definitely pays off 
+    we have devised an experiment which shows that if this property is artificially violated by a simple goal reformulation 
+the performance of the algorithm degrades quickly  see the electronic appendix for details 
+
+   
+
+fih elmert
+
+domain
+
+ tasks
+
+a irport
+p ipesworld  n otankage
+p ipesworld  tankage
+p romela  o pticalt elegraph
+p romela  p hilosophers
+psr s mall
+psr m iddle
+psr l arge
+s atellite  ipc  
+total
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+   
+
+g
+  
+  
+  
+  
+ 
+ 
+ 
+  
+ 
+   
+
+g p g p  m
+
+m p
+
+f
+
+any
+
+  
+  
+  
+  
+ 
+ 
+ 
+  
+ 
+   
+
+  
+ 
+  
+  
+ 
+ 
+ 
+  
+ 
+   
+
+ 
+  
+  
+  
+  
+ 
+  
+  
+  
+   
+
+ 
+ 
+  
+  
+ 
+ 
+ 
+  
+ 
+  
+
+  
+  
+  
+  
+ 
+ 
+ 
+  
+ 
+   
+
+  
+  
+  
+  
+  
+ 
+ 
+  
+ 
+   
+
+domain
+
+fd
+
+fdd
+
+lpg td
+
+macro ff
+
+sgplan
+
+yahsp
+
+a irport
+p ipesworld  n otankage
+p ipesworld  tankage
+p romela  o pticalt elegraph
+p romela  p hilosophers
+psr s mall
+psr m iddle
+psr l arge
+s atellite  ipc  
+total
+
+ 
+  
+  
+  
+ 
+ 
+ 
+  
+ 
+  
+
+ 
+ 
+  
+  
+ 
+ 
+ 
+  
+ 
+  
+
+ 
+  
+  
+  
+ 
+ 
+ 
+  
+ 
+   
+
+  
+  
+  
+  
+  
+  
+  
+  
+ 
+   
+
+ 
+ 
+  
+  
+ 
+ 
+ 
+  
+ 
+   
+
+  
+ 
+  
+  
+  
+ 
+  
+  
+ 
+   
+
+figure     number of unsolved tasks for the ipc  domains  results for the various configurations
+of fast downward are listed in the upper part  results for the competition participants
+in the lower part  fd and fdd denote the versions of fast downward that participated in ipc  under the names fast downward and fast diagonally downward
+ cf  section    
+
+   
+
+fit he fast d ownward p lanning s ystem
+
+psfrag replacements
+fdd  fast downward 
+
+          
+
+fd  fast downward 
+
+         
+
+yahsp
+
+         
+
+macro ff
+sgplan
+
+cg
+ff
+lpg
+
+         
+solved tasks
+
+lpg td
+
+any  fast downward 
+
+         
+         
+         
+         
+m   p  fast downward 
+g   p   fast downward 
+g   p  fast downward 
+m  fast downward 
+f  fast downward 
+g  fast downward 
+
+        
+        
+ s
+
+  s
+
+   s
+
+   s
+search time
+
+   s
+
+   s
+
+   s
+
+figure     number of tasks solved vs  runtime for the ipc  domains  this graph shows the results
+for the various configurations of fast downward 
+psfrag replacements
+          
+         
+         
+
+cg
+ff
+lpg
+
+g   p   fast downward 
+g   p  fast downward 
+g  fast downward 
+
+solved tasks
+
+         
+         
+         
+         
+         
+
+any  fast downward 
+fdd  fast downward 
+fd  fast downward 
+sgplan
+lpg td
+yahsp
+macro ff
+
+        
+        
+
+m   p  fast downward 
+m  fast downward 
+f  fast downward 
+
+ s
+
+  s
+
+   s
+
+   s
+search time
+
+   s
+
+   s
+
+   s
+
+figure     number of tasks solved vs  runtime for the ipc  domains  this graph shows the results
+for the hypothetical any planner which always chooses the best configuration of fast
+downward  the competition configurations of fast downward and the best four other
+participants 
+
+   
+
+fih elmert
+
+    conclusions from the experiment
+how can we interpret these experimental results  our first conclusion is that fast downward is
+clearly competitive with the state of the art  this is especially true for the configuration using
+multi heuristic best first search with preferred operators  m p   which outperforms all competing
+planning systems both on the set of strips domains from ipc   and on the domains from ipc  
+if it were not for the problems in the s chedule domain  the same would be true for the remaining
+group of benchmarks  the adl domains from ipc   
+with regard to the second objective of the investigation  evaluating the relative strengths of the
+different planner configurations  the m p configuration emerges as a clear cut winner  in    out of
+   domains  no other configuration solves more tasks  and unlike the other configurations  there is
+only one domain  p romela  o pticalt elegraph  in which it performs very badly  we conclude
+that both multi heuristic best first search and the use of preferred operators are promising extensions
+to heuristic planners 
+this is particularly true for preferred operators  indeed  after the m p configuration  the two
+variants of greedy best first search with preferred operators show the next best overall performance 
+both in terms of the number of domains where they are among the top performers and in terms of
+the total number of tasks solved  comparing g to g p  there are ten domains in which the variant
+using preferred operators solves more tasks than the one not using them  the opposite is true in five
+domains  comparing m to m p  the difference is even more striking  with the preferred operator
+variant outperforming the other in fifteen domains  while being worse in two  in both of which it
+only solves one task less   these are convincing arguments for the use of preferred operators 
+
+   summary and discussion
+before we turn to discussion  let us briefly summarize the contributions of this article  as a motivating starting point  we explained that planning tasks often exhibit a simpler structure if expressed
+with multi valued state variables  rather than the traditional propositional representations  we then
+introduced fast downward  a planning system based on the idea of converting tasks into a multivalued formalism and exploiting the causal information underlying such encodings 
+fast downward processes pddl planning tasks in three stages  we skipped the first of these
+stages  translation  which automatically transforms a pddl task into an equivalent multi valued
+planning task with a nicer causal structure  we explained the inner workings of the second stage 
+knowledge compilation  demonstrating in depth what kind of knowledge the planner extracts from
+the problem representation  discussing causal graphs  domain transition graphs  successor generators and axiom evaluators  during our discussion of fast downwards search component  we
+introduced its heuristic search algorithms  which use the technique of deferred heuristic evaluation
+to reduce the number of states for which a heuristic goal distance estimate must be computed  in
+addition to greedy best first search  fast downward employs the multi heuristic best first search
+algorithm to usefully integrate the information of two heuristic estimators  namely the causal graph
+heuristic and ff heuristic  both heuristic search algorithms can utilize preference information
+about operators  we also introduced fast downwards experimental focused iterative broadening
+search algorithm  which is based on the idea of pruning the set of operators to only consider those
+successor states which are likely to lead towards a specific goal 
+we thus tried to give a complete account of the fast downward planning systems approach to
+solving multi valued planning tasks  including its motivation  architecture  and algorithmic founda   
+
+fit he fast d ownward p lanning s ystem
+
+tions  in the previous section  we demonstrated its empirical behaviour  showing good performance
+across the whole range of propositional benchmarks from the previous planning competitions 
+among all the novel algorithms and search enhancements discussed in this article  there are two
+aspects of fast downward which we consider of central importance and which we would like to
+emphasize  one of them is the use of multi valued state variables for pddl style planning  we
+believe that multi valued representations are much more structured and hence much more amenable
+to automated reasoning  be it for the purposes of heuristic evaluation  problem decomposition 
+or other aspects of planning such as goal ordering or extraction of landmarks  the other central
+idea is the use of hierarchical decompositions within a heuristic planning framework  hierarchical
+approaches to domain independent planning have a considerable potential  but since the work of
+knoblock        and bacchus and yang         little work has been published  with fast downward  we hope to renew interest in this area  which we believe to be a very promising ground for
+further advances in automated planning 
+for the future  there are several aspects of fast downward that we would like to investigate
+further  first  we intend to experiment with other search techniques along the lines of focused
+iterative broadening search  which emphasize heuristically evaluating operator usefulness rather
+than heuristically evaluating states 
+second  we would like to come up with an efficient heuristic for multi valued planning tasks
+which does not require pruning cycles of the causal graph  initial experiments in this direction have
+shown that it is difficult to achieve this goal without losing the performance of fast downwards
+heuristic estimator  but perhaps better heuristic accuracy can outweigh worse per state performance
+in many cases 
+third  we want to investigate in how far the performance of the planner could be improved
+by encoding some domains differently  in some cases  merging a set of state variables which are
+closely interrelated into a single state variable whose domain is the product of the domains of the
+original state variables might be beneficial  also  we want to test if hand tailored encodings lead to
+better performance than automatically derived ones  and if so  how large the performance gap is 
+fourth and finally  we would like to evaluate the behaviour of the causal graph heuristic in
+specific planning domains both empirically and theoretically  following hoffmanns work on the ff
+heuristic  hoffmann                     hopefully  this will give some indication when we can
+expect good performance from the causal graph heuristic and when it is advisable to look for other
+approaches 
+
+acknowledgements
+the author wishes to thank silvia richter  the other member of the fast downward team at the
+ th international planning competition  for her part in implementing the planner and for valuable
+advice before  throughout  and after the competition  she also deserves thanks for helping out with
+the experiments  for proof reading this article  and for suggesting a number of improvements 
+the anonymous reviewers of the article and the handling editor  maria fox  made a number of
+useful suggestions that led to significant improvements 
+this work was partly supported by the german research council  dfg  within the graduate
+programme mathematical logic and applications and as part of the transregional collaborative
+research centre automatic verification and analysis of complex systems  sfb tr    avacs  
+see www avacs org for more information 
+   
+
+fih elmert
+
+references
+bacchus  f     yang  q          downward refinement and the efficiency of hierarchical problem
+solving  artificial intelligence               
+backstrom  c     nebel  b          complexity results for sas   planning  computational intelligence                
+bonet  b     geffner  h          planning as heuristic search  artificial intelligence              
+brafman  r  i     domshlak  c          structure and complexity in planning with unary operators 
+journal of artificial intelligence research             
+bylander  t          the computational complexity of propositional strips planning  artificial
+intelligence                 
+domshlak  c     brafman  r  i          structure and complexity in planning with unary operators 
+in ghallab  m   hertzberg  j     traverso  p   eds    proceedings of the sixth international
+conference on artificial intelligence planning and scheduling  aips        pp        aaai
+press 
+domshlak  c     dinitz  y          multi agent off line coordination  structure and complexity 
+in cesta  a     borrajo  d   eds    pre proceedings of the sixth european conference on
+planning  ecp     pp          toledo  spain 
+dowling  w  f     gallier  j  h          linear time algorithms for testing the satisfiability of
+propositional horn formulae  journal of logic programming               
+edelkamp  s     helmert  m          exhibiting knowledge in planning problems to minimize
+state encoding length  in fox  m     biundo  s   eds    recent advances in ai planning 
+ th european conference on planning  ecp     vol       of lecture notes in artificial
+intelligence  pp          new york  springer verlag 
+edelkamp  s     hoffmann  j          pddl     the language for the classical part of the  th
+international planning competition  tech  rep       albert ludwigs universitat freiburg 
+institut fur informatik 
+fox  m     long  d          pddl     an extension to pddl for expressing temporal planning
+domains  journal of artificial intelligence research            
+garey  m  r     johnson  d  s          computers and intractability  a guide to the theory of
+np completeness  freeman 
+gerevini  a   saetti  a     serina  i          planning through stochastic local search and temporal
+action graphs in lpg  journal of artificial intelligence research             
+ginsberg  m  l     harvey  w  d          iterative broadening  artificial intelligence             
+helmert  m          a planning heuristic based on causal graph analysis  in zilberstein  s   koehler 
+j     koenig  s   eds    proceedings of the fourteenth international conference on automated
+planning and scheduling  icaps        pp          aaai press 
+hoffmann  j          local search topology in planning benchmarks  an empirical analysis  in
+nebel  b   ed    proceedings of the   th international joint conference on artificial intelligence  ijcai     pp          morgan kaufmann 
+   
+
+fit he fast d ownward p lanning s ystem
+
+hoffmann  j          local search topology in planning benchmarks  a theoretical analysis  in
+ghallab  m   hertzberg  j     traverso  p   eds    proceedings of the sixth international conference on artificial intelligence planning and scheduling  aips        pp         aaai
+press 
+hoffmann  j          where ignoring delete lists works  local search topology in planning benchmarks  journal of artificial intelligence research             
+hoffmann  j     edelkamp  s          the deterministic part of ipc    an overview  journal of
+artificial intelligence research             
+hoffmann  j     nebel  b          the ff planning system  fast plan generation through heuristic
+search  journal of artificial intelligence research             
+jonsson  p     backstrom  c          incremental planning  in ghallab  m     milani  a   eds   
+new directions in ai planning  ewsp      rd european workshop on planning  vol    
+of frontiers in artificial intelligence and applications  pp        amsterdam  ios press 
+jonsson  p     backstrom  c       a   state variable planning under structural restrictions  algorithms and complexity  artificial intelligence                  
+jonsson  p     backstrom  c       b   tractable plan existence does not imply tractable plan generation  annals of mathematics and artificial intelligence                
+joslin  d     roach  j          a theoretical analysis of conjunctive goal problems  artificial
+intelligence                research note 
+knoblock  c  a          automatically generating abstractions for planning  artificial intelligence 
+              
+korf  r  e          planning as search  a quantitative approach  artificial intelligence        
+     
+lowerre  b  t          the harpy speech recognition system  ph d  thesis  computer science
+department  carnegie mellon university  pittsburgh  pennsylvania 
+newell  a     simon  h  a          gps  a program that simulates human thought  in feigenbaum 
+e  a     feldman  j   eds    computers and thought  pp          oldenbourg 
+russell  s     norvig  p          artificial intelligence  a modern approach  prentice hall 
+sacerdoti  e  d          planning in a hierarchy of abstraction spaces  artificial intelligence    
+       
+tenenberg  j  d          abstraction in planning  in allen  j  f   kautz  h  a   pelavin  r  n  
+  tenenberg  j  d   reasoning about plans  chap     pp          morgan kaufmann  san
+mateo 
+van den briel  m   vossen  t     kambhampati  s          reviving integer programming approaches for ai planning  a branch and cut framework  in biundo  s   myers  k     rajan 
+k   eds    proceedings of the fifteenth international conference on automated planning and
+scheduling  icaps        pp          aaai press 
+williams  b  c     nayak  p  p          a reactive planner for a model based executive  in pollack 
+m  e   ed    proceedings of the   th international joint conference on artificial intelligence
+ ijcai     pp            morgan kaufmann 
+   
+
+fih elmert
+
+yoshizumi  t   miura  t     ishida  t          a  with partial expansion for large branching factor problems  in kautz  h     porter  b   eds    proceedings of the seventeenth national
+conference on artificial intelligence  aaai        pp          aaai press 
+
+   
+
+fi
