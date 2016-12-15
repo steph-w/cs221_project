@@ -1,0 +1,438 @@
+ropdetect   detection of code reuse attacks
+yifan lu
+stanford university
+
+ 
+
+introduction
+
+software exploitation  as used by malware and other
+kinds of attacks  require the attacker to take control of
+code execution  historically  this involves injecting code
+into memory and using a software vulnerability to execute it  this works because both arm and x   uses
+a modified harvard architecture which allows code and
+data memory to be shared 
+armv  introduced the execute never    feature and
+intel introduced the execute disable feature with their
+prescott processors     both of these implementations
+ensure that memory pages are never mapped as both
+writable and executable  unless specified explicitly by
+the os   this mitigates code injection attacks that relies on redirecting execution to attacker controlled code
+stored in data memory  in response to this  attackers
+rely on code reuse or return orientated programming
+ rop  
+the idea behind rop is that the attacker cannot map
+her own code into the targets executable memory  but
+she can reuse the code already in executable memory
+as well as control the targets program stack  through
+some vulnerability   the program stack is typically used
+to store  along with other data   return pointers when
+a function call is made  the return pointer allows the
+program to resume execution at the caller after a function call returns  when the attacker overwrites the return
+pointer  she can redirect control flow to anywhere in executable memory  if the attacker finds useful gadgets  or
+instructions that perform a single useful operation  such
+as a memory load or store  and then jumps to the next return pointer in the stack  she can inject a large number of
+return pointers into the stack and control execution that
+way 
+even though rop attacks are very powerful  most attackers only use it as the first stage of a multi stage attack where rop is used to bypass operating system restrictions in order to escalate control of the compromised
+
+christopher hansen
+stanford university
+
+process to control of the entire system  if we can differentiate rop execution with normal code execution  then
+we can terminate a process before the control is escalated
+and stop the attack  heuristically  we can see that rop
+execution is different because it uses a large number of
+return instructions while normal  optimized  code does
+not perform as many returns in the same sort period of
+time  additionally  in normal code  return instructions
+are often matched with call instructions  finally  processors optimized to run normal code will likely perform
+better with normal execution than rop execution  which
+for example  makes branch prediction hard   however 
+even in normal execution  there are situations such as tail
+recursion in a tight function that may make classification
+using just heuristics difficult  we choose to implement
+unsupervised machine learning to solve the classification
+problem 
+
+ 
+
+background
+
+a large inspiration for this comes from work done earlier this year by demme et al   who talked about the usage of data from cpu performance counters as features
+for anomaly detection     teng et al  provided an implementation on x   machines for detecting malware    
+in their implementation  they  sampled at a  rate of every         instructions since it provides a reasonable
+amount of measurements without incurring too much
+overhead  this meant that their model does not perform well in the detection of the rop shellcode  likely
+because the sampling granularity at    k instructions is
+too large to capture the deviations in the baseline models 
+our implementation differs mainly in two ways  first 
+we sample at a much higher rate of        instructions 
+this is possible because we take advantage of the multiprocessor implementation of arm cortex a   and we
+can use a separate core to perform the measurements and
+not have to pay the overhead of interrupts required by
+
+fimeasuring on the same processor core  second  we focus
+on arm architecture rather than x    we believe that the
+risc model implemented by arm results in less noise
+in measurements 
+
+ 
+
+tested points will be classified as belonging to the trained
+class or not based on the decision boundary calculated
+during training  with this in mind  we speculate a ocsvm can be applied to our problem of detecting rop
+anomalies by first training the svm on non payload performance data  ie  normal operation   then  any point
+that does not fall into the class when tested on the svm is
+said to be an attack point  in other words data collected
+while the payload is being executed 
+
+setup
+
+we choose to perform our tests on a raspberry pi   
+which runs a broadcom implemented arm cortex a 
+processor system    
+we collect data from the performance monitor unit
+ pmu  with our custom linux module  because of
+hardware limitations  we can only chose four events to
+monitor  we decided to capture instruction cache fetch 
+branch taken  return taken  and branch mis predict based
+on our knowledge of the architecture and what affects
+code execution  next  we generate a random rop payload which takes gadgets from our workload simulation
+application  once the data is captured  we process it offline 
+our simulation infrastructure simulates three types of
+workload  data bound workload is the best case for
+detection because most events triggered normally are
+data related  branch bound workload is the worst case
+because a lot of instruction related events are triggered 
+mixed workload is the average case and triggers a mixture of both types of events  to generate our dataset  we
+run each workload multiple times both normally and with
+a randomly generated rop payload to execute at a random time step 
+
+ 
+
+while this approach sounds like an applicable method 
+we find in practice that svm is not practical for our problem  besides exhibiting mediocre to poor results in our
+initial rounds of testing  the training overhead given the
+size of our data sets was unfeasible  considering the
+problem  we observe that it is best modeled using unsupervised learning  as there are no strong labels on data
+collected 
+mixtures of gaussians    is a specific instance of the
+em algorithm that makes the assumption that the conditional distribution of the data points given the data points
+latent random variables is normally distributed  intuitively  it can be thought of as a soft clustering algorithm 
+where each data point is probabilistically assigned to a
+gaussian  it should be noted that the number of gaussian components in the model is a key parameter  and
+corresponds mathematically to the number of values that
+the latent random variables can take on  thus  assigning
+an observed data point to a gaussian can be thought of
+as assiging that point to its most likely labeling 
+
+model
+
+with these properties of the model in mind  we develop our method of leveraging the model to detect
+anomalies  we first observe that  given a sufficient number of gaussian components  we should be able to determine which gaussian a point can be labeled as with
+high probability for non anomalous data  if we observe
+the posterior distribution of the model for a specific point
+and find that the model is not sure which gaussian to
+label the point as  for example      for gaussian        for
+gaussian     then the point can be consider anomalous 
+which in this case means its from a payload  this approach relies on the assumptions that the gaussian components are sufficiently separated and that the data can
+be clustered into the gaussians 
+
+features
+we first define our non temporal features to be a  dimensional vector defined by the number of each of the
+four events we sample 
+there are also temporal information we wish to consider  as a motivating example  consider that a normal
+execution has the following properties  a spike in the
+number of function call leads to a spike of return calls
+after some cycles  in a rop execution  we have a spike
+of return calls without the preceding function call spike 
+therefore  it would be useful to consider the concatenation of n vectors from n time slices such that we have a
+ n dimensional vector 
+
+using this approach  we see that a key aspect of this
+model is determining a threshold value that is sufficient
+for determining anomalous points  if the threshold is to
+low  then data from normal operation would be considered anomalous  but if its to hight then anomalous data
+will not be detected  we test various threshold values to
+determine the best results 
+
+training
+motivated by teng et al   we first attempted to use a
+one class support vector machine  oc svm  classifier
+that uses the non linear radial basis function  rbf 
+kernel     when trained on a set of data from one class 
+ 
+
+fifigure    branch workload error
+
+figure    mixed workload error
+
+figure    branch workload success
+
+figure    data workload error
+
+ 
+
+experimentation
+
+the majority of experimentation was conducted to find
+the optimal values for model parameters  in particular 
+three main parameters were found  number of gaussian
+components in the model  data point clustering  number
+of points clustered together to create a higher dimensional  causally related set of features   and the threshold for determining if a point is an anomaly  we first
+optimize components and clusters parameters  since we
+rationalize that these parameters are invariant relative to
+each other to changes in the anomaly threshold  the primary statistics we use throughout this investigation are
+the false positive rate on non payload test sets and the
+approximated true positive rate on payload test sets 
+
+figure    data workload success
+
+from a technical standpoint  we use the gaussian mixture model  gmm  implemented in the scikit learn   
+package as the basis for the model  we use python scripting to iterate over different parameter values and test
+the model on each of them  it should be noted that we
+constrain the model to use a diagonal covariance matrix 
+since that showed the best results in our preliminary investigation 
+
+figure    mixed workload success
+
+ 
+
+ficomponents and clusters parameters
+
+ated with that point are greater than threshold or less
+than     threshold  the results of this experiment using the   mib payload data can be seen in figure   
+since we are targeting a detect rate of around     
+for payload workloads  this is a very rough estimate   it
+seems that      may be a good choice for the threshold
+parameter  however  the fact that anomaly rate for the
+branch and data workloads with payload were higher for
+     without a significant sacrifice in the false detect rate
+implies that these may have been caused by payload data
+points  for future investigations  it is essential to determine a better way of detecting true positives and false
+negatives 
+
+we wish to find the pair of values for these parameters
+that both minimizes the false positive rate and maximizes
+the true positive rate  where payload points are designated to be positive  difficulty in this approach arises
+from the fact that we do not actually know the exact number of data points in payload test sets that are anomalous  however  using graphs of the time series of the
+data  we predict that payload points make up approximately    of the points in data collected using   mib
+payloads  experimentation was conducted by training
+our gmm using non payload data from each workload as
+training data  false positive rate for each workload was
+found by testing the trained gmm on a non payload data
+set from each workload  we repeat this training testing
+patern for each pair of parameters in the range of     
+gaussian components and     points clustered  a similar procedure was conducted for determining the positive
+rate  except we test on   mib payload data sets for each
+workload  for operations in this section  the threshold
+parameter was held at       figures       show the aggregated false positive rate for workloads  while figures
+      show the anomaly detect rate  true positive rate can
+be estimated by taking the difference between the false
+positive rate and the anomaly detect rate  note that the
+logarithm of the experimental results was taken to create
+a larger color distinction in the resulting heatmaps 
+observation of these heatmaps allows us to generate
+the following heuristics when determining parameters 
+first  as is most apparent in the false positive rate for the
+mixed workload  figure     but can also be seen in the
+other figures  there is a substantial increase in the false
+positive rate once the number of gaussian components
+exceeds five  there is little variation among values less
+than or equal to five  this suggest that the number of
+gaussian components should be parameterized to five 
+the second trend that can be seen is that even though
+the false positive rate generally decreases as clustering
+increases  so does the anomaly detection rate  the implication is the overall true positive rate decreases as clustering increases  by inspection  a good value for the clustering parameter would be in the range of   to    it is our
+opinion  however  that   is the best value 
+
+results
+in this investigation  based on the statistics that we chose
+for the data  we find that we are able to obtain low false
+positive rates  on the order of      in many cases  however  despite the discussed uncertainty in the exact values
+for true positive rate in payload data sets  we observe that
+the mixed workload experiences low true positive rate
+relative to those displayed by the other workloads invariant of  reasonable  parameter values  from this we conclude that rop payload detection on workloads similar
+to that of mixed would not work  whereas there would be
+a decent chance of detecting the payload on branch and
+data characterized workloads  especially if the threshold
+parameter where further tweaked 
+
+ 
+
+future work
+
+theres three main areas where we can improve the results  first  we would like to collect better data  to improve this  we can improve the simulation platform to
+better simulate common tasks  ideally  instead of a simulation  we can test it on actual applications that people
+run  instead of simulating a workload  we can instead inject vulnerabilities into common applications and test our
+algorithms that way  we can also improve the rop payload generation to support jop  jumps instead of returns 
+as well as making function calls  something common to
+regular rop payloads that we do not account for   we
+also should work on recognizing multiple processes and
+multiple cores  which would represent a more realistic
+execution environment 
+second  we would like to speed up reaction time and
+also use less resources for the detection  it is impossible to realize both of these goals at once  so there will
+have to be a trade off  right now  we reserve a cpu
+core just for monitoring  but detection might be more effective with a dedicated hardware that performs both the
+data collection and processing  creating a fpga implementation might result in better performance  we have
+
+threshold parameter
+we use the parameters found in the previous section to
+perform a similar procedure as before  holding components at   and clusters at    we iterate over threshold values in the range of      to      in increments of      and
+record the anomaly detect rate  it should be stated that
+the threshold parameter operates by labeling a point as
+an anomaly if any of the posterior probabilities associ 
+
+fiworkload
+branch nopayload
+data nopaylod
+mixed nopayload
+branch payload
+data payload
+mixed payload
+
+t     
+      
+      
+      
+      
+      
+      
+
+t     
+      
+      
+      
+      
+      
+      
+
+t     
+      
+      
+      
+      
+      
+      
+
+t     
+      
+      
+      
+      
+      
+      
+
+t     
+      
+      
+      
+      
+      
+      
+
+t     
+      
+      
+      
+      
+      
+      
+
+t     
+      
+      
+      
+      
+      
+      
+
+t     
+      
+      
+      
+      
+      
+      
+
+figure    anomaly detect rate for different threshold values
+not attempted to perform the classification locally  we
+process the data externally  because we focused on getting high quality data rather than tractability  once we
+start to optimize for performance  we will lose the fine
+granularity of the sample collection  the challenge will
+be to still get good data as will as process it in time to
+make a decision 
+lastly  we wish to improve our classification algorithm  in our experiments  we did not make use of feature selection at all  instead we manually chose features
+based on our knowledge of computer architecture  there
+may be events we ignored from consideration that actually work well in our model  there may also be other
+ways of combining the event counts into features we
+have not considered  since we were limited to four features by the cpu architecture  we would ideally like to
+collect all possible raw features and then run a rigorous
+feature selection  we also should consider other supervised and unsupervised algorithms to see if we can get
+better performance or reliability  specifically  to recognize the mixed  and similar  workload  one immediate
+approach that comes to mind is to try to use a different
+conditional distribution for the em algorithm  since we
+question whether the data is accurately modeled using
+gaussians 
+
+ 
+
+most suited  since we assume that the data is normally
+distributed  we were able to obtain reasonably successful
+results for two out of our three workload types  though it
+is concerning that the workload that failed was the mixed
+one  which we speculate is the one most likely to appear
+in actual systems  the overall results show that there is
+promise in the system  with more advanced data collection and feature selection  it would not be surprising
+to see this approach succeed on workloads more general
+than any we tested 
+we hope that our detection method  along with recent work on control flow integrity  which attempts to
+block rop execution  will help defend computer systems against modern attackers 
+
+references
+    arm  arm architecture reference manual  armv  ed 
+    d emme   j   m aycock   m   s chmitz   j   tang   a   waks man   a   s ethumadhavan   s   and s tolfo   s  on the feasibility of online malware detection with performance counters 
+sigarch comput  archit  news        june               
+    hp  data execution prevention      ed 
+    n g   a  mixtures of gaussians and the em algorithm       
+    p edregosa   f   varoquaux   g   g ramfort  a   m ichel  
+v   t hirion   b   g risel   o   b londel   m   p rettenhofer  
+p   w eiss   r   d ubourg   v   vanderplas   j   passos   a  
+c ournapeau   d   b rucher   m   p errot  m   and d uch esnay  e  scikit learn  machine learning in python  journal of
+machine learning research                     
+
+conclusion
+
+    p i   r  raspberry pi   model b       
+
+in continuing the work done earlier this year  we made
+another step towards a future of malware detection by
+classifying how code executes  versus the current standard of classifying what code executes   we showed that
+the pmu built into all modern arm processors allow for
+fine grained access to architectural events that allows for
+detection of rop payloads that are too small to recognize
+on x       we then used gmm to classify the execution
+traces 
+although our results are currently constrained to a
+simplified and unrealistic model  single process running
+on a single core  and our classification is done offline 
+we showed that there is promise in this avenue of work 
+though the machine model we used is perhaps not the
+
+    tang   a   s ethumadhavan   s   and s tolfo   s  j  unsupervised anomaly based malware detection using hardware features 
+corr abs                  
+
+notes
+  our
+
+arm cortex a  supports collecting up to four events
+actually found a cpu bug in the broadcom bcm      arm
+cortex a   device  the dbgdsar register was implemented incorrectly  storing an absolute address instead of an offset  this is indication that debug registers may not verified as strenuously as the rest of
+the system 
+  we
+
+ 
+
+fi

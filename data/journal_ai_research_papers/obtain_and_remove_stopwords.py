@@ -3,7 +3,7 @@ import re
 import collections
 from nltk.corpus import stopwords
 '''
-remove words that occur more than M/10 times in the corpus, 
+remove words that occur more than M/10 times in the corpus,
 where M is the number of documents.
 
 remove words that occur less than 3 times in the corpus
@@ -34,14 +34,14 @@ for word in list(c):
 # Step 2 remove stopwords
 
 IF = './just_letters'
-OF = './split_by_article_clean'
+OF = './final_text'
 CUSTOM_WORDS = set(stop_words)
 cachedStopWords = set(stopwords.words("english"))
 cachedStopWords.update(CUSTOM_WORDS)
-cachedStopWords.update(('the', 'if', 'this', 'but', 'in', 'at', 'that', 
-	'by', 'these', 'we', 'as', 'also', 'like', 'fi', 'ff', 
+cachedStopWords.update(('the', 'if', 'this', 'but', 'in', 'at', 'that',
+	'by', 'these', 'we', 'as', 'also', 'like', 'fi', 'ff',
 	'problem', 'problems', 'volume', 'algorithm', 'pages', 'planning', 'show',
-	'paper', 'results', 'publish', 'research', 'result', 'results', 'find', 
+	'paper', 'results', 'publish', 'research', 'result', 'results', 'find',
 	'algorithms', 'based', 'models', 'approach', 'using', 'new', 'either', 'various', 'wellknown',
 	'always'))
 

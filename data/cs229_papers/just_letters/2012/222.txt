@@ -1,0 +1,273 @@
+andrew robbins
+
+mindmouse
+project description 
+mindmouse is an application that interfaces the users mind with the
+computers mouse functionality  the hardware that is required for
+mindmouse is the emotiv epoc neuroheadset  pictured on the right  
+this headset contains    eeg sensors that are used for measuring the
+users brainwaves  the user must train mindmouse to recognize thoughts
+corresponding to mouse actions  such as left click or scroll up  to create a
+user profile  once training samples are collected  a model that detects
+trained thoughts is created and mindmouse is ready for use 
+
+emotiv epoc neuroheadset
+
+the advantage of mindmouse over other computer pointing devices is that it is hands free  the
+main benefit that i hope to achieve with mindmouse is for people with disabilities that prevent
+them from using a conventional mouse  here the hands free capability may enable them to use a
+pointing device where other options are not available 
+this project is written in c   and uses the following libraries  libsvm  kissfft  boost file
+system  and emotiv research edition sdk 
+
+collecting training data
+mindmouse aims to distinguish the eeg readings from a particular user that correspond to
+trained actions  and to recognize when the user does not intend for mindmouse to take any
+action  to achieve this  mindmouse must first collect eeg data from the user that will become
+the training examples for the learning algorithm 
+to input training examples to this system  the user goes to the training menu and selects an
+action to train  the user is required to train neutral  and some number of mouse actions  training
+results in a few seconds of waves that are recorded and saved  the user can record as many
+examples as desired to get an arbitrarily large training set  during model creation  features from
+the trained action will become the positive training examples  and features from all other trained
+actions and from neutral will become the negative examples 
+
+ 
+
+fifeature creation
+
+uv
+
+the input data to this system is    waves  measuring brain activity  each sampled at     hz   my
+feeling is that for the purposes of the machine learning algorithm  the values of the wave samples
+do not provide much information in such a raw form  this is partly
+    
+because the wave is composition of a number of waves of varying
+    
+frequencies  additionally  i believe that the phase of the wave within
+    
+the window that i am sampling it does not provide information useful
+    
+for classifying thoughts  i want to know that sensor n is picking up a
+    
+comparatively strong signal around    hz  but i dont want to know
+ 
+  
+where my sampling window happened to overlap this    hz signal 
+
+  
+
+samples      hz rate 
+
+    of a second worth of samples from each wave  then i transform
+each wave into the frequency domain using a fast fourier transform 
+i am using the kissfft library for this transformation  after
+transforming the input data  i end up with    frequency bins 
+representing the magnitude of the wave within the corresponding bin 
+the bins contain the magnitudes of frequencies ranging from dc up
+to    hz  i e  the nyquist limit given     hz sampling rate   these
+frequency bins are the features for my learning algorithm     bins  
+   sensors       features  
+
+    second of raw eeg samples from one sensor
+
+magnitude
+
+to remedy this  i need to preprocess my input data  to do this i take
+
+  
+  
+  
+ 
+                     
+frequency bin
+
+features for the learning algorithm created
+from the wave above  bin   is the dc
+component  bin    is       hz   the
+magnitudes are shown on a logarithmic
+scale  
+
+creating a model to classify thoughts
+to create a model of each action  i train a support vector machine  i am using libsvm for the
+svm implementation  i create a separate model to detect each trained action  there are two
+reasons for this  first i want to be able to select a distinct feature set for each trained action that
+best distinguishes the target action from all of the others  i believe that having separate feature
+sets for each action is better than trying to find one in common because it could be the case that
+one action has a strong correlation with a particular feature  but other actions show no correlation
+with that feature  the second reason for this is that i want to be able to detect multiple actions at
+once 
+feature selection is a critical piece of this application  during the course of this project  i found
+that i was faced with two competing objectives 
+   enable the computer to automatically find correlations in brain waves that can
+identify a trained action 
+ 
+
+to interface with the headset i am using the research edition sdk which allows direct access to the raw eeg data 
+
+ 
+
+fi   finish feature selection in a reasonable amount of time 
+to achieve a balance between these objectives  i tried a number of different things before finally
+settling on one  most of them did not work well enough for one reason or another  i will mention
+some of the things that i tried and explain what i finally settled on 
+for my first attempt at finding a good feature set i implemented backward search  my thought
+was that the set of all of the features will contain the correlations that distinguish different
+actions  so i began my search with all of the features  trained the model with all but one of them 
+and ejected the feature where the    fold cross validation error was lowest when trained on the
+rest of the features  to do the cross validation i used the librarys built in cross validation
+function  there was a problem here  the built in cross validation function creates random bins
+each time it is called  and when i am searching over     features  i end up choosing features that
+happened to get a fortuitous cross validation bin allocation  so i was not converging to the
+correlated feature set that i wanted  to prove that this was what was happening  i ran cross
+validation   times for each feature set  and averaged the error  afterward i saw that backward
+search was converging to low cross validation error  but it took   to    hours to run it on a
+moderately sized training set 
+i needed to keep the cross validation bins constant in the inner loop of my backward search  so
+that i could compare feature sets cross validation error apples to apples  however  i dont want
+my whole search to be dependent on one chance bin setting  so i created an implementation of
+   fold cross validation that would distribute positive and negative training examples uniformly
+into bins  and in a deterministic order  then in the outer loop of my search  after selecting each
+feature  i randomize the order of my training examples  this way i achieved apples to apples
+comparison between features at each step of the search  and still benefitted from randomized
+cross validation bins  this achieved a   times speedup compared to my previous backward
+search  but it was still slow  happily  my processor runs   threads in parallel  so i split the inner
+loop of the search into   parallel threads  together these two optimizations achieved a    times
+speedup 
+at this point i wanted to know if forward search would also converge to low cross validation
+error  so i implemented forward search similarly to my implementation of backward search  and
+i found that it also converged to low cross validation error with a similar number of features  but
+forward search reached low cross validation error much faster than backward search  in my runs 
+so i switched to forward search and i allow the user to stop the search early  and resume later if
+desired  
+now that i had something working  i wanted to try different kernels  up to this point  i had been
+using a linear kernel  so i switched to using a gaussian kernel  the gaussian kernel had a
+parameter gamma  corresponding to       and i tried a wide range of settings for this  from
+      to         doubling it each time   when using a gaussian kernel  i noticed that forward
+ 
+
+fisearch would exclusively choose dc components from each of the sensors  until it chose all   
+of them  afterward it would begin choosing components of non zero frequency  and the cross
+validation error would quickly rise and not recover  so a gaussian kernel did not work for this
+application  next i tried a polynomial kernel of degree    the constant had a value of       it took
+much longer to reach convergence each time i trained a model using the polynomial kernel 
+forward search would have taken days to complete  so for practical considerations  the
+polynomial kernel also would not work  since the linear kernel worked and was fast  i felt it was
+the best practical choice  so i am using the linear kernel in this application 
+
+can be detected and zeroed out  since my hardware does not
+include such sensors  i couldnt implement that algorithm for
+this project  however  i felt that it was necessary to remove
+the contribution of eye movement and heartbeat from my input
+data  so i decided to constrain the feature search to use only
+
+number of features selected
+  
+  
+  
+  
+ 
+ 
+  
+  
+  
+  
+  
+   
+   
+   
+   
+   
+   
+
+my theory on this was that the svm was being trained on my
+physiological state  such as my heart rate  at the time the
+training samples were taken  it was mentioned in class that
+ica can be used to remove unwanted artifacts caused by eye
+movement and heartbeat from eeg data  so i looked into
+implementing artifact removal from my input signals  the
+algorithms that i came across that would automatically remove
+ocular artifacts required additional sensors near the eyes   so
+that after the raw data is converted into independent
+components  the components that correspond to eye movement
+
+cross validation error    
+
+cross validation error    
+
+once i had created a model with low cross validation error over my training set  the next step
+was to see if this low cross validation error indicated that the
+  
+model could predict when i was thinking the trained thought 
+when testing this  i found that if the time between when i
+  
+inputted the training data to the time when i tested the
+  
+response was not very long that the probabilities reported by
+  
+the model were strongly correlated with the trained action 
+however  when i used the same model the next day  it was no
+ 
+longer very good at predicting the trained action  
+                              
+
+number of features selected
+the top graph shows the cross validation error on a
+training set after each step of forward search  when
+features from all frequency bins were used  the bottom
+graph shows forward search over the same training set
+when frequencies below   hz were excluded from the
+feature set 
+
+ 
+
+the model is identical each time it is used  because it is saved to disk and loaded when needed  also  for testing
+purposes  i am using motor control thoughts like clench fist so that i can be confident that i am properly
+reproducing the thought 
+ 
+joyce  c   gordonitsky  i   kutas  m         automatic removal of eye movement and blink artifacts from eeg data
+using blind component separation  psychophysiology              
+
+ 
+
+fithe features whose frequency was higher than  hz   after making this modification  i found that
+the models that are created are more robust to changes in my energy level  i have two graphs
+above that show the performance of forward search before and after making this change  when
+the lowest frequency features are used  forward search quickly reaches    cross validation error 
+but seems to be learning about features that were not intended to be taught  when constrained to
+higher frequencies  forward searchs minimum cross validation error was     but the models
+that are produced seem to work much better 
+
+operation 
+once models are created and mindmouse is enabled  it collects eeg readings at a rate of    
+samples per sensor per second  mindmouse keeps a buffer of the most recent  second of
+samples  and    times per second this buffer is converted into a feature vector and sent through
+each model  when mindmouse detects that   consecutive feature vectors are given a probability
+of indicating a trained action higher than the user configurable sensitivity  mind mouse sends the
+associated mouse command into the system 
+
+future work 
+i developed mindmouse as a win   console application for
+the purpose of cs     i have begun construction of a
+windows gui that will encapsulate the functionality contained
+by the console application in a user friendly way  this gui is
+shown on the right  the user interface will allow the user to
+enable disable particular mouse functions  adjust sensitivities 
+and collect training data corresponding to mouse actions  each
+action has a slider that will display the computers belief
+mindmouse user interface
+about the probability that the user is thinking the particular
+action  this allows the user to adjust sensitivity and to retrain individual mouse behaviors as
+necessary  also any subset of functionality can be enabled as desired by the user 
+
+ 
+
+in the algorithm proposed by  joyce  gordonitsky   kutas         one step that they take is to remove
+components with high power in the low frequency range that correlate to signals from sensors over the eyes  also
+it seems likely to me that signals corresponding to heartbeat would be low frequency signals  since i dont have
+sensors to correlate the unwanted signals  i believe that it is better to throw away the low frequency features than
+to have the model find correlations with unwanted artifacts that dont correspond to the trained action 
+
+ 
+
+fi

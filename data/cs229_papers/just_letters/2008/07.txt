@@ -1,0 +1,285 @@
+using gpus to speedup sparse coding algorithms applied to
+self taught learning problems
+anand madhavan
+abstract
+in this work  we present a new combination of sparse coding algorithms designed to exploit the
+gpu and apply it to a self taught learning     problem  we build on top of the iterative approach
+of solving two convex optimization problems alternatingly  originally suggested in       the first
+and most important improvement in this work is a parallelized coordinate descent algorithm for
+the generalized l   regularized least squares optimization problem  used to solve for the sparse
+coefficients  we demonstrate the improved speedups against the feature sign search algorithm
+described in      the second improvement is in a projected gradient descent implementation for
+the basis learning portion  finally  an application of this implementation on a self taught learning
+problem using unlabelled handwritten digits to predict handwritten letters is demonstrated 
+
+ 
+
+introduction
+
+an efficient sparse coding approach based on alternating convex optimization over two subsets of
+the variables was described in     and was applied to solving the self taught learning problem in     
+the approach however can still take a long time to solve  as an illustration  when it was used to
+characterize natural images  the algorithm takes    hours to solve for      bases  each   x   pixels 
+using off the shelf desktops in           in this project  we present a way of improving the performance
+of this approach by specifically designing algorithms that exploit the compute power of commodity
+gpus  we then apply it to natural images to show performance comparisons with prior matlab
+implementations and finally demonstrate an application to handwritten digits 
+to briefly describe the sparse coding problem  let x  rkxm be the input matrix  each column is
+an input vector   let b  rkxn be the basis matrix  each column is a basis vector  rk    and let s 
+rnxm be the coefficient matrix  each column is a coefficient vector  rn    then the basis vectors and
+the sparse coefficients can be found as the solution to the following optimization problem 
+ 
+minimizeb s        x  bs   f   i j  si j  
+subject to
+
+ 
+
+i
+
+ 
+bi j
+ c j          n
+
+where     is the sparsity function and  is a constant  using an l  penalty    si j      as the
+sparsity function  the optimization problem is convex in b  while holding s fixed  and convex in s
+ while holding b fixed   but not convex in both simultaneously  this was solved in      by alternatingly
+solving first for the bases b  as a least squares problem with quadratic constraints  using the lagrange
+dual  and then for the coefficients s  as a regularized least squares problem  using the feature sign
+search algorithm  however both these methods are not very conducive to massive parallelism due to
+the presence of inverse terms in their closed form solutions      generic libraries for solving for the
+inverse of a matrix on the gpu do not currently exist  for example not part of cublas      further 
+since feature sign exploits sparsity  it is not the most efficient algorithm on generic regularized least
+squares problems   a wider problem of interest in the learning and optimization community  
+
+ 
+
+fi 
+
+l   regularized least squares  a parallelized coordinate descent algorithm
+
+we first consider the step of solving the l   regularized least squares problem for the coefficients s
+keeping the bases b fixed  consider an alternative to feature sign search  the popular  coordinate
+descent algorithm  this algorithm on its own is not particularly parallel since it involves proceeding
+along one coordinate after the other 
+however  we could alternatively find the descent directions along all the coordinates in any given
+step and chose a descend direction that is the resultant direction suggested by all of them  this is
+an idea that lends itself to a high degree of parallelism  i  allowing simultaneous computations of the
+coefficients for many inputs and  ii  allowing for the simultaneous computation of the descent direction 
+with each coordinate being computed in a separate thread  we present this algorithm as a solution 
+thus the optimization problem can be simplified to 
+minimizex f  x  
+
+ 
+ 
+
+  y  ax        x   
+
+one equation per training example  where  is a constant  regularization coefficient  and x rn  
+y rk and a rkxn   we optimize above w r t one xj at a time  while keeping the others fixed  and
+determine the new descent direction as follows 
+
+if   y t a j     
+
+  t  j 
+a 
+xj   ya j t
+if  y t a j      
+a j 
+
+ yt a j   
+if  y t a j      
+a j t a j 
+where a j   rk  jth column of the matrix a   we perform a line search along the direction d   xx
+to find a step size    where           that reduces the value of the objective function  since d is
+a descent direction  such a step size can always be found     this is then repeated until the change in
+the cost function is within a specified tolerance 
+this algorithm  is easier to parallelize as each thread can compute the simple coordinate wise
+optimum  the line search in turn can also be parallelized  or we can just take a pre determined step
+size in that direction  further our algorithm can be used as a substitute to feature sign search as a
+whole  or as part of the feature sign search  instead of the analytical solution that uses an inverse in
+     
+
+ 
+
+gpu implementation of the parallelized coordinate descent
+algorithm
+
+we use nvidias cuda enabled gpus for our implementation  these come with many streaming
+multiprocessors  sms      each with many scalar cores  sps   see figure     threads running on
+the cores within an sm can communicate with each other using shared memory  the unit of thread
+execution on the sp is a kernel and this is executed in concert with many other threads that form a
+block  many blocks can be scheduled on the gpu  however a block is assigned only to one sm and
+hence threads across blocks should not rely on communications with each other  blocks are scheduled
+by the hardware as and when sms have resources available to handle them 
+we exploit the parallelism available in the many sms by creating as many blocks as there are
+training data  m   this works very well since we dont require communications across training data
+during coefficient computations  we exploit the many sps in an sm  by scheduling as many threads in
+a block as there are coordinates  n   this allows for the coordinates to be shared during computations
+ such as computation of x vector norms   temporary data  mostly vectors of size n  are stored in the
+  we
+
+state it here without providing proof in the interest of space
+
+ 
+
+fifigure    simplified schematic illustrating the blocks  threads and various portions of the matrices a 
+y and x used by them 
+shared memory space of an sm and is shared across all the cores of that sm  the a  x and y matrices
+above are stored in global device memory and is shared across all the sms  the kernel function that
+is executed on each thread is then repeated until the minimum of the cost function is found  figure  
+illustrates this 
+we benchmark this solution using various sizes of m  n and k and compare its performance on
+the gpu against the equivalent matlab version on the cpu  these measurements were made on a
+macbook pro with an intel core  duo machine with an     m gt gpu  thus making it a fair enough
+comparison  figure   shows the speedup graphs  speedups of upto  x are achieved even on a modest
+macbook pro  with    sm cores  compared to say     cores on a tesla     gtx 
+
+figure    left  speedup of the parallelized coordinate descent on gpu vs feature sign search on cpu
+ for     basis vectors and k       right  speedup of the same algorithm on the cpu vs on the gpu 
+
+ 
+
+learning bases using projected gradient descent
+
+as the second step of the optimization in sparse coding  we solve for the basis keeping the coefficients
+fixed  this is a least squares problem with quadratic constraints 
+minimizex   x  bs   f
+
+ 
+
+fisubject to
+
+ k
+
+i  
+
+ 
+bi j
+ c   j           m
+
+this can be solved very efficiently using the lagrange dual      however the solution involving the
+lagrange dual requires taking an inverse  which is not very parallelizable and in the spirit of exploring
+parallelizable algorithms in this work  we consider using a projected gradient descent approach instead 
+this gives us a closed form solution for the gradient w r t b  and results in the following update rule
+for the projected gradient descent 
+b    b  b   x  bs   f
+constrained at each step by scaling b down such that
+ k
+ 
+i   bi j  c   j           m
+
+where b   x  bs   f     x  bs s t
+
+when implemented this algorithm using cublas libraries      this can provide significant speedups
+compared to a cpu version but only when run on large number of inputs sizes  m   typically however
+the lagrange dual closed form solution can in general be faster  however this is not much of an
+issue since basis computation takes a much smaller fraction  and if not we decrease the iterations to
+convergence accordingly  with not much loss in iterative convergence  of the total time  which is often
+dominated by the coefficient computation part  for example on a problem of size m      k     
+n      the lagrange dual takes around      seconds  while the cublas version takes      seconds
+ incidentally the matlab version of the projected gradient descent takes around     seconds   the
+benefits are better with increasing size  the numbers are rudimentary and so were not reliable enough
+to plot 
+
+ 
+
+evaluation on natural images
+
+we then proceed to evaluate the combined gpu implementations from sections   and   on    natural
+images  this is learnt by breaking up the images into patches of   x   each  figure   shows the    
+basis vectors learnt  the entire run takes a few hours on a      gt machine  the convergence profile
+is shown as well in figure   
+
+figure    left      basis learnt using natural images  using   x   patches  using a combined gpu
+code using alternating kernel and cublas code  middle  joint convergence of the algorithms  right 
+sample speedups against matlab versions  of our algorithms  for a smaller problem size        images 
+  x   patch     and     basis vectors case shown  
+
+ 
+
+fi 
+
+application to self taught learning on handwritten letters
+
+finally  we apply the implementation to a self taught learning problem using handwritten letters and
+images  we are interested in classifying handwritten letters as a  b  c etc  right most tile in figure
+    we however are in a  albeit made up  scenario where we have only say a few labelled handwritten
+letters and we seek to automatically characterize them  coming up with the basis vector using just a
+handful of letters however is not feasible and so we instead train it on a large number of handwritten
+digits instead  figure    left most  shows a sampling of the digits used  the entire     dimension
+   x    images were initially used for learning the basis  however  these produced highly overfitted
+basis that looked very much like the handwritten digits  center left in figure     thus we apply pca
+to these digits and obtained a much much better basis vectors that capture strokes instead of just the
+digits  center right image in figure   shows the final resulting basis obtained    of the     basis are
+shown  
+
+figure    leftmost  sample of the       handwritten digits used to train the basis  center left 
+sample of the overfitted basis when using all     pixels  center right  sampling of   of the    
+basis vectors learnt using handwritten digits  right  sampling of the letters that we are interested in
+labeling using self taught learning 
+we then use these basis to determine coefficients for the labelled letters and feed these coefficients
+as labelled features into an svm  we use svm multiclass for this purpose       each time we require to
+classify a letter  we compute its coefficients in a similar fashion and use these as features for classification
+by the svm  it is worth noting that in finding the coefficients  we again use the parallelized coordinate
+descent algorithm  which makes this step very fast  the prediction results for this step are tabulated
+in table   
+  of training examples
+   
+   
+    
+
+accuracy on letters
+      
+      
+      
+
+table        features  after reduction using pca      classes      basis vectors
+
+ 
+
+conclusion and suggested future work
+
+conclusions
+ the parallelized coordinate descent algorithm was shown to be a fast algorithm  conducive to
+parallelism on the gpu  this algorithm on its own is valuable in a variety of instances 
+   as a solution within feature sign search algorithm itself     
+
+ 
+
+fi   as a replacement to the entire coefficient computation step within sparse coding     
+   in finding the coefficients during real time classification of data using self taught learning
+as demonstrated in section   
+   as a solution the generic l  regularized least square problem applicable to many such other
+areas 
+ we obtained speedups of  x over the feature sign search algorithm even on a modest gpu on
+a macbook pro  running this on more powerful gpus proportionately scales and so provides
+more benefits when applied to larger problems 
+ running the problem end to end on a self taught learning application also provided speedups
+that were not measured  but were definitely perceptible  on the natural images which we did
+measure  we saw speedups of around   x 
+ together these provide compelling reasons for us to use gpus in machine learning  specifically
+in brain based probabilistic models  
+
+future work
+ future work should definitely involve exploiting even more parallelism  for example in the linesearch within the two algorithms 
+ applications to larger problem sizes such as textual classification and audio classifications 
+ with improved speeds using commodity gpus  we can think of real time classification tasks
+onboard robots and other devices 
+
+acknowledgements
+immense thanks to rajat raina for providing invaluable guidance  help with formalisms and insights
+into the problem  as well as help with optimizing the matlab version of the implementation of the
+coordinate descent algorithm  thanks to honglak lee for graciously providing his gpu and machine
+for benchmarking  also thanks to dr  andrew ng for encouraging a project like this in cs     
+
+references
+    rajat raina  alexis battle  honglak lee  benjamin packer  and andrew y  ng  self taught learning  transfer learning from unlabeled data  in icml  pages              
+    honglak lee  alexis battle  rajat raina  and andrew y  ng  efficient sparse coding algorithms 
+in in nips  pages         nips       
+    in cublas library      nvidia inc       
+    in cuda programming guide      nvidia inc       
+    svm multiclass  http   www cs cornell edu people tj svm
+
+ 
+
+fi

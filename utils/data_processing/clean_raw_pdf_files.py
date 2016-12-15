@@ -4,8 +4,8 @@ import string
 import unicodedata
 from unidecode import unidecode
 
-IF = 'txt-dirty'
-OF = 'txt-clean'
+IF = 'text-dirty'
+OF = 'text-clean'
 
 if not os.path.exists(OF):
     os.mkdir(OF)
@@ -24,5 +24,7 @@ for r, ds, fs in os.walk(IF):
         goodtext = [unicode_func(line) for line in goodtext]
 
         of_name = os.path.join(r, f).replace(IF, OF)
+        if not os.path.exists(os.path.dirname(of_name)):
+            os.mkdir(os.path.dirname(of_name))
         with open(of_name, 'w') as fw:
             fw.writelines(goodtext)

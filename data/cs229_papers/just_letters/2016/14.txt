@@ -1,0 +1,408 @@
+will our new robot overlords play hearthstone with us 
+cs     final report
+hubert teo hteo stanford edu
+yuetong wang yuetong stanford edu
+jiren zhu jirenz stanford edu
+june        
+
+ 
+
+hearthstone
+
+hearthstone is a online trading card game released in      that is gaining in popularity  the basic driving principles of
+hearthstone are relatively easy to describe and understand  it is a turn based one versus one game  both players start
+by choosing a hero and a deck to draw from  in the beginning of each turn  a player gains certain amounts of resources
+including mana and cards  in his turn  a player can make as many moves as desired  as long as there are enough resources
+or the rules otherwise allow it   valid moves include playing cards and using the players heros special abilities  the
+ultimate goal is to win the game by removing all hit points of an opponent 
+it is natural to model this game as a markov decision process  with rewards only at terminal states  every game
+situation is a state and the move that a player takes is an action  like any other turn based trading game  it has a
+sprawling collection of mechanics that apply only in certain circumstances  thus writing a good ai for hearthstone
+remains a difficult and interesting problem because of two main challenges 
+   with an mdp  the biggest impediment to a learning is the size of the state space  for hearthstone  because there
+are various special effects and a lot of game mechanics  the number of possible game states is huge  a naive solution
+based on traversing the mdp would fail miserably because the chance of seeing the same state twice is essentially
+zero  the ai has to be able to evaluate previously unseen states in a reasonable fashion 
+   the other limitation is that actions in hearthstone are highly coupled with states  the rules only allow certain
+actions to be applied  depending on the game state  this means that a naive approach that enumerates the fixed
+set of all possible unique actions in the mdp is intractable  the set of all possible actions is far greater than the
+number of actions applicable to a particular state  even so  there are approximately    unique actions available at
+each game state  the combinations of them result in a big action space that is hard to enumerate 
+these challenges mean that a good ai has to be tailored strategically to the specific restrictions and characteristics of
+hearthstone  a custom built ai is needed to play this game with any measure of success  we aim to use learning
+techniques to match or outperform current ais for hearthstone  most of which are manually coded heuristic agents 
+
+ 
+   
+
+methodology
+platform
+
+we based our project off the hearthstone simulator hearthbreaker  an open source platform developed by danielyule and
+other contributors      the well functioning python   game engine is feature complete up to last years hearthstone
+rule set  it also comes with an agent framework that is easily extensible to implement our ai  hearthbreaker also comes
+with several baseline ais of its own  there is a random agent which performs a random valid action at every step and
+a trade agent which looks for the move that trades best with a comprehensive set of hand coded heuristics  we use
+the trade agent as the heuristic agent against which we evaluate our ai 
+
+   
+
+feature extraction
+
+finding an effective representation of the huge game state space is critical to formulating a tractable learning problem 
+we make several observations specific to hearthstone based on prior knowledge 
+observation    the current game state provides enough information to determine how well both players are doing 
+this means that the game is well parametrized by the current game state  the game history yields little benefit save
+for allowing card counting techniques that keep track of the set of possible remaining cards in the deck 
+ 
+
+fiobservation    the intrinsic value of many game components can be roughly understood in terms of independent
+contributions to the goodness of a game state 
+while there can be many combinations of minions  minion specific effects  hero specific mechanics  cards and decks  we
+argue that we can treat each of these components as having independent contributions to a universal value of a game
+state  because the specific mechanics have less importance in relation to the overarching strategy  this ignores special
+interactions between game components  but is still in line with our goal to learn a good general strategy for hearthstone 
+guided by these two observations  we engineered a feature extractor that captures the critical resources of both players 
+the second observation means that it should be possible to find the game value as a linear combination of the feature
+vector components  but does not preclude using more sophisticated non linear function approximators 
+specifically  from each minion  we extract health  attack damage  and an indicator variable denoting if it can attack 
+sorting the triples to canonicalize our representation  we also include the heros health and armor value and some other
+miscellaneous features  considering that there are at most   minions in the playing field for one player  this gives   
+features for one player  repeating this process on the opponent  we obtain a total of    features 
+
+   
+
+monte carlo methods for action evaluation
+
+armed with a game state representation  we are now faced with the problem of evaluating the quality of an action  unlike
+in deterministic games  we cannot simply enumerate the states that result from taking an action  because actions can have
+non deterministic effects  to further complicate matters  each player is allowed to perform any number of legal actions in
+any order within a turn 
+observation    the set of actions that have non deterministic effects is small  the majority of the non determinism
+results from drawing cards and from the lack of knowledge of the opponents deck and hand 
+observation    the number of actions within a turn is always finite  there are no cycles in the action graph 
+    implies that the action graph is a directed acyclic graph  dag   with complete turns mapping to paths in the action
+dag      suggests that monte carlo techniques will be effective  hence  we arrive at an algorithm for evaluating the
+quality of an action  first  simulate taking the action on a copy of the current game state  next  perform a monte carlo
+traversal of the action dag  simulating each action from each game state  and return the maximum value of the visited
+states  this yields a monte carlo estimate of the maximum value at the end of a complete turn after taking the action 
+which we interpret as the value of the action 
+
+   
+
+action dag pruning
+
+in practice  the action dag can be too large to be efficiently traversed completely because in the late game  each player
+has more resources and thus more actions to take  with the large branching factor  this results in an exponentially growing
+number of states to visit  we took several measures to prune our traversal and optimize performance 
+   some actions are order independent  so there might be multiple paths to the same state  since we evaluate the
+quality of an action by the value of the final state  it is not necessary to visit each state more than once  hence  we
+hash visited game states  and avoid them in our traversal  produces a spanning tree of the visited states 
+   we perform a depth limited search of the dag  at depths exceeding a certain maximum depth  we cease to explore
+every action available at the node  and instead switch to a greedy traversal strategy  continuing only into best
+possible action 
+   we use an a  search strategy  traversing active game states in an order that prioritizes shallower nodes and nodes
+with better value  this ordered traversal enables us to set a hard budget on the maximum number of states to be
+traversed 
+this gives us a performance tunable search strategy  not unlike general mcts      for both training and evaluation
+we set the maximum depth to   and the traversal budget to    
+
+   
+
+ai
+
+assuming that we have a model that evaluates the value of a state given the feature vector representation  combining
+these components produces a complete ai agent  at each state  we enumerate all legal actions and select the one with the
+best value according to the evaluation method above  note that since actions have non deterministic results  we perform
+a fresh monte carlo traversal at each step until the best action is to end the turn 
+
+ 
+
+fi 
+
+models
+
+we now proceed to the most important part of a good ai  the way it evaluates the current game state  we developed
+two approaches to this task  supervised learning and reinforcement learning  both models share the same    dimensional
+feature extractor 
+
+   
+     
+
+supervised learning
+dataset preparation
+
+we pit the existing heuristic ai trade agent against itself  recording the game state at the end of each turn  each
+game history is then processed  and a score assigned to each game state  the base score f is fwin      if the player won 
+flose     if the lost and ftie     for a draw  when both players perish simultaneously   the score for a game state d
+turns away from the end of the game and whose current players base score is f is assigned as
+y      d f
+this mimics the q learning discount scheme with a discount of         feature vectors are then extracted from each
+game states and the resulting x  y pairs recorded into the dataset 
+     
+
+regression model
+
+we used two models for supervised regression  a linear regression model and a deep neural network model implemented
+within the scikit learn     and scikit neuralnetwork     frameworks  the deep neural network contains a reluactivation layer with     neurons  a sigmoid activation layer with     neurons  a tanh activation layer with     neurons 
+and a final linear combination layer for output 
+
+   
+
+reinforcement learning
+
+we used the q learning algorithm to learn the best linear approximator to the q function  making several non standard
+modelling choices along the way 
+     
+
+action path mdp
+
+it is difficult to run q learning directly on the hearthstone mdp as is  since each player takes a variable number of
+actions in each turn  hence  the game progression alternates between players irregularly  slowing convergence because the
+discounted future reward would vary depending on not just the number of turns but the number of actions taken by each
+player 
+hence  we reformulated the mdp to interpret an entire path in the action dag  corresponding to a sequence of legal
+actions  as an action  with the restriction that the last action must be to end the current turn  note that unlike with the
+action evaluation scheme  there is no issue with non determinism here  we can simply continue the game from the last
+game state on the action path once we have selected an action path 
+     
+
+function approximation
+
+we explored two approaches to approximating the q function with a linear function  given the current state s and the
+action sequence a  which we also treat as a state  the resulting game state according to our simulation   we can choose to
+either predict the q value from only a  or from both s and a  more specifically  the two function approximators tested
+were 
+
+
+t
+t
+t
+t  s 
+q   s  a         s  a       a  
+q   s  a         s  a     
+ a 
+the first model  final state only  corresponds to the assertion of observation    the second model  state pair  is a
+generalization of the first  but might be harder to train due to the increased number of weights 
+     
+
+q learning
+
+with these two function approximators  we can simulate games using the game engine by running q learning with an
+ greedy        strategy for both players using the same model  to efficiently select random action sequences  we used
+random walks on the action dag  the best action sequence and its value were found using the same search routines used
+
+ 
+
+fifor action evaluation  the q learning update is as follows  having observed that taking action a from state s leads to
+state s  with reward r s     set
+h
+i
+   
+w t       w t     r s       max
+q s
+ 
+a
+ 
+
+q s 
+a 
+ s  a 
+ 
+a
+
+where the discount factor        and the rewards r s    are the same as in the supervised learning model  fwin   flose   ftie
+for winning  losing  and tied states respectively 
+     
+
+experience replay
+
+observation    the only non zero rewards occur at the last turn of the mdp 
+unfortunately  when using plain q learning  this means that no information is learned from all the non terminal moves
+in the first game  since the rewards are all zero  this causes convergence to be haphazard as earlier games have an outsize
+influence on the  greedy exploration strategy 
+to speed convergence and reduce variance with respect to the observed state transitions  we implemented an experience
+replay training scheme  inspired by mnih et  al s paper     each training epoch consists of a simulation phase  an instant
+replay phase  and an experience replay phase  first  an entire game is simulated to termination without performing any
+q learning updates  the state transitions in the game history are then replayed in reverse and used to update the model 
+next  the new game is added to the experience bank of state transitions  which is truncated by removing random samples
+if it exceeds its fixed maximum capacity           experience replay samples are then drawn from the bank and used to
+update the model  this accelerates convergence and helps to smooth the exploration strategy  since the model remains
+constant in the simulation 
+
+ 
+
+model training and evaluation
+
+for the supervised models  we simulated      games  generating a dataset with about       data points  each corresponding to an intermediate game state  each game takes about    turns per player  and thus gives around    game states  
+we then randomly sampled                                                      and       data points independently
+from the dataset into sub datasets and trained both supervised models independently on each sub dataset 
+the reinforcement learning models were both trained with experience replay q learning for               and    epochs 
+with each training run performed independently 
+all four models  each with various training set sizes are tested against the existing heuristic ai using the monte carlo
+action evaluation strategy  with a maximum depth of   and a traversal budget of     we record our ais winning rate
+after simulating     games against the benchmark heuristic ai 
+
+ 
+
+results
+
+figure    learning curve for supervised linear  blue 
+and deep neural net  red  models 
+
+figure    learning curve for final state  yellow  and
+state pair  cyan  reinforcement learning models 
+
+currently  our ai agents readily beat the existing baseline heuristic agent provided in the engine  we report the learning
+curve for all four models with increasing training set size for supervised learners  figure    and training epochs for
+reinforcement learners  figure     note that the training times are measured in different units for our supervised and
+reinforcement models 
+the supervised learning models perform well against the heuristic agent  both achieving a maximum win rate of     
+the deep neural net appeared to converge significantly faster  with both models tapering out at approximately     
+the reinforcement learning models still matched the heuristic agent  but with a less impressive margin  the state pair
+model hovered at around a     win rate  and the final state model initially outperformed it to achieve a     win rate 
+however  both models deteriorated after too many training epochs 
+ 
+
+fitraining set size
+supervised  linear     
+supervised  deep neural net     
+
+  
+ 
+ 
+
+  
+ 
+  
+
+  
+ 
+  
+
+   
+  
+  
+
+   
+  
+  
+
+training epochs
+reinforcement  final state     
+reinforcement  state pair     
+
+ 
+  
+  
+
+ 
+  
+  
+
+  
+  
+  
+
+  
+  
+  
+
+  
+  
+  
+
+    
+  
+  
+
+    
+  
+  
+
+    
+  
+  
+
+     
+  
+  
+
+     
+  
+  
+
+     
+  
+  
+
+figure    winning rates against heuristic ai
+
+   
+
+supervised model
+
+it is somewhat surprising that our supervised models perform so well against the heuristic agent  especially given that
+they are trained with data extracted from its behavior  examining the learned weights for the best linear model reveals
+reasonable values  intuitively bad things such as the opponents hero health and total attack damage of opponent minions
+have negative weights  and good things such as our players hero health and healing multiplier have positive weights 
+thus  our ai agent appears to have learned a general strategy for playing hearthstone 
+this hints at a possible explanation for why it fails to exceed a     winning rate  apart from the inherent randomness
+in the hearthstone game  it is also not taking advantage of compounding effects from multiple spells  minions and special
+hero powers  since the deep neural model appearing to be very adept at learning to make use of the information we
+provide  this suggests that it might be possible to extend our game state representation with more specific identifying
+information about the individual minion and hero types 
+
+   
+
+reinforcement learning
+
+though the reinforcement learning models do not perform as well as the supervised models  we must note that they
+received less training     training epochs is approximately equivalent to a training set size of       in addition  the lack
+of supervision in q learning means that the models were responsible for their own exploration of the strategy space and
+were not able to leverage the knowledge of the heuristic agent 
+when training  there was significant instability in the model weights learned especially during the initial few games 
+this is problematic because the q learning strategy is dependent on these initial weights  so any initial biases might
+result in a feedback effect  bad initial experiences lead to worse exploration strategies and poor learning  the experience
+replay mechanism also has the unintended effect of giving outlier games more influence on the model  further analysis is
+required to determine if this was the cause of the fall in the winning rate at    training epochs  nonetheless  a possible
+remedy is to implement bootstrapping  training the model on a small number of games between the heuristic agent and
+itself before switching back to the q learning training procedure 
+
+ 
+
+conclusion
+
+the ability of our machine learning ai agent to outperform the hand coded heuristic agent in hearthbreaker is certainly
+encouraging  its success proves that it was able to learn the essence of the game and excel at it  even without leveraging
+specific interactions between game components  the challenging next step will be to improve it to the extent that it is
+able strategize with respect to all the special interactions between game components and match or surpass expert human
+opponents 
+
+references
+   
+
+aigamedev  scikit neuralnetwork  https   github com aigamedev scikit neuralnetwork       
+
+   
+
+c  b  browne et al  a survey of monte carlo tree search methods  in  ieee transactions on computational
+intelligence and ai in games      mar         pp       issn          x  doi          tciaig              
+
+   
+
+danielyule  hearthbreaker  https   github com danielyule hearthbreaker       
+
+   
+
+volodymyr mnih et al  playing atari with deep reinforcement learning  in  corr abs                   url 
+http   arxiv org abs           
+
+   
+
+f  pedregosa et al  scikit learn  machine learning in python  in  journal of machine learning research           
+pp           
+
+ 
+
+fi

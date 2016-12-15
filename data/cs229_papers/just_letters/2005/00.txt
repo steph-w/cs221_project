@@ -1,0 +1,398 @@
+cs    project  segmenting music into notes
+using mixture of gaussians
+roger grosse
+december         
+
+fi 
+
+introduction
+
+when we listen to music  we can distinguish individual instruments with relative
+ease  if a learning algorithm could do this automatically  it would have several
+applications  computers could transcribe music for us  we could take a recording
+and edit out the voice for karaoke  we could see what a given piece might have
+sounded like if bach had picked one note instead of another one  and so on  a
+first step towards creating any such system would be to segment a stream of
+music into its component notes  this remains an unsolved problem  and was
+the focus of my efforts for this project 
+what information would a learning algorithm have to work with  fig   
+and   show a short excerpt from hindemiths symphonic metamorphosis  the
+raw  wav input is expressed as air pressure over time  fig  a   but using the
+fourier transform  we convert this to a spectrogram  which gives the amplitude
+of a given frequency at a given time  fig  b   although the former suffices
+for multiple source sound separation  the latter is necessary for single source
+separation 
+what simplifies analysis of music as compared to speech is that there are
+two basic kinds of sounds  harmonic and percussive  harmonic sounds  such
+as those produced by wind and string instruments  consist of a fundamental
+frequency  which we perceive as the pitch  and a set of overtones  which all have
+frequencies that are integer multiples of the fundamental frequency  i will refer
+to these as the spectrum of the sound  we humans use all of these overtones 
+not just the fundamental  to perceive the pitch and the timbre  a key factor
+simplifying the analysis of music is that these sounds have a more or less steady
+pitch over time  percussive sounds  which i have not tried to deal with yet  have
+a much more complex spectrum than do harmonic sounds 
+in this paper  i will describe the non negative matrix factorization algorithm  which has been used to separate music into different components  i will
+show how nmf is not able to separate out notes well enough for an instrument
+separation system  finally  i will outline a mixture of gaussians model i developed to fix the shortcomings of nmf  and then compare the advantages and
+drawbacks to each approach 
+
+ 
+
+non negative matrix factorization
+
+my first attempt at segmenting music was the non negative matrix factorization
+algorithm used by helen and virtanen       they used this as part of a larger
+system to separate music into its harmonic and percussive parts   the function
+of nmf is to separate the sound into different components  each of constant
+spectrum and time varying amplitude  in theory  each of these components
+should roughly correspond to one pitch played by one instrument 
+we start with a spectrogram s   i do not discuss how to get this  because it
+is a standard procedure  and matlab does it automatically   we take the norm
+of each entry to get the amplitude spectrogram a  we then use the non negative
+
+ 
+
+fimatrix factorization technique presented by     and     to break the signal into
+its components  although this is not how nmf is usually presented  it will
+be convenient for this paper to formulate the algorithm in terms of maximum
+likelihood estimation  we pretend that there is some underlying distribution d
+over time and frequency  and that the amplitude spectrogram a is a weighted
+dataset drawn from d  we want to find the distribution d  which assigns
+maximum likelihood to a  subject to the following constraints 
+   first  a component c is selected according to some distribution p over c
+different components 
+   after the component is selected  a point x is drawn from a joint conditional
+distribution p x c  over time and frequency  the time and frequency are
+independent given the component  e g  p x c    pf  x c pt  x c  
+in other words  each component has constant spectrum and time varying
+amplitude  to find d    we use an iterative nmf algorithm described by lee    
+to estimate
+a  w h  where w  rmr   h  rrn
+using the kl divergence cost function  the columns of w represent the
+marginal distribution over frequency for each component  and the rows of h
+represent the marginal distribution over time  each product wi hi of a column
+of w and the corresponding row of h represents the joint distribution for one
+of the components 
+we used matlab nmf code provided by hoyer     
+once we have expressed the joint distribution in terms of the components 
+we resynthesize each component  helen and virtanen do not mention how they
+do this  and i dont know if there is a standard method  but i tried several
+approaches and arrived at the following  to synthesize component c  take the
+original spectrogram s  not a  because we need the phase information   apply
+a time varying filter where  at each time step t  the amplitude for frequency
+f is multiplied by p c f  t  according to our model  use the inverse fourier
+transform to convert this back to a signal in the time domain  this approach
+has the convenient property that  when the component signals are summed
+together  the result is the original signal 
+nmf was generally able to separate out individual notes in toy examples
+consisting of fewer than    notes  however  when i ran it on selections of real
+music consisting of       different notes  there were several major problems
+that made it unrealistic to cluster the components  rather than separate out
+different notes  the algorithm would separate out a notes overtones as different
+components  more significantly  some overtones overlapped between multiple
+pitches  and these would be traced as one continuous component  i could not
+see any way to use these components as input to a clustering system without
+serious additional processing  additionally  in these real examples  the separated components would be highly noncontinuous over time  resulting in static 
+ 
+
+fi i think this is because real instruments tend to fluctuate slightly in pitch  and
+nmf does not recognize continuity of pitch   i could make this sound more
+pleasant by blurring the rows of h  but i regard this as a hack  and it would
+be much more satisfying if the segmentation algorithm itself could enforce continuity over time 
+the problem with nmf is that it is underconstrained  we could permute all
+the rows and columns of x and wind up with the same  permuted  factorization 
+the algorithm does not take into account either the pattern of overtones or
+continuity over time 
+
+ 
+
+mixture of gaussians
+
+to enforce both overtones and continuity over time  we add the following two
+constraints to the nmf model 
+   the conditional distribution over time pt  x c  is a gaussian with mean ct
+and variance tc   
+   the conditional distribution over frequency pf  x c  is what is called a tied
+mixture of gaussians  the two parameters of this distribution are the
+fundamental frequency f c   and the variance fc    the distribution is the
+normalized sum of the n gaussians with mean kf c and variance fc    for
+k              n  where n  the number of overtones  is a fixed in our model to
+be     note  after i came up with this mixture of gaussians model  i did
+a google search and discovered that kameoka et al      had already used
+a tied mixture of gaussian model for pitch estimation at a single time 
+and derived em updates for f  and p similar to the ones i describe below 
+the rest of this model  including the modifications to aid convergence  has
+not been done before  to my knowledge  
+this model makes some unrealistic assumptions  which i discuss in analysis 
+we can maximize this using the em update rules given in the appendix 
+
+   
+
+modifications to aid search
+
+there is one necessary adjustment to the above algorithm before it can detect
+any notes  in general  a very small percentage of the area of a spectrogram is
+taken up by notes  the red parts of figure b   the rest of it  the blue area 
+consists of very quiet noise  although the amplitude of these blue areas is
+orders of magnitude softer than the amplitude at a  t  f   point corresponding to
+a note  when taken together  they constitute a large probability mass  because
+the noise is attributed to the components  this results in unacceptably large
+variance in both frequency and time for each of the components  preventing
+them from converging to any notes at all  to solve this problem  it is necessary
+to postulate an additional noise component  which is held fixed as a uniform
+
+ 
+
+fidistribution over all times and frequencies  the result of this is that  in the
+e step  almost all of the blue areas are attributed to this noise component 
+once the noise component is factored in  the algorithm will generally converge to a local optimum which includes about   or   notes in a selection of about
+    the components which do not converge to notes do one of two things  they
+converge to a cluster over multiple notes  or they gradually diffuse and die away
+to zero probability mass  in the second case  we randomly reinitialize the parameters of the dead component and assign it large probability mass  often 
+these random restarts will then converge to notes  when run for     iterations 
+the algorithm will often find   to    notes  depending on the difficulty of the
+selection 
+because efficiency is a big concern  i used    ms windows for this algorithm
+rather than   ms  although i would eventually like to use smaller window sizes 
+for the moment  i believe it is far more important to confront the issues i discuss
+below 
+
+ 
+
+analysis
+
+because i dont know of any standard evaluation metrics for instrument separation systems  i did not try to compare this system quantitatively against nmf 
+however  i will present some of my qualitative findings in comparing the two
+systems  show the advantages and disadvantages of each approach  and outline
+some additional changes i would like to make to the mixture of gaussians model 
+some examples of system output are shown in the appendix 
+the appeal of nmf lies in that it is easy to implement  under    lines
+of matlab code  and fast  roughly    minutes for    seconds of music   the
+articles i found did not need to use any special tricks to make the algorithm
+work for music separation  furthermore  it is versatile  it fits both harmonic and
+percussive music under the same framework  and helen and virtanen were able
+to use it to separate the harmonic and percussive components of music  though
+the separation was far from clean   unfortunately  as i mention above  the
+algorithm does not produce anything that even roughly corresponds to notes 
+and would not be usable as part of an instrument separation system without
+serious additional processing 
+the mixture of gaussians model  by contrast  actually separates out real
+individual notes  a further benefit is that you do not need to know ahead of
+time how many notes are present in the music  an overestimate is ok  the
+extra components simply do not converge  unfortunately  the em algorithm
+only finds a subset of the notes  here  i outline some of the common errors 
+   low recall  generally  the algorithm quickly finds the longest most prominent notes in the selection  and finds the medium prominence notes after
+hundreds of iterations  but does not generally pick up minor notes  say 
+eighth notes   it could just be that it is a hard problem to determine what
+sounds are really notes and what sounds are background noise  but i think
+its still possible to capture these in the existing framework 
+ 
+
+fi   clusters of notes  often  a component will converge on a cluster of notes 
+rather than on a single note  as in the yellow area in the figure  this case
+is usually numerically obvious  because these components have a large
+variance over frequency  a simple solution would be to automatically
+split up components that converge to something with high variance  i
+think this will work  but i havent gotten around to implementing it 
+   fundamental frequency errors  local optima are an issue for the tied
+gaussian model  because a component will sometimes converge on an f 
+which is either half or twice the true f    this can probably be solved
+by periodically checking whether the data likelihood can be increased by
+halving or doubling the fundamental frequency 
+what about the assumptions of the model  i believe the tied gaussian model
+is approximately realistic for spectra of harmonic instruments  however  the
+overtones are not always exact integer multiples of the fundamental frequency 
+and in some cases  this causes the algorithm to miss some overtones  a simple
+solution would be to add a slack term to the mean of each overtone  e g  instead
+of requiring the mean to be kf c   let it be kf c    where  is a normally distributed
+error term 
+the more dubious assumption is requiring the distribution over time to be
+gaussian  musical notes are not even approximately gaussian  in practice 
+this is not a problem for instruments with a continuous sound  such as winds
+and strings  because the resynthesis stage only needs to know what percentage
+of a given time frequency pair to attribute to a given component  if only one
+instrument is playing at a given frequency at a given time  which is usually
+the case  the entire note will be attributed to that one component  as wanted 
+however  the gaussian assumption is a serious drawback for instruments with
+a percussive impact  such as piano or guitar  the amplitude at the initial onset
+of the note is an order of magnitude larger than that of the rest of the note 
+causing the algorithm to attribute multiple gaussians to one note  handling
+these instruments correctly would require significant changes to the basic model 
+the other serious drawback to this system is that it is unreasonably slow 
+it currently takes about       minutes per     iterations  and the algorithm
+continues to find new notes after hundreds of iterations  although this is an
+order of magnitude slower than nmf  it is not reasonable to compare the two 
+because i feel this algorithm does a deeper kind of computation than nmf  in
+that it identifies actual notes  nevertheless  it is currently too slow to be usable
+for any large selection of music  thus  it would be useful to find ways to reduce
+the number of iterations required for the search  or approximate update rules
+that shorten the time required for one iteration 
+clearly  i have not solved the problem of music segmentation  but i think
+the results show that this algorithm finds enough interesting clusterings that 
+with more modifications  it could probably achieve good performance  i would
+like to continue to improve this algorithm to the point where it can be used as
+a component in an instrument separation system 
+
+ 
+
+fi 
+
+collaboration
+
+special thanks to gunjit singh 
+
+ 
+
+appendix  em update rules
+
+e step
+qf t  c  k 
+
+  p c  k f  t 
+ p f  c  k p t c p k c p c 
+ p f  c  k p t c p c 
+
+where the p k c  terms drop out because they are assumed to be
+c  k 
+
+ 
+n
+
+for any
+
+m step
+p  c 
+
+
+
+n
+xx
+
+wf t qf t  c  k 
+
+f t k  
+
+p
+ct
+
+ 
+
+f t
+
+p
+
+f t
+
+ 
+
+f c
+
+ 
+
+fc
+
+ 
+
+pk  
+n
+
+k  
+
+twf t qf t  c  k 
+wf t qf t  c  k 
+
+pn
+
+c  
+k    t  t   wf t qf t  c  k 
+pn
+f t
+k   wf t qf t  c  k 
+p pn f
+k wf t qf t  c  k 
+pf t pk  
+n
+f t
+k   wf t qf t  c  k 
+p pn
+ f  kf c    wf t qf t  c  k 
+f t
+pk  pn
+f t
+k   wf t qf t  c  k 
+
+p
+
+tc
+
+pn
+
+f t
+
+p
+
+references
+    helen  m   virtanen  t  separation of drums from polyphonic music using
+non negative matrix factorization and support vector machines  in proc 
+  th european signal processing conference antalaya  turkey      
+    smaragdis  p   brown  j  non negative matrix factorization for polyphonic music transcription  in ieee workshop on applications of signal
+processing to audio and acoustics  p                  
+    lee  d   seung  h  algorithms for non negative matrix factorization  in
+neural information processing systems        
+    hoyer 
+p 
+non negative
+matrix
+sparseness
+constraints 
+submitted 
+http   www cs helsinki fi patrick hoyer 
+ 
+
+factorization
+available
+
+with
+online 
+
+fi    kameoka  h   nishimoto  t   sagayama  s  separation of harmonic structures based on tied gaussian mixture model and information criterion
+for concurrent sounds  in ieee international conference on acoustics 
+speech  and signal processing  montreal       
+
+ 
+
+fiappendix  figures
+
+ a 
+
+ b 
+
+ c 
+
+ d 
+
+ e 
+
+ f 
+
+ g 
+
+fi a  wave representation of an excerpt from hindemith s symphonic
+metamorphosis 
+ b  spectrogram of this same excerpt  vertical axis is frequency  and one unit
+represents      hz  horizontal axis is time  one unit represents      seconds  this is a
+relatively easy excerpt because it is monophonic  consisting of just one flute 
+ c  system output for this excerpt  the algorithm found   notes  the red areas
+represent the different overtones of a note on which the algorithm converged  green 
+orange  and light blue areas represent components which have not yet converged  in a
+full working system  only those   notes would be reported 
+ d  same as  c   but only the fundamental frequencies  and not the overtones  are
+shown 
+ e  spectrogram of an excerpt from billy joel s and so it goes  this is a harder
+example  because it is polyphonic  and because it consists of human voices 
+ f  system output  the algorithm found   notes 
+ g  same as  f   but only fundamental frequencies are shown  note that it is zoomed in
+vertically 
+
+fi

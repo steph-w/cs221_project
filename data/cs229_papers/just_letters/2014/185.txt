@@ -1,0 +1,416 @@
+learning distributed representations of phrases
+konstantin lopyrev
+klopyrev stanford edu
+december         
+abstract
+recent work in natural language processing has focused on learning distributed representations of words  phrases 
+sentences  paragraphs and even whole documents  in such representations  text is represented using multi dimensional
+vectors and similarity between pieces of text can be measured using similarity between such vectors  in this project i
+focus my attention on learning representations of phrases   sequences of two or more words that can function as a
+single unit in a sentence 
+
+ 
+
+introduction
+
+representing arbitrary text as multidimensional vectors w  rk has many uses  such representations can be used
+directly for computing similarity between text by  for example  taking the cosine similarity between the two vectors 
+they can also be fed into other algorithms as compact representations that have many nice properties  finally 
+combined with techniques like locality sensitive hashing  distributed representations can be used for information
+retrieval  for this project i focus my attention on computing distributed representations for phrases  i learn such
+representations from free form text and evaluate them on   text similarity test sets 
+my method consists of two phases  in the first phase i use one of two algorithms with published source code to learn
+representations for words and some common phrases  in the second phase  i learn how to combine the representations of
+the words in a phrase into a representation for the whole phrase  allowing me to compute representations for all possible
+phrases 
+
+ 
+
+data set description
+
+i train my algorithms using two data sets  the first data set is the english gigaword new york times newswire service
+corpus that is available for download from the stanford linguistics department  this data set contains news articles
+spanning the years      to       totaling     billion words  the second data set that i use is a large phrase dictionary  i
+collect phrases from   different sources 
+ i download the list of wikipedia article titles  this list contains     million phrases  including book and movie
+titles  names of places  names of high level concepts  and so on 
+ i scrape all the phrases from thesaurus com and from urbandictionary com  theusarus com and
+urbandictionary com contain    thousand and     thousand phrases  respectively  including idiomatic phrases 
+commonly used noun and verb phrases  and so on 
+i combine these two data sets into a single training set as follows 
+   i apply the stanford tokenizer on the news corpus to strip out all markup  to lowercase all letters  and to apply
+several ptb  token transforms not described here for conciseness 
+   i add and remove newline characters so that each paragraph ends up on a separate line 
+   i use the phrase dictionary to identify phrases in the text that i then merge into a single token using underscores 
+for example  the words abrupt change become a single token abrupt change 
+   i shuffle all the lines so that they are ordered randomly 
+the resulting training set has a vocabulary that contains     thousand words and     thousand phrases  counting only
+vocabulary entries that occur at least   times 
+
+ 
+
+fi 
+
+models
+
+   
+
+phase    learning representations for words and dictionary phrases
+
+during the first phase of learning i apply one of two algorithms for learning vector representations for words and
+dictionary phrases from the training set  both of these algorithms have source code available for download online  these
+algorithms learn representations for tokens using the other tokens that appear in context  following a principle in
+linguistics best stated by the linguist john firth  you shall know a word by the company it keeps 
+     
+
+glove  global vectors for word representation
+
+the glove model     learns from token co occurrences  to train the glove model i first preprocess the training set by
+computing the number of times each token appears in the context of each other token  specifically  i pick a window size
+w and then compute the number of times each pair of tokens occurs in the same paragraph with at most w    other
+tokens between them  each co occurence is weighed by the inverse of the distance between the tokens  the result is a
+matrix x  r  v v where v is the number of distinct tokens 
+the glove model represents each token i using two multi dimensional vectors wi   wi  rn   as well as two bias terms
+bi   bj  r  the objective for glove is
+j 
+
+v
+x
+
+
+ 
+f  xij   wit wj   bi   bj  log xij
+
+i j  
+
+where
+
+f  x   
+
+ x xmax  
+ 
+
+if x   xmax
+otherwise
+
+and xmax and  are parameters that control how much weight is given to different cooccurrences  the objective is
+optimized using multiple iterations of stochastic gradient descent over the cooccurrence matrix 
+     
+
+word vec
+
+the word vec model     works on the training set directly and learns to predict a token given the tokens context 
+similar to the glove model each token i is represented using two multi dimensional vectors wi   wi  rn   except that no
+biases are used  for each paragraph p of tokens p            pt the objective for the model  called the continuous
+bag of words objective      is
+j 
+
+t
+ x
+log p pt  ptc           pt    pt           pt c  
+t i  
+
+where c is the size of the window around a given token and is picked randomly to be in the range            w   the
+word vec program has two different ways of modeling the probability log p pt  ptc           pt    pt           pt c    both of which
+are approximations to the following softmax model
+
+
+p
+exp wptt cjc j    wpt j
+
+
+p pt  ptc           pt    pt           pt c     p
+p
+t
+exp
+w
+w
+p
+t j
+i
+i
+cjc j   
+the two different ways of approximating the above model are called hierarchichal softmax and negative sample  and are
+not described here for conciseness  i find that negative sampling has better performance and i use it throughout  the
+word vec objective is optimized using multiple iterations of stochastic gradient descent over the text 
+
+   
+
+phase    extending to all phrases
+
+the output of phase   is a learned representation for words as well as phrases that appear both in the training text as
+well as in the phrase dictionary  in order to learn representations for phrases that are not in the dictionary i use a neural
+network  the neural network is trained using all phrases of length   up to a fixed length  for most of my experiments i
+used the fixed length of     each training example is a single phrase  the input layer for the phrase is the concatentation
+of the vectors for each of the words of the phrase  where  s are added to the end for phrases that have length less than
+ 
+
+fi    the tanh function is used as the activation function for the hidden layers  the output layer is a linear output layer
+and the length is the same as the length of the vector representation of the whole phrase  each of the hidden and output
+units has a bias  the network is trained so that the output layer for a phrase matches the vector for the phrase 
+if yi is the output of the neural network for a given phrase  wi is the vector representation for the phrase  wc is the
+vector representation for some other random phrase  and fi is the frequency of the phrase in the text  the loss for the
+neural network for a single example is defined using a ranking loss     
+
+
+yit wc
+yit wi
+ 
+ji    log fi   max        
+  yi       wi    
+  yi       wc    
+the gradient for a single example with respect to the output layer is defined as
+
+
+ 
+ 
+yit wi
+yit wc
+yi ji     ji      log fi   
+y
+ 
+y
+wi  
+w
+
+i
+i
+c
+  yi       wi    
+  yi        wi    
+  yi       wc    
+  yi        wc    
+the gradients with respect to each of the weights in each of the weight matrices can be computed from the above using
+standard backpropagation formulas 
+parallelizing the training of the neural network is somewhat tricky  the approach i ended up with is to use batch
+gradient descent  i split up the training phrases into batches of size      and i compute the gradient for each batch
+using    threads running on   cpus with hyperthreading  then  i do a gradient update using the gradient for all the
+phrases in the batch 
+given the model in order to represent a new phrase in the same vector space as all the words and dictionary phrases i
+simply build the input layer of the neural network as described above using the vectors for each of the words in the
+phrase  and pass that input through the neural network  the output is then used as the representation of the phrase 
+
+ 
+
+experiments
+
+i evaluate my models on   phrase similarity test sets  both of these test sets contain examples where   pieces of text are
+given along with a human rating of the similarity of the   pieces of text  the quality of the models is measured by
+computing the correlation of the output of the models with the human ratings  i evaluate glove as well as word vec 
+and i look at how well my neural network combines the word representations into phrase representations compared to
+simple averaging of the word representations  during the training of the neural network i evaluate the neural network on
+the semeval      task   training data  described below  and i save the weights that give the best results on that data  i
+train the neural network for several hours  and reset the neural network with random parameters every    iterations 
+although  usually the neural network starts to get good performance in several minutes after only   or   iterations 
+
+   
+
+mitchell lapata     
+
+i evaluate my models on a test set described in     by mitchell et al  this test set contains responses from     human
+participants where each participant is asked to compare   pairs of words at a time and give their similarity  there are  
+types of questions  verb object questions  adjective noun questions and compound noun questions  for example
+knowledge use   influence exercise is a verb object question  national government   cold air  is an adjective noun
+question and training programme   research contract is a compound noun question  evaluation on this test set is done
+by computing spearmans rank correlation coefficient or spearmans  between each of the participants responses and
+the model outputs  and then averaging all the s over all participants 
+i present my results in the table below  my models are compared to the best results given in     
+mitchell lapata
+spearmans 
+
+mitchell lapata      best
+glove   vector average
+glove   neural network
+word vec   vector average
+word vec   neural network
+
+adjective noun
+
+noun noun
+
+verb object
+
+   
+   
+   
+   
+   
+
+   
+   
+   
+   
+   
+
+   
+   
+   
+   
+   
+
+ 
+
+fi   
+
+semeval      task  
+
+the semeval      task   data consists of several distinct sets of data  there are   categories of questions 
+paragraph to sentence  sentence to phrase and phrase to word  for each category there are questions where the model
+needs to compare a larger piece of text to a smaller piece of text  for example  a question from the phrase to word set
+is whatever the mind of man can conceive and believe   dreams  for each category  there are   sets of data  a training
+set consisting of     questions  a test set consisting of     questions  and a trial set consisting of       questions  each
+question has a human rating  and model quality is evaluated by computing pearsons product moment correlation
+coefficient  or pearsons  between the model responses and all the human ratings for a given test set  i use the
+phrase to word training set for selecting the best weights during the training of the neural network  i use the
+phrase to word test set for selecting the best hyperparameters  described in a section below  finally  i state my results
+on all of the trial sets  where i pass the text through the neural network several times recursively for text larger than a
+phrase 
+my results are presented below  along with the performance of my models  i also state the best results for each subtask
+by any model from the semeval      competion  including submissions made after the end of the competion  i also
+state the results of the model from the competition with the best overall performance   meerkat mafia   submitted after
+the end of the competition 
+
+semeval      best
+semeval      meerkat mafia
+glove   vector average
+glove   neural network
+word vec   vector average
+word vec   neural network
+
+   
+
+semeval      task  
+pearsons 
+paragraph to sentence sentence to phrase
+training
+trial
+training
+trial
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+phrase to word
+training trial
+    
+    
+    
+    
+    
+    
+    
+    
+
+tuning the neural network
+
+i ran a number of experiments to tune the neural network  different sets of hyperparameters were compared using the
+performance of the neural network on the semeval      task   phrase to word test data  i find that using a loss
+function that is the euclidean distance between the output layer and the phrase vector gives somewhat worse
+performance  i find that using cosine similarity in the ranking loss  as opposed to dot product gives slightly better
+results  the bigger benefit is that when cosine similarity is used the loss and the margin has more meaning  i also find
+that using a logit activation function for the hidden layers as opposed to a tanh activation function gives much worse
+performance  additionally  the models turn out to be somewhat sensitive to the exact margin used in the ranking loss  i
+find that a margin of     gives best performance 
+i tried a few different sizes for the hidden layers  settling on using hidden layers of size       i tried training network
+with different numbers of hidden layers  the performance of the neural network model on the test data for different sizes
+of the hidden layers is given below 
+
+semeval      task   phrase to word test pearsons 
+
+ 
+    
+
+hidden layers
+ 
+ 
+ 
+              
+
+finally  i tried training the models on a larger training text  i used the entire gigaword corpus consisting of  b words  i
+find that the performance on the phrase to word trial data improves slightly from      to      
+
+ 
+
+discussion
+
+i find that these   test sets are more useful for measuring the quality of the models  compared to several other test sets 
+another one of the test sets that i tried consisted of questions such as baltimore is to baltimore sun as boston is to
+what  where the answer is boston globe  in     mikolov et al  use this test set for evaluating their phrase
+representations  the issue with using that test set is that evaluation is done using exact matching  thus  the answer is
+correct only if the first result returned for the query matches  i find that this comparison does not account for inexact
+matches that are still correct  for example  if the boston globe is returned instead of boston glove or if apple
+corporation is returned instead of apple 
+ 
+
+fioverall  my system is able to get state of the art results on the semeval      task   phrase to word data  word vec
+seems to give significantly better performance than glove  which is somewhat unexpected given that the authors of the
+glove paper show that glove outperforms word vec      for the best model  most of the good performance comes from
+word vec  a fairly robust tool for learning general purpose vector representations for words as well as some phrases 
+using a neural network  however  does give significantly better results on the semeval data 
+by spot checking a few phrases and looking at the closest vocabulary entries to those phrases i find that qualitatively
+the neural network does a better job of combining the word vectors into a phrase vector than just simple vector
+averaging  with vector averaging the closest vocabulary entries end up being words and phrases that are close to one of
+the words in the phrase  but not so much to the phrase as a whole  below  i give   examples of phrases and interesting
+vocabulary entries that are closest to those phrases when the phrase vector is computed using the neural network 
+ visit a russian city  moscow  city of st  petersburg  lenin hills  izmailovsky park
+ flying through the sky  in the sky  hot air balloons  vapor trail  curvature of the earth
+one major limitation of my method is that the neural network is trained using phrases that are idiomatic phrases  as a
+result im training the neural network on data that is distributed differently than the data that im testing it on 
+however  it is not clear how to generate phrase vectors for more standard phrases 
+
+ 
+
+future
+
+one possible way to continue the work is to simplify the loss function  after switching to using cosine similarity  as
+opposed to dot product  the value of the loss becomes more meaningful  and the similarity of the output and the target
+phrase vector becomes fixed to be in the range         as such  sampling a random other phrase is no longer necessary 
+preliminary investigation into the following loss function 
+
+
+yit wi
+ji    log fi   
+  yi       wi    
+shows that it works as well or better than the ranking loss 
+another area worth investigating is how to generate phrase vectors from text for more standard phrases and not
+idiomatic phrases  finally  my approach currently does not take into account the structure of the phrase  it would be
+interesting to see if the same approach can be used to learn a recursive neural network where the word vectors are
+combined using the parse tree for the phrase 
+
+ 
+
+conclusion
+
+i find that im able to train models that can be used for measuring similarity between short pieces of text  with the
+primary focus of my work being phrases  my models get state of the art performance on a well known test set 
+
+ 
+
+acknowledgements
+
+id like to thank richard socher for advice on this project 
+
+references
+    minh thang luong  richard socher  and christopher d  manning  better word representations with recursive neural
+networks for morphology  in conll       
+    tomas mikolov  kai chen  greg corrado  and jeffrey dean  efficient estimation of word representations in vector
+space  corr  abs                 
+    tomas mikolov  ilya sutskever  kai chen  greg corrado  and jeffrey dean  distributed representations of words and
+phrases and their compositionality  corr  abs                 
+    jeff mitchell and mirella lapata  composition in distributional models of semantics  cognitive science  cognitive
+science       
+    jeffrey pennington  richard socher  and christopher d  manning  glove  global vectors for word representation 
+     
+
+ 
+
+fi

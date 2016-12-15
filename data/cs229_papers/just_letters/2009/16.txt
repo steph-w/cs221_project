@@ -1,0 +1,358 @@
+person following on stair  fall report for cs      cs   
+carl case
+cbcase stanford edu
+
+abstract
+in this report i present the results of my work this fall  with the tremendous help and support
+of olga russakovsky  on the stair person following project  there are  roughly speaking 
+three components of this project  the vision system  the navigation system  and the recovery
+system  i describe first the use of the phasespace motion capture system to accomplish the
+vision task and a simple model of the cameras that allows for quick recalibration  second  i
+present the bulk of the work from this quarter  updating the navigation system on stair
+to both integrate with phasespace and support the all new ros navigation stack  and the
+difficulties concomitant with this task  finally  i describe early work on the recovery system
+and present a simple framework in which to apply learning to improve recovery performance 
+
+ 
+
+introduction
+
+while much research has focused on unaided robot navigation in both indoor and outdoor environments  from the robot users point of view  this sophistication may be too much  in particular 
+specifying a particular goal may be more than the user wants or needs to do  in this situation  it is
+desirable that the robot be able to autonomously follow the user around  whether there is a specific
+destination or not 
+in person following  as in many other robotic tasks  the two primary concerns are safety and
+robust performance  the former is of greatest importance  there must be no failure mode in
+which the following robot puts any person  the one being followed  or otherwise   objects in the
+environment  or itself in harms way  with that condition met  we expect the robot to perform as
+robustly as possible in a dynamic  changing environment  the person should be able to walk at a
+range of both distances and speeds  navigable obstacles should pose no problem  and crucially 
+the robot must recover from any reasonable temporary occlusion or disappearance of the target
+person 
+the goal of this project is to enable the stair robot to execute person following pursuant to
+these specifications  additionally  we make the following assumptions  first  the person may be
+slightly modified  in particular  we will place a small  distinctive led on her person  second 
+for reasons of safety  we assume a reasonable maximum speed  and third  we assume that the robot
+will operate in an indoor environment for which it has access to a static  though possibly imperfect 
+map  generated either from cad models or mapping techniques 
+i decompose the person following application as follows  first  there is a vision system that is
+responsible for observing and tracking the target person so that the robot may know her location
+relative to its  second is the navigation system which converts the output of the vision system to
+a sequence of velocity commands for the mobile base  enabling following behavior  third is the
+ 
+
+firecovery system  which takes over from the vision system when the person goes out of view  providing
+the navigation system with the information it needs to execute a search to recover following behavior 
+note  of course  the imperfect modularity of this decomposition  as there are feedback loops between
+each of the three systems 
+the rest of this report proceeds as follows  first  i will provide a brief description of the vision
+system as implemented with the phasespace motion capture system  i expect that this system
+is very near to its final form  and as it is mostly prior work  the overview will be brief  second 
+i will describe with some detail the navigation system as it is currently implemented in the ros
+framework  finally  i will present the preliminary status at the moment of the recovery system and
+plans to improve upon it once  nearly  all bugs are out of navigation 
+
+ 
+
+vision with phasespace
+
+the hardware for our vision system is two phasespace motion capture cameras mounted on the
+left and right sides of stair  attached to the person is a small  red led which pulses in a highfrequency pattern uniquely identifiable by the phasespace cameras  the two cameras are chained
+together and communicate with the phasespace base computer over ethernet  at present  stair
+needs to have a long ethernet cable trail it so the base computer can remain immobile  in the
+future  the computer will be onboard stair  allowing for full autonomy 
+given the accuracy of the phasespace cameras  the documentation claims sub centimeter accuracy  and my experience is that claim is very near the truth   the goal is to extract an  r    pair
+that provides ground truth about the persons location relative to stairs 
+phasespace provides software for doing all triangulation calculations automatically to provide
+distance measures directly in meters  in extensive testing  however  i found that their software is
+ill suited for the restrictive setup of two closely spaced camaras  if the led went more than two
+meters beyond the cameras  no distance measures were returned 
+as a result  the first part of the project was to implement my own triangulation system layered
+on top of the phasespace api which provides access to its raw data  each camera provides two data
+points from each of its two linear detectors in the range         the mapping from these   tuples
+to  r    is not immediately obvious  so the first implementation of the triangulation system was
+based on locally weighted linear regression  where each x i  is a   tuple of the four raw data values
+from phasespace and the target variable is the  r    ordered pair 
+soon after  however  after futzing with the regression for a while and studying the way the
+cameras values worked  i discovered a simple reverse engineering of the setup that allowed an
+analytic solution for both r and  as a function of any three of the four detector values  recall each
+ i 
+ i 
+ i 
+ i 
+camera has two   for reference  if x i     x    x    x    x     then it turns out that 
+ i 
+
+ i 
+
+ i 
+
+ i 
+
+ i 
+
+ i 
+
+ i 
+
+ i 
+
+x    x    c   x    x   
+x    x    d   x    x   
+where c and d are constants that can be directly taken from training data  in each case  the
+ i 
+ i 
+ i 
+ i 
+average distance between the particular pair wise sum   let  i    x    x  and   i    x    x   
+then 
+r   tan a   b 
+   c   d
+ 
+
+fiwhere the parameters a  b  c  d must be learned from data  this is  of course  a straightforward
+linear regression problem  so i implemented a system that requires the user only to hold one
+led at a specified sequence of locations   x  y  coordinates relative to the cameras  as that is
+easier to measure than  r     and outputs the four parameters for directed implementation of
+the triangulation system  to be overly explicit  solving for a and b requires solving the following
+optimization 
+ 
+x
+tan   r   b
+ i 
+arg min
+ 
+a b
+a
+i
+and of course the corresponding equation for c and d  in practice  these values can be directly
+computed using the normal equations 
+the software implementation of the vision system pipeline is entirely in ros  which will merit
+further discussion below 
+
+ 
+
+navigation in ros
+
+   
+
+ros
+
+all of the software on stair runs on top of ros  the robot operating system     i have little to
+add here  but it is worth emphasizing the computation model of ros  specifically  any application
+is run as a network  directed graph  of individual nodes which can both subscribe to and publish
+data messages  the subscriptions   publications forming edges in the graph   as a result  the
+model enforces modularity between different subsystems  so much of the implementation is a direct
+mapping of the separate systems i describe here onto individual nodes 
+
+   
+
+person following and navigation
+
+there are  i think  a handful of different ways to pose the following problem  but i have so far
+settled on the most straightforward  at any point in time  we know the location of the target person
+relative to stairs location  thus the goal of navigation will be to execute velocity commands
+that moves stair toward the person as quickly and directly as possible while remaining in safe
+operation  the constraint on safe operation  in general  is obstacle avoidance that takes into
+consideration the limited dynamics of the robot 
+the algorithmic approach we have taken to executing velocity commands is known as the dynamic window approach and is described in      this selection was made both because it meets
+all the constraints mentioned above and because much of the implementation already exists in the
+core ros navigation stack  in many ways  this code base ended up both a blessing and a curse as
+described below  though the balance most definitely falls on the positive side of the scale 
+there is no reason  of course  to provide a full descricption of dwa  but i will provide a brief
+overview to render clear the most relevant details for this project  dwa can be best understood as
+a search algorithm in velocity space  in particular  it first constructs a feasible and safe search
+space parametrized by  v     the linear and angular velocities respectively  and then optimizes an
+objective function within that search space to make the best possible progress toward the goal 
+the search space is limited by considering only 
+   circular trajectories  this is the mathematical result of choosing to parametrize velocites as
+a constant pair  v   
+ 
+
+fi   admissible velocities  a velocity is admissible if after choosing this velocity  the robot can
+stop clear of the nearest obstacle on the resultant path
+   velocities in the dynamic window  a velocity is in the dynamic window only if it is immediately accessible to the robot given current velocities and torque restrictions
+with this set of restrictions and a discretization of  v     the algorithm has a finite space from
+which to select its velocity commands  this is done by forward simulation  simulate each choice
+from the search space and score the results by a combination of  proximity to goal  distance from
+obstacles  and speed  the relative weighting is controlled by user set parameters   see     for a
+complete description of how to select the admissible velocities  etc 
+in some sense  that is all there is to following  specify the visible location of the person as the
+goal and let dwa handle the rest  of course  the devil is in the details  in particular  implicit
+in the description of dwa is the concept of some map to answer questions about proximity to
+obstacles  there is no reason  in principle  that you could not use a static global map  load it up
+from an image file and just use that  in practice  however  this depends on two factors on which we
+cannot depend  excellent robot localization and a near static environment with respect to the map 
+if localization is off or there are obstacles not present on the map  then the forward simulation does
+little to ensure a safe trajectory 
+for this reason  the implementation of dwa maintains a local window   map that is always
+centered around the robot with no reference to global coordinates  this window is six meters a
+side  discretized into sub sqaures   cm a side  each cell can be in one of three states  occupied 
+free  or unknown  which are in practice treated as occupied  
+the states of the cells depend on the sicklms laser scanner attached to stair  it repeatedly makes     degree scans  returning the distance measured at each degree  for all hits less
+than max range  a user specified constant   the angle and distance allows you to immediately
+mark the resultant cell as occupied  note that the converse operation  clearing cells based on
+max range hits  is rather more complex  as it involves ray tracing from stair along the line
+defined by that hits angle and clearing all cells en route 
+armed with this local map  the implementation of dwa is mostly straightforward  as all forward
+simulations can be run in the local window without reference to a global map  and if the goal is
+anywhere outside of the local map  it can be clipped onto the edge and moved as the map moves
+with the robot 
+
+ 
+   
+
+global mapping and recovery
+the global map
+
+as simple as the local map makes the following problem when the person is in view  it is insufficient
+for executing a global search to recover when the person leaves the robots view  any search that
+aims to do something more sophisticated than go to the last visible goal point and spin in place
+must have a concept of where the person might have gone from there  which is a question about
+the global space 
+our approach  then  to global mapping is as follows  as long as the person is in view  the goal is
+to localize stair as best as possible  which is an entirely passive process  if xt is the state  pose 
+at time t  zt is the laser scan measurement at time t  and ut is the odometric control between t   
+and t  then the localization problem is to maintain a distribution p  xt  x  t    z  t    u  t   where the
+ 
+
+fisubscript ranges are over all values in that range  this can  of course  be formalized as an hmm in
+the standard way and be reduced with bayes rule to the state transition probabilities p  xt  xt    ut  
+and the measurement probabilities p  zt  xt    the former are derived from odometry readings from
+stairs base  while the latter come from the sicklms laser scanner along with a static map of the
+environment 
+as long as the person is in view  this system plays an entirely passive role  maintaining a
+representation of the probability distribution over stairs pose  in particular  the distribution is
+maintained with a particle filter and the augmented monte carlo localization algorithm  amcl   i
+will elide the details here  for reference  see     
+
+   
+
+representing the persons location
+
+it should be said  of course  that we are only interested in stairs global location on the map to
+the extent that it allows us to determine where the followed person has gone when she leaves view 
+the most direct representation is as a single  x  y  point on the map  in particular  given a particle
+particle cloud representation of the robots location  we can calculate the mean of that cloud and
+adjust by  r    as provided by the vision system  as soon as the person leaves view  we can assume
+that the person must not be too far from the last seen point and navigate directly there 
+as a naive strategy  this is not half bad  and the basic approach of the current implementation  
+it is reasonable to expect that the person will not have gone that far  and a simple navigate and
+spin strategy can relocate the person in many cases  the difficulty  however  is representational 
+in particular  it is unclear how to model the likely continued movement of the person if she is
+represented by a single point  or more problematically  at a t junction in a hallway  for example  
+how to model the possibility that the person will travel in either direction  other than just checking
+both  
+for these reasons  which are basically reasons of robustness  the chosen strategy is to represent
+the persons location by a probability distribution  just as stairs is represented  specifically 
+we would like a joint distribution over the pose of both the robot and the person to be followed 
+there is a good treatment of this problem in mike montemerlos paper      in which he presents the
+conditional particle filter  to represent the joint distribution  the state xt now consists of both
+the robots pose and the persons  since  however  the persons observed pose is dependent on our
+belief about the robots  this probability factors to 
+p  xt  zt   ut     p  rt  zt   ut  p  yt  rt   zt   ut  
+where rt and yt are the robots and persons poses respectively  the important question  then  is
+how to represent the conditional distribution p  yt  rt   zt   ut    this depends on our sensor model 
+if the person sensor is noisy  then that distribution is a proper distribution that must have full
+representational power  in     this is accomplished by associating an entire particle set to represent
+the persons pose for each of the particles in the robots distribution 
+if  however  the person sensor is perfectly noise free  then that distribution is entirely characterized by the prior p  rt  zt   ut    merely propagating forward the robots distribution by the camera
+measurement of  r    will give you an accurate distribution over yt  
+it is this approach i have taken so far in the early implementation until further testing is possible 
+
+ 
+
+fi   
+
+recovery actions
+
+the final piece of the puzzle is how to search for a lost person given the representation we have 
+presently  the distribution over the persons pose is collapsed to its mean and stair simply navigates to that point and begins spinning  a strategy exactly equivalent to the naive strategy
+described in the previous section  future work  then   beyond making the nav stack less flaky  is
+to improve upon this strategy 
+the next step  i believe  is to allow the particles in the persons distribution to move autonomously as soon as the person leaves view  a first attempt would look something like this  each
+particle takes a brownian random walk from its starting position  any particle that remains in the
+visible field of stair for a period of time  as estimated from its own pose estimate  is removed from
+the distribution  as are any that enter a static obstacle  at corners and other junctions with only
+one possibility  this should have the same effect as pushing the distribution around the corner 
+the only possibility if the person has left view  more interesting are junctions with multiple possible
+paths  the proposed approach will  i hope  have the effect of generating a multi modal distribution
+over those choices  a k means clustering of the resultant distribution  for example  should generate
+a set of proposed locations the person might have gone  a set of geometric heuristics can then
+be applied to those proposed points to create a search ordering  for example  if one is in a room
+ bounded  and the other is in a hallway  unbounded   we may want to check the latter first  as the
+person is liable to be lost further only in the hallway 
+it is worth noting that these geometric heuristics are one piece of the larger system most susceptible to learning techniques  in particular  the ranking of locations according to time urgency
+can be posed as a classification problem  with a training set that consists of hand labels for a
+set of points on the map  just extract features from a local window around those points to train a
+classifier  this is  of course  future work 
+
+ 
+   
+
+results and discussion
+navigation and stair
+
+as a preface to any discussion  i feel obliged to explain the exact nature of the project during
+this quarter in particular  in particular  i acknowledge that much of this report is speculative and
+preliminary  with less in the way of concrete results  other than a chunk of code  than i would like 
+early in the quarter  after we finished the vision system milestone report  i elected to update
+the navigation stack on stair to an all new code base that represented a fairly dramatic shift
+from the original system  with new message types  different nodes  and a reorganized api  going
+forward  it seemed worthwhile to move over to this new nav stack  as the original was not entirely
+dependable and there seemed little reason to develop over a system that was already obsolete  in
+practice  this turned into much more of a fiasco than i expected  and i discovered how wanting i
+am in experience debugging complex hardware dependent systems 
+thus the bulk of the work this quarter does not lend itself to a final report  the odometry and
+laser systems have been updated under the hood to work with the new system  and remove a few
+latent bugs   the segway no longer non deterministically fails to close its port  there is a bundle
+of new configuration files that describe how stair interacts with the new nav stack  and so on 
+embarrassingly  there are still a few bugs in the navigation system  it really likes to hug walls as
+it navigates   the result is that many of the novel  interesting pieces of the actual person following
+
+ 
+
+fiapplication are still in their natal stages 
+
+   
+
+results  briefly
+
+the results and accuracy of the camera system was presented most recently in the october report
+for the project  so there is little reason to take space reproducing them in detail here  for reference 
+in the range of        meters  the phasespace system is accurate to within    cm  it can still
+procude results  those less reliable  up to    m  the horizontal field of view is    degrees at    m 
+expanding to    degrees past  m 
+disappointingly  the navigation system is still not reliable enough to test out any person search
+execution without endangering stair and the walls of gates  presently  however  under teleoperation  stair can maintain its particle filter distribution over the persons pose 
+
+and given a specified target  plan a global path to get there that avoids laser hit obstacles  its
+following that path with dwa thats presently a bit of a difficulty  
+
+ 
+
+fi 
+
+acknowledgements
+
+id like to acknowledge morgan and others on the ros users list for providing invaluable debugging
+help after late nights spent frustrated with ros  i apologize to andrew for watching class on tv 
+though i received my comeuppance every time i wanted to ask a question  huge thanks are also
+due to him for teaching both     and     this fall  fantastic classes  both  and much thanks goes
+to olga for always being one step ahead of me and providing encouragement even when stair was
+walking away from the led right into the wall 
+
+references
+    dieter fox  wolfram burgard  and sebastian thrun  the dynamic window approach to collision
+avoidance  ieee robotics   automation magazine          
+    michael montemerlo  sebastian thrun  and william whittaker  conditional particle filters for
+simultaneous mobile robot localization and people tracking  in in ieee international conference on robotics and automation  icra   pages              
+    morgan quigley  ken conley  brian gerkey  josh faust  tully b  foote  jeremy leibs  rob
+wheeler  and andrew y  ng  ros  an open source robot operating system  in international
+conference on robotics and automation  open source software workshop       
+    sebastian thrun  wolfram burgard  and dieter fox  probabilistic robotics  intelligent robotics
+and autonomous agents   the mit press  september      
+
+ 
+
+fi

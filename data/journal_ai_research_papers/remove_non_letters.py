@@ -5,7 +5,7 @@ import re
 import shutil
 import string
 
-IF = './split_by_article'
+IF = './text'
 OF = './just_letters'
 
 if os.path.exists(OF):
