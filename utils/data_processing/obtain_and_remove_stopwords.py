@@ -23,23 +23,27 @@ for r,ds,fs in os.walk(IF):
 
 c = collections.Counter(corpus)
 upper_threshold = 9*57
-freq_stop_words = []
-infreq_stop_words = []
+stop_words = []
 for word in list(c):
 	if c[word] > upper_threshold:
-		freq_stop_words.append(word)
+		stop_words.append(word)
 		del c[word]
 	elif c[word] <= 5:
-		infreq_stop_words.append(word)
+		stop_words.append(word)
 		del c[word]
-
 # Step 2 remove stopwords
 
 IF = './just_letters'
 OF = './split_by_article_clean'
-CUSTOM_WORDS = set(freq_stop_words) | set(infreq_stop_words)
+CUSTOM_WORDS = set(stop_words)
 cachedStopWords = set(stopwords.words("english"))
 cachedStopWords.update(CUSTOM_WORDS)
+cachedStopWords.update(('the', 'if', 'this', 'but', 'in', 'at', 'that', 
+	'by', 'these', 'we', 'as', 'also', 'like', 'fi', 'ff', 
+	'problem', 'problems', 'volume', 'algorithm', 'pages', 'planning', 'show',
+	'paper', 'results', 'publish', 'research', 'result', 'results', 'find', 
+	'algorithms', 'based', 'models', 'approach', 'using', 'new', 'either', 'various', 'wellknown',
+	'always'))
 
 if not os.path.exists(OF):
 	os.mkdir(OF)
@@ -60,5 +64,6 @@ for r,ds,fs in os.walk(IF):
 		of_name = os.path.join(of_path_name, f_name)
 		with open(of_name,'w') as fw:
 			fw.writelines(goodtext)
+print cachedStopWords
 
 

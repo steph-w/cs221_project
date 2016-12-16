@@ -65,6 +65,7 @@ class LDA:
         self.theta_mk = np.zeros((self.num_documents, self.num_topics), dtype = np.float)
 
         # Initialization
+        print "Initializing"
         n = 0
         for m, doc_id in enumerate(self.data): # for each document
             while n < self.num_corpus_words and self.doc_pointers[n] == m:  # for each word in the doc
@@ -80,6 +81,7 @@ class LDA:
                 self.n_k[k] += 1
                 # Move to next corpus word index
                 n += 1
+            print "Init %s" % doc_id
 
     # Converts index of self.corpus to index of self.terms
     def n_to_t(self, n):
@@ -168,7 +170,7 @@ class LDA:
         for m, doc_id in enumerate(self.data):
             assignments[doc_id] = np.argmax(self.theta_mk[m])
 
-        return assignments, self.phi_kt, self.terms
+        return assignments, self.phi_kt, self.terms, self.theta_mk
 
     def perplexity(self):
         """
@@ -208,10 +210,10 @@ class LDA:
 
 if __name__ == "__main__":
     print
-    data = read_data("../data/journal_ai_research_papers/articles_no_stopwords")
+    data = read_data("../data/journal_ai_research_papers/split_by_article_clean")
     lda = LDA(data, num_topics=10, alpha_init=3, beta_init=0.01)
-    lda.inference(iterations=10)
-    assignments, phi_kt, terms = lda.output_paper_topic_dist()
+    lda.inference(iterations=5)
+    assignments, phi_kt, terms, theta_mk = lda.output_paper_topic_dist()
     print
     #print "Model perplexity %f" % (lda.perplexity())
     print
@@ -227,7 +229,9 @@ if __name__ == "__main__":
         term_indices = np.argsort(phi_kt[k])[::-1][:n]
         top_terms = {terms[ind]: phi_kt[k, ind] for ind in term_indices}
         topic_top_terms[k] = top_terms
-
+    print topic_top_terms
+    print 
+    print theta_mk
     plotter.plot_topic_top_terms(topic_top_terms)
     lda.launch_visualization()
 
