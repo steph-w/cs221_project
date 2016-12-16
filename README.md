@@ -1,5 +1,5 @@
 # CS 221: Latent Dirichlet Allocation for Detecting Topics in AI Research
-#### Max Drach (mdrach) Stephanie Wang (steph17)
+#### by Max Drach (mdrach), Stephanie Wang (steph17)
 ## Commands we Ran
 Start here if you want to simply run LDA on a preprocessed dataset:  
 
