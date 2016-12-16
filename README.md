@@ -4,7 +4,8 @@
 1. To obtain the pdf files from [JAIR.ORG](https://www.jair.org/contents.html), run <code>extract_pdfs.py</code> in utils
 2. To clean the pdf files, run <code>clean_raw_pdf_files.py</code> and <code>remove_non_letters.py</code> and in utils
 3. Run <code>obtain_and_remove_stopwords.py</code> to remove the stopwords and most frequent and unfrequent terms in the text documents
-4. At this point we have a folder of documents that we want to perform LDA on. We run <code> lda_with_visual.py </code> on the path containing the documents to obtain the assignments for the documents to a topic. 
+4. At this point we have a folder of documents that we want to perform LDA on. We run <code> lda_with_visual.py </code> on the path containing the documents to obtain the assignments for the documents to a topic.  
+
 ## Code Documentation
 ### /data
 ##### /cs229_papers
