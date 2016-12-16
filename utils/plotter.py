@@ -16,8 +16,7 @@ def plot_trends_over_time(assignments, timelist):
     plt.ylabel("Topic Category")
     plt.title("Topic Categories Over Time")
     plt.grid(True)
-    plt.show() #block=False)
-    #raw_input("<Enter to close>")
+    plt.show() 
 
 def plot_topic_top_terms(topic_top_terms):
     for k in range(len(topic_top_terms)):
