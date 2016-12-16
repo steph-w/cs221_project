@@ -42,5 +42,30 @@ This python program also runs latent Dirichlet allocation on a collections of te
 
 ***
 ### /utils
+#### /data_processing
+##### /clean_abstracts.py
+This program cleans the AI journal abstracts, removing improperly formed text and residual html code.
 
-***
+##### /clean_raw_pdf_files.py
+This program cleans the AI pdf abstracts, removing improperly formed text.
+
+##### /extract_abstracts.py
+This program extracts the abstracts from JAIR.ORG
+##### /extract_pdfs.py
+This program extracts the PDFs from JAIR.ORG
+
+##### /lowercase_and_remove_punct.py
+This program turns all characters to lowercase and removes punctuation
+
+
+##### /obtain_and_remove_stopwords.py
+This program removes all stopwords, and the most frequent and infrequent terms
+
+##### /pdf_to_text.py
+This program converts the raw PDF files to text
+
+##### /remove_non_letters.py
+This program removes all non-letter characters in the text
+
+#### /plotter.py
+This program contains two functions. The first plots the topic assignment for each document, and the second plots the probabilities of the top ten words that have the highest probability of being associated with the topic.
