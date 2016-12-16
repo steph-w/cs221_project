@@ -1,0 +1,520 @@
+learning to rank comments within subreddit submissions
+alex jin
+
+don mai
+
+   introduction
+reddit is an online bulletin board forum where users can
+post content  and judge the interest of the post by means
+of voting for the best content 
+we want to examine
+the
+relationship
+between the toplevel comment score
+and
+all
+other
+attributes  as shown
+in
+figure
+    
+however  since a
+comments absolute
+score depends on
+the number of active
+users at the time of
+creation  we will
+instead try to predict
+comment
+ranking  figure      example reddit post
+the
+inputs
+and
+outputs of our problem are as follows 
+input     post content  time of post 
+comments contents  time of comments  
+output     predicted ranking of the comments  
+
+   related work
+spearmans footrule is a metric used to evaluate
+predicted rankings      the metric measures the difference
+between the actual ranking and our predicted ranking  it
+penalizes for relative error  we normalized the error
+function to be between   and   
+we looked at nlp analyses        for insights to produce
+intelligent features that extracts popular keywords and
+meaning from a paragraph instead of just words  the
+suggested approach in these papers is to use multi grams
+ consecutive words from a sentence   however  since
+users in online communities often use abbreviation and or
+variants of words  removal of these words might be
+undesirable  instead we looked into meme clustering
+ finding popular phrases  for better features 
+meme clustering is not a new topic  previous studies       
+have looked at meme clustering albeit on a much larger
+scale  these two papers took the same approach as our
+algorithm in assuming a peak in popularity during a certain
+time window  authors from     acknowledge that this
+problem is np hard and uses heuristics to tackle the
+problem  our approach  k means  showed a similar
+understanding and produced analogous results on the
+subreddits we tested 
+
+   dataset and features
+for the subreddit that we analyzed   r murica  we collected
+metadata for        submissions and         top level
+comments  after the preprocessing described below  the
+size of this dataset was trimmed to        submissions
+and         top level comments 
+
+jeff setter
+to collect reddit submissions and comments  we sent
+web requests to the official reddit api  we had to make
+two types of api calls  one to retrieve a list of submission
+ids  followed by a separate one to collect detailed post and
+comments metadata for each discovered submission id 
+reddit limits web requests to their api to one
+request second so that users do not overwhelm their
+servers  so we used a wrapper request library     to ensure
+our web requests were properly rate limited and met other
+api specs 
+the response data was in json format  and we used
+leveldb  a key value store  to store the submission ids
+and post and comment s  jsons for each submission  by
+choosing a clever key naming scheme that includes the
+subreddit and timestamp of the post  we could keep track
+of what submission ids we already sent fetch metadata
+api requests to so that if our data collection program
+experienced any problems  we could always restart the
+program and resume sending web requests only for
+unprocessed submission ids  that is  our data collection
+becomes verifiable and resumable  which are helpful
+properties when we want to send web requests only for
+unprocessed submission ids due to the time costs of
+request throttling 
+in terms of preprocessing  we tokenized and stemmed the
+text of all collected submissions and comments  we used
+the porter stemming algorithm provided by a natural
+language processing library     the tokenization got rid of
+common words used in the english language  e g  articles 
+and removed punctuation  we also implemented our own
+url cleaning procedure where we replaced urls with their
+hostname by stripping the url path  otherwise  it would be
+difficult to have url detection features that would be
+activated across multiple submissions since the url path
+varies a lot for the each url inclusion involving the same
+hostname  to help our downstream algorithm learn better 
+we also removed duplicate comments with the same score
+under the same parent submission  comments where a
+moderator removed the text body  and submissions where
+the number of top level comments was less than two 
+here is an example of a json comment after cleaning
+ some fields are omitted for conciseness  
+  body    doing it right patriot  nmy apartment has  
+decorations  both are american flags    
+ created utc              
+ score     
+ cleanbody      do       right       patriot       my     
+ apart      decor      both      american      flag     
+ 
+to help some of our machine learning algorithms converge
+faster  we used feature scaling on all features that did not
+already have a magnitude between   and    for each
+comment in a submission  we applied the following
+formula 
+
+fi  
+
+  min  
+max    min  
+
+where  is the original feature score   is the corrected
+feature score     is the smallest value of the feature
+score across all comments for a particular submission  and
+   is the corresponding largest value 
+from each submission  we could extract several
+quantities  such as the frequency of words  individual 
+bigrams  trigrams  urls  as well as compute properties of a
+comment  as listed in figure       each algorithm uses
+some set of these features 
+feature category
+
+feature
+
+specific post words
+
+comment contains  gif     http 
+freedom
+overlap of words in comment and
+post title body
+punctuation  usage of caps
+count of words in comment of
+length n
+comment time  submission time
+frequency of comment bi tri
+frequency of url domains
+
+relevant keywords
+quality post
+histogram of word
+lengths
+time
+bigrams trigrams
+urls
+
+figure      features
+
+     naive bayes
+our first attempt at solving the stated problem was naive
+bayes  as shown in figure        to divide the
+upvote ratio  upvotes    upvotes downvotes    we set a
+cutoff value alpha  we run naive bayes using the
+following inputs and outputs for different alphas 
+inputs     words of a message  
+classes 
+good if upvote ratio   alpha
+fair
+if upvote ratio   alpha
+bad
+if upvote ratio   alpha
+figure        naive bayes implementation
+the results of our naive bayes show that the error
+increases as number of training examples increases  this
+is understandable because the naive bayes assumption
+breaks down for some of the features we ended up using 
+this motivated us to implement our regression algorithms 
+
+figure        naive bayes error rates
+
+the total number of characters in the comment text  the
+features that we extracted from each comment is shown in
+figure      the goal of our problem was to eventually rank
+comments based on their features  we converted the rank
+into a score value computed by the rank normalized with
+the number of comments in the submission  see figure
+        this means the scores are bound between   and   
+and the highest comment has the lowest score  our model
+then attempts to compute this score using the feature
+vector by computing the appropriate weights for each
+feature                    
+
+figure        regression score computation
+to train our model  we input submissions from a subreddit 
+and try to find optimal weights to solve the target
+regression problem  we used two different models  linear
+regression and support vector regression  both of which
+attempt to minimize the distance between the score and
+the predicted score  see figure         for linear
+regression  we created our own code that used stochastic
+gradient descent  while we used the scikit   
+implementation of svr  however  we found that svr had
+similar accuracies  but was more consistent  so only svr
+is shown 
+
+figure        svr optimization equations
+evaluation of each of the results from each model used a
+normalized version of spearmans footrule  given a
+predicted ranking and an correct ranking  spearmans
+footrule is the sum of absolute differences of each
+individual item  our normalized version of this  see figure
+       divides the error by the maximum possible  which is
+computed using the items in the reverse ranking  the
+normalized version of this error is thus bounded between
+  and    where   denotes the worst possible predicted
+ranking  note that this error distribution varies immensely
+based on the number of comments in a submission  for
+example  a submission with only   posts can have only
+errors of   or    while a submission with many comments
+can have many different values in the range  furthermore 
+the average error rate for a random guess is not      for
+example  a random guess for three comments has a 
+probability of   error   probability of     error  and 
+probability of   error for an average of       thus 
+depending on the how many comments the submission
+have  a random guess can have different accuracies  the
+distribution of errors for a random guess in our dataset is
+shown in figure       
+
+     regression
+naive bayes failed to scale well with a larger dataset size 
+so instead we approached the problem from a different
+angle that used features from each comment that would
+be unique values  for example  one possible feature was
+
+figure        normalized spearmans footrule
+
+fifeatures
+random  no features 
+  specific post words
+  relevant keywords
+  good formatting
+  quality post
+  histogram of word lengths
+  time
+
+test error
+     
+     
+     
+     
+     
+     
+     
+
+figure        feature analysis for svr
+
+figure        histogram of errors for random
+
+figure        learning curve for svr
+
+figure        histogram of errors for svr
+after training our model on all of the data with our set of
+features  the error is reduced from a random model error
+of       to the full set of features giving        the
+histogram of errors using all of the features is shown in
+figure        note that we still have peaks at   and   error
+due to the large number of submission with only two
+comments 
+once we had our model and features  we evaluated our
+features by doing a feature component analysis  starting
+with no features  we trained our model and gradually
+added features  recording the error associated with each
+set of features  see figure         this allowed us to
+evaluate the effectiveness of each of the features created 
+the most significant feature is time  which reduces the
+error from       to        the effectiveness of this feature
+makes sense  because comments that are posted earlier
+have more exposure time than other comments  meaning
+it has a greater opportunity to accumulate the necessary
+votes to make it a top comment  each of the other features
+add a small benefit  since each captures just a small
+amount of how users might react to the comments  the
+next most significant feature  specific words  is able to
+capture a general trend that certain words may inherently
+cause a comment to be favored 
+the final analysis of our model was a learning curve  which
+looks at the testing and training error over different sizes
+of datasets  see figure         we find that although we
+have        submissions in our entire dataset  after only
+      posts our training and testing error converge at a
+value of around       because the errors converge  and
+even cross each other  it means that our model is
+
+underfitting the data and has high bias  this interpretation
+makes sense  because our    or so features could not be
+expected to capture all of the complexities of the
+thousands of submissions  therefore  a reasonable
+approach to improving our model would be to add features 
+
+     meme clustering
+the meme clustering algorithm was our attempt to
+address the issue of lack of  good  features  our definition
+of meme is a phrase or a variant of that phrase  which
+become very popular occur repeatedly during a given time
+period  with this definition in mind  we implemented the
+following algorithm using k means model in figure       
+a proof of the validity of this algorithm is attached in
+appendix     
+some human readable sample outputs of this are as
+follows  we de stemmed the words to make them more
+human readable  are shown in figure       
+
+figure        implementation of clustering
+
+fifigure        logistic regression
+
+figure        pseudocode for clustering
+
+using logistic regression  we are able to get achieve a
+testing error of       using all of the features  including
+measurements on the posts  time  and bigram trigram
+frequencies  in figure        the learning curve for this
+algorithm shows that the error does not converge even
+after using all        submissions  this means that we are
+overfitting the data  this makes sense  because the
+number of features increases with each submission  since
+we introduce new bigrams and trigrams each comment 
+we would never expect to be able to utilize all of these
+features without some overfitting  however  since the
+testing error with these features decreases  we know that
+some of bigrams trigrams help our prediction 
+
+figure        example clusters
+we can see from figure       that we have learned some
+useful memes corresponding to news events of the given
+timestamp  the results show that memes do exist in reddit
+posts and is an interesting application by itself already 
+however  we were not able to find enough memes  more
+than     of the total number of posts would have been
+ideal  to have a significant impact on our regression
+algorithms 
+
+     logistic regression
+the clustering implementation attempted to achieve
+capture some semantics of the comments by looking at
+what words were used together  by looking at which words
+were associated with each other  we could generate
+features based on these pairs of words  instead of single
+words like naive bayes does  however  after looking at the
+meaningful groups created by our clustering algorithm  we
+found that the majority of these clusters were simply words
+that were placed next to each other  this makes sense 
+because adjacent words are likely to be associated with
+each other  therefore  to simplify our addition of word
+clusters  we decided to simply add groups of words next to
+each other  bigrams and trigrams  
+another issue that we found in regression was attempts to
+add bigrams and trigrams failed  this is because the size
+of features became too large for an svr to compute  since
+the memory required because extremely large  from this
+point  it made sense to keep our same goal  to compare
+comments and find the better comment  but now change it
+so that we only compare comments  note that one could
+think of the original ranking problem as simply repeating
+these comparisons sequentially  therefore  our new
+problem is simply a classification problem where each
+submission consists of a good comment and a poor
+comment  the algorithm simply must correctly label the
+comments based on the features  for the classification
+problem  we used logistic regression  see figure        
+
+figure        logistic regression learning curve
+another analysis looks at the precision and recall of an
+algorithm  the precision specifies how well the algorithm
+performs at correctly identifying a comment as good 
+while the recall is how many of the good posts were
+correctly found  by modifying the threshold score
+necessary to consider a comment as good  we can move
+along this precision recall tradeoff  see figure        
+from this graph  we see that for perfect recall  we end up
+having a     accuracy  this makes sense  since exactly
+half of our comments will be labeled good  also  if we
+want to increase the threshold  we limit our analysis to
+posts that we are very sure are good  since they score so
+high  in the most extreme case  we have an    
+accuracy precision  but also classify a vast majority of the
+good posts as bad  meaning low recall  we use a balance
+of these two extremes  i e   we do not have a preference
+between false positives and false negatives  by choosing
+the point at the knee of the graph with      precision and
+     recall  this data point corresponds to a threshold of
+     which verifies our threshold choice for the learning
+rate  the table of true false positive negatives are shown
+in figure       for a threshold of     
+
+fithe above is a portion of the meme clustering algorithm  i
+will prove by showing that    words from a meme are
+passed into the clusters     others are not  and    words
+from a meme will be moved to the same cluster 
+   suppose a meme m   w    w         w n
+by definition  all w i s will occur repeatedly during a
+certain given period  t  for these w i s  word occurrence  
+threshold occurrence  hence they will be added to the
+clusters 
+   suppose a non meme consists of words  v    v        
+v m
+figure        pr curve for logistic regression
+true
+
+false
+
+positive
+
+    
+
+    
+
+negative
+
+    
+
+    
+
+figure        classification for threshold    
+
+   conclusion and future work
+in this project  we designed several different machine
+learning algorithms to rank comments  the nave bayes
+algorithm was not able to extract sufficient information out
+of large datasets  because of the nb assumption  we
+solved this by svr implementation that could rank groups
+of comments with an error of        however  it lacked the
+semantic features found in clustering  by including
+bigrams trigrams  our logistic regression could classify a
+modified version of our original problem with an error of
+      
+
+we simply negate the definition of a meme and see that
+the condition  word occurrence   threshold occurrence  for
+all such v i s will not be true  unless it is the same as one
+of the w i s in which case it will be joined by k means 
+   since the distance metric gives higher priority to
+percentage of time period overlap  all w i s will
+necessarily be closer to each other since they came from
+the same time period 
+q e d
+remark  the drawback to this algorithm is that single wordmemes or several memes occurring during the same time
+will be clustered into a centroid  we simply ignore these
+cases as they are rare 
+
+     proof of normalization of spearman s
+footrule
+need to proof     f  sigma      where sigma is any
+permutation of a ranking vector v and f  is our normalized
+version of spearman s footrule 
+we note that it suffices to show
+   f sigma   f reverse  max f sigma    where reverse
+is simply a reverse ordering of v 
+
+to improve our ranking algorithm  our hypothesis that the
+inclusion of certain keywords  in the form of
+bigrams trigrams urls  was significantly correlated with the
+ranking turned out to be invalid  however  by improving our
+clustering algorithm or researching alternative means to
+group together words  we can instead start ranking posts
+based on their content  in general  for subreddits where
+the users are likely to upvote based on the meaning of a
+comment  which suggests these new features would
+perform well 
+
+   f sigma 
+
+     proof of meme clustering
+
+therefore  we can write
+sigma sigma   sigma       sigma m where all
+sigma i s are permutations of length  
+
+this is obvious since f is a summation of absolute values
+with equality when sigma is the identity 
+f reverse  max f sigma  
+let v          n 
+sigma v   sigma    sigma        sigma n  
+we note that any permutation of length k can be
+expressed as a product of permutations of length  
+
+hence we have sigma v  delta sigma m v   where
+delta sigma   sigma       sigma  m    
+this is a recursive equation and we can solve it by
+greedy algorithm  the sigma m that gives the largest
+value is clearly the swapping of   and n     n  
+by induction on n  we are done 
+q e d
+
+fi   references
+    diaconis  persi  and r  l  graham  spearman s footrule as a measure of disarray  journal of the royal statistical
+society  series b  methodological                       web   
+    clarkson  philip  and ronald rosenfeld   statistical language modeling using the cmu cambridge toolkit   eurospeech 
+vol           
+    balchandran  rajesh  and linda boyer   identification and rejection of meaningless input during natural language
+classification   u s  patent no                apr       
+    fetterly  dennis  mark manasse  and marc najork   detecting phrase level duplication on the world wide web  
+proceedings of the   th annual international acm sigir conference on research and development in information
+retrieval  acm       
+    leskovec  jure  lars backstrom  and jon kleinberg   meme tracking and the dynamics of the news cycle   proceedings
+of the   th acm sigkdd international conference on knowledge discovery and data mining  acm       
+    senior  trevor  snoocore  https   github com trevorsenior snoocore  github       
+    umbel  chris  natural  https   github com naturalnode natural  github       
+    scikit learn  https   github com scikit learn scikit learn  github       
+
+fi

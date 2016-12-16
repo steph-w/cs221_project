@@ -1,0 +1,313 @@
+unsupervised corpus partitioning of a large scale
+search engine
+
+jean paul schmetz
+department of computer science
+stanford university
+stanford  ca      
+jschmetz stanford edu
+
+abstract
+using a very large query logs we aim to partition a web scale document corpus in order to     efficiently shard the indexing to optimize the probability
+of results sharing ranking functions      provide an efficient basis to classify
+the  latent  intent of a query and     provide additional useful features e g 
+adult content filters  personal cluster page ranks  etc 
+
+ 
+
+introduction
+
+large scale search engines need to partition their indices into shards  the partitioning is done by
+document  not by term  meaning that usually one entire document will be indexed in one shard  at
+least   without optimization  something even with optimization   all shards would then be queried
+for each query  scoring functions are applied at the shard level and the highest scoring subset of
+each shard is sent to a post processing function that re ranks and reduces the results and creates
+the result page  large scale search engines  google  yandex       are partitioning more intelligently
+ using different schemes  freshness  topics related partitioning  quality related partitioning etc     
+we would like to machine learn an optimal partitioning in an unsupervised way that attempts to
+respect the following constraints 
+ given a document  we output in which partition s  it needs to be indexed in 
+ given a query  we know which partition s  would most likely have the answer with some
+form of probability or ranking
+ documents that co occur on a search result page should also co occur in one partition  so
+that they get scored with the same ranking function and the same context 
+ we do not want to end up with   partition or one partition per domain 
+ we should recognize some intuitive reason behind the partitioning  e g  sites serving similar
+needs should land in the same partition etc    
+this would allow the system to truly respect the possible intents of a query and reflect it in the result
+page as well as offering the possibility to machine learn each partitions ranking function  outside
+of the scope of this paper   ideally the optimal partition would be such that each basic intent of a
+query is answered by one partition using an optimized ranking function for that intent 
+
+ 
+
+data
+
+as training data  we have a very large search query log from a large representative user panel  hundred of thousands of users  in germany collected over   years  as a first simplification  we decided
+ 
+
+fitable    raw data excerpt
+query
+
+domain
+
+miley cyrus
+miley cyrus
+miley cyrus
+miley cyrus
+miley cyrus
+   seconds to mars
+   seconds to mars
+   seconds to mars
+   seconds to mars
+   seconds to mars
+
+de omg yahoo com
+de twitter com
+de wikipedia org
+en wikipedia org
+es wikipedia org
+audioinkradio com
+bs serving sys com
+de omg yahoo com
+de wikipedia org
+de wikipedia org
+
+count
+  
+ 
+    
+  
+ 
+ 
+ 
+ 
+   
+  
+
+to reduce the url to the domain component including subdomain  e g query miley cyrus goes to
+de omg yahoo com   this makes the partitioning a domain clustering problem  this reduces dimensionality tremendously without introducing too naive assumptions  domains tend to serve one
+main intent  
+in this setup  we can identify     million query domain pairs  there are      million domains
+visible in the dataset but only   million which we have seen in more than   unique pairs 
+we see       million unique queries     million of these queries are leading to   or more domains 
+this is an important fact as this will provide the main connection between the domains 
+we have decided to focus on complete and untransformed queries  no linguistic analysis  spell correction or other transformation incl  character decoding   the important consequence of this choice
+is that there is a large probability that if a given query led to two different domains  it was most
+likely because a user clicked of both urls during a unique session with a clear albeit latent intent 
+we can test the performance of our algorithms on roughly         new daily pairs as well as on a
+much bigger dataset of    billion query url pairs and a crawler emitting billions of documents per
+week 
+
+ 
+
+construction of the similarity matrix
+
+we start with n             domains  we then build a square symmetric matrix s of size  n  n  with
+each element i  j set to the sum of the minimum number of times we have seen a query answered by
+both domain i and domain j  for example  for the dataset in table     we would set 
+srawi j   min             min        
+where i   de omg yahoo com and j   de wikipedia org
+if i   j  we set the value to   
+we then need to normalize this matrix  we first normalize by row 
+
+sni j   srawi j  
+
+n
+x
+
+srawi j
+
+j  
+
+we then re symmetrize the matrix by taking the minimum element of the matrix and its transpose 
+si j   min sni j   snj i  
+this normalization is extremely important for all further steps as it makes sure to get the right
+similarity order  specifically we fix two problems  in the original and in the nomalized matrix  large
+ 
+
+fipopular domains like wikipedia are the closest neighbors of all other domains and in the normalized
+matrix small domains  with e g  only a handful of co occurences with one single larger domain 
+have a similarity of   with the larger domain  only after the two normalization do we have the
+expected order of similarity for a given domain d 
+sim small domain  d    sim d large popular domain    sim d very similar domain to d 
+p
+we also create a matrix diagonal matrix d where di i   j si j
+
+ 
+
+spectral clustering
+
+because the matrix is relatively large  we remove the domains i for which have the di i     this
+is warranted because these domains do not actually contribute to the clustering at all  even when
+taking a very low   very close to zero   the dimensions get reduced to n             interestingly
+even at this level of dimensionality reduction we lose extremely little information  in fact we still
+have        of all unique queries we have seen  the domains that are dropped in this reduction
+process can either be easily re clustered later  e g  hundreds of thousands of these are subdomains
+that are easily clustered to wherever their top domain end up   clustered in the cluster where the
+query they were associated with points to or simply left as singleton clustered together in a tail
+index 
+in order to do spectral clustering  we constructed two different graph laplacian matrices  unnormalized l   d  s and normalized l   i  d    sd      we then computed the k eigenvectors
+corresponding to the k smallest eigenvalues of these laplacian matrices and then apply k means to
+the resulting matrix of vectors  or its normalized version 
+
+ 
+
+results of spectral clustering
+
+we tried different implementations of spectral clustering and suffered from two issues      spectral
+clustering is computationally very expensive at this size and     any level of k that was computable
+ e g        did not deliver usable clusters  depending on whether we used normalized or unnormalized laplacian we either ended up with clusters where there was one dominant cluster  so dominant
+that all domains with any information would cluster together   see right picture with k     nonnormalized  or with a well distributed clustering  in terms of number of domains they contained 
+but each cluster containing a varied mix of topics and site types  see left  k     normalized   both
+clusterings were measured to be very far from random  measured by number of cross links between
+clusters  but unsuitable for our purpose 
+
+the problem seems to require a much larger amount of clusters to be usable and while spectral
+clustering is theoretically possible at high levels of k  it is by no means trivial to implement 
+
+ 
+
+naive greedy algorithm
+
+because the problem seems to require a much larger number of clusters to offer a reasonable clustering and would benefit from a more hierarchical clustering  we propose a naive and greedy algorithm
+to cluster the dataset  in each iteration the algorithm goes through all the clusters  we start with
+each domain being a singleton cluster  and cluster each domain with its nearest neighbor as long as
+the similarity is above a low threshold  in this case         the algorithm is very greedy in that if
+a is bs nearest neighbor and bs nearest neighbor is c  we collapse a  b and c into a cluster 
+we iterate until the algorithm stops clustering neighbors because there are no similarities left above
+ 
+
+fitable    naive and greedy clustering iterations
+iteration
+
+number of clusters created
+
+information in clusters
+
+ 
+ 
+ 
+ 
+ 
+ 
+
+     
+     
+    
+   
+  
+ 
+
+      
+      
+      
+      
+      
+      
+
+threshold  in the second and later iterations  we compute the average similarities of the cluster members and domains outside of the cluster and combine with the cluster of the closest nearest neighbor
+ on average  outside of the cluster  the algorithm is therefore very greedy  it will cluster with anything above threshold  and very naive  it will cluster with another cluster even if only one member
+of the other cluster is the closest on average 
+
+ 
+
+results of naive greedy algorithm
+
+the algorithm converges in   iterations  because it is too greedy the best and most useful clusterings
+happen at iteration   and    in later iterations  the clustering starts to lose its usefulness  much as the
+spectral clustering did   in table      we present the number of cluster at each iteration along with
+the percentage of information preserved in these clusters  ie  the percentages of the original queries
+that these clusters contain fully  
+it must be noted that most of the useful clusters do not actually cluster after step    causing the
+percentage of information to drop sharply after step     in steps      the clusters simply combine
+with one another 
+if we assume that the clustering reached in step   is optimal  it is not formally but is not very far from
+it   the optimal k required to reach this in spectral clustering would be somewhere around        
+ because of the singleton clusters dropped in step  and clusters that were perfectly clustered  in the
+sense that they had no nearest neighbors above threshold  in step   and did not survive to step    
+this algorithm generates clusters with very healthy sizes  most clusters include     domains in step
+   and none above     and most clusters are at sizes between    and    in step   
+
+in a more visual sense  the clustering of spiegel de  one of the top news sites in germany  results
+in the following   first steps  cleaning up the www   de  
+step    bild  focus  spiegel  welt  stern  sueddeutsche
+step    bild  focus  spiegel  welt  stern  sueddeutsche  faz  zeit  fr online  handelsblatt  tagesspiegel 
+n tv  tagesschau  n  
+this is basically exactly how a german person would have clustered national news sites 
+more generally  table    shows two  more obscure  step  clusters that combined into a larger step  
+cluster and clearly represent the harry potter sites relevant to the german internet users  at step   
+the algorithm tends to become a group of fiction sites 
+ 
+
+fitable    two clusters at step   combining in step  
+
+ 
+
+cluster step  
+
+cluster step  
+
+zauberhogwarts spy loesungen       n  nabble com
+zauberhogwarts spy dreipage  de
+loesungen zauberhogwarts jimdo com
+zauberhogwarts spy weebly com
+harrypotter warnerbros com
+www hp fans de
+www harry potters fanpage dreipage  de
+www zauberhogwarts de
+www hp fc de
+www jkrowling com
+www pottermore com
+zauberhogwarts de
+
+harry potter     spiele de
+www harrypotterspiele com
+www verzaubert at
+www carlsen harrypotter de
+www harrypottershop de
+harrypotter xperts de
+www harrypotter xperts de
+www fanficparadies de
+www verzaubert at
+harrypotter warnerbros de
+www verzaubert at
+
+practical use of results and further work
+
+we see highly usable results in this work  it is definitely possible to relax the greediness and naiveness of the algorithm mostly by changing the rules and threshold at which clusters combine in step
+  and later  this would slow down the convergence  but not by much  perhaps    steps instead of   
+and generate more useful larger clusters 
+this technique also allow us to index the cluster number in each step with each document and use it
+in the sharding process  as intended primarily  
+these clusters would also be very good at labeling queries  because of the results we have  we can
+easily construct query to cluster id training sets  for further supervised intent classification  using
+the cluster ids as latent intent indicator  
+moreover  it is almost trivial to construct extremely efficient filters  for example for adult content 
+by creating groups of level   clusters as filter set  based on a training set   additionally  creating
+user profiles as weighted set of cluster ids based on previous interactions seems promising  also 
+personal page rank types calculation  where the cluster members are the restart set  could be used in
+combination with query classification to provide boosting factors in the ranking functions 
+
+ 
+
+conclusion
+
+we covered all the requirement stated in the introduction  given a document  we can easily identify
+which partitions it belongs to simply by its domain  supervised machine learning techniques can be
+used to learn to classify queries into labels given by the cluster ids  we constructed the similarity
+matrix to be heavily influenced by co occurences on a result page  we did end up with a large and
+useful number of clusters which are immediately understandable when observed  the reason the
+naive approach works so well is that the size of the data and the way it is collected  millions of page
+expressing their intent  in fact does most of the clustering upfront and the naive algorithm has an
+opportunity to meaingfully cluster before the greediness takes over 
+references
+    parallel spectral clustering in distributed systems  wen  yen chen  yangqiu song  hongjie bai  chih jen
+lin  e y  chang  ieee trans  pami              
+    r  liu and h  zhang  segmentation of  d meshes through spectral clustering  in proceedings of pacific
+conference on computer graphics and applications       
+    u  luxburg  a tutorial on spectral clustering  statistics and computing                      
+
+ 
+
+fi

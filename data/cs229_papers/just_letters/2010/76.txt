@@ -1,0 +1,240 @@
+using adaboost for real time object detection on
+programmable graphics hardware
+farooq mela  cs    fall     
+introduction
+an object detection algorithm is able to identify an object of a given type in a digital image  the use of
+machine learning methods for object detection has been well studied  one of these methods is based on a
+sliding window approach  where the classifier is a detection window of fixed size and evaluates some
+criteria over all pixel positions and various resolutions of the input image  we apply machine learning to
+simple sliding window classifiers to build a robust detector that can be trained to recognize various objects 
+the rapid increase in both the performance and programmability of recent graphics hardware has made
+the discrete graphics processing unit  gpu  a compelling platform for computationally demanding tasks 
+furthermore  this hardware is especially suited to both image processing and data parallel computation 
+our algorithm is inherently data parallel  coherent access  memory intensive and image oriented  so it is
+well suited to gpu implementation  in addition  media is ever increasing in both resolution and quantity 
+methods that run in real time for low resolution images or video streams are inadequate for high definition
+photos and high definition  high frame rate video streams  thus  our present work is motivated by our
+desire to adapt a robust object detection technique to the processing demands of modern media 
+object detection
+the object detection method we employed was based on the work of viola and jones  each sliding
+window is constructed of positive and negative regions  the value of a window at a particular position on
+an image is the sum of the pixels in the positive regions minus the sum of the pixels in the negative regions 
+
+fithese windows are evaluated over all possible positions over the input image and scaled down
+versions of the input image  each scaled down version of the image is half the size of the previous in each
+dimension  until a minimum image dimension is reached  in our case    pixels  
+viola and jones propose accelerating the computation of sums of pixels in the evaluation of a window
+by a preprocessing step wherein we construct the integral image  also known as a summed area table  of
+the input image  if we have an image with width w and height h  then let
+pixel at position  x y  for
+
+   x  w
+
+and
+
+   y   h   we can then define the integral image ii x y  as
+
+j
+
+i
+
+im x  y  be the value of the
+
+
+
+ii x  y      im x  y 
+ x    y   
+
+
+the integral image can be computed dynamic programming style by a simple recurrence relation 
+
+
+
+ii x  y    im x  y    ii x    y    ii x  y     ii x    y   
+where
+
+ii x  y      if either x or y is negative  given the integral image  the sum of any rectangle of pixels
+
+in the original image can be computed with just four array references in the integral image at the corners of
+
+
+
+
+the rectangle 
+right
+
+top
+
+  im x  y    ii right top   ii left   top   ii right bottom      ii left   bottom   
+x  left y  bottom
+
+we can construct a weak classifier by choosing sliding windows at random  and testing them against
+
+
+
+our training data  we stop when we find one with acceptable false positive  when faces are falsely
+detected  and false negative  images in which faces are missed by the classifier  rates 
+learning with adaboost
+we can combine a number of weak classifiers into a much stronger one using the adaboost method 
+which stands for adaptive boosting  adaboost constructs a series of weak classifiers
+weights
+
+hi and a set of
+
+ i for those classifiers and outputs a strong classifier  given training data and labels
+
+  x   y         x m   y m      where y i          we define the weighted training
+error e d h 
+
+
+
+classifier h according to the distribution d as 
+m
+
+
+
+
+e d h     di  y i  h x i      where
+i  
+
+
+
+m
+
+d
+
+i
+
+i  
+
+
+
+  
+
+
+
+of a
+
+fiadaboost begins by setting each
+
+di  
+
+ 
+  then  for t        t   it chooses the classifier ht that
+m
+
+minimizes the error with respect to the distribution d 
+
+
+
+cannot find a classifier with
+
+   e d ht      here  the algorithm terminates if it
+
+
+
+     
+          it then sets the weight for the classifier  t   ln 
+    which
+ 
+
+
+
+assigns a larger weight to classifiers with smaller error and smaller weight to classifiers with larger error 
+
+
+finally  the distribution
+d is updated 
+
+
+
+di   di exp  t y i ht  x i    for i      m
+then the distribution is renormalized to have unit sum  this update to d increases  boosts  the weights
+
+
+
+for misclassified training examples and decreases the weights for correctly classified training examples 
+the output of adaboost is t classifiers and associated weights for each classifier  the composite
+strong classifier is then 
+t
+
+h x    sgn   i hi  x  
+i  
+
+the advantage of using adaboost is that  even if we only have relatively weak classifiers  we can
+
+
+
+combine them to build a very accurate classifier  we would expect that  as we increase t  the number of
+weak classifiers   that h would suffer from over fitting  so that even though we might be decreasing our
+training error as we increase t  our test error will increase  however  the surprising thing about adaboost
+is that  as we increase t  and even after our training error has gone to zero  the test error continues to
+decrease  there is still debate on why this is the case  some researchers have postulated that as t increases 
+adaboost is maximizing the classification margins 
+of course  there are caveats  the performance of adaboost depends on good training data and our
+ability to choose enough weak classifiers  adaboost can fail if the training data is noisy  if the weak
+classifiers are too weak  or if we cannot create enough weak classifiers 
+gpu implementation
+now that we have described our algorithm  we will describe our gpu accelerated implementation 
+we used a linux machine with a quad core q     processor and an nvidia     gt gpu  after
+implementing the algorithm on the cpu  we used opengl     and programmable fragment programs to
+
+fiimplement the sliding window calculations and image down sampling  the cpu must compute the integral
+image because of the data interdependence of the neighboring pixels in the integral image 
+we represent our various sliding windows as textures  where the texel value   indicates a negative
+pixel  and a texel value of     indicates a positive pixel  we store the sliding window primitives as textures
+on the onboard gpu memory  which is generally faster than main memory  has a very wide bus interface 
+and is well suited to data parallel access  we will use these sliding window primitives in our fragment
+program  which is executed for each pixel and each resolution of the output texture  if our input image is
+   x     we run our sliding window operation at the    x       x    and   x   resolutions in a single
+pass  gpu hardware can compute all downsampled versions of our image very quickly  furthermore it
+represents each image in an optimized format known as a mipmap  giving us better texture read
+performance and lower memory usage  each integral image is loaded into gpu memory as a texture using
+glteximage and then downsampled using glgeneratemipmaps 
+the fragment shader is at the heart of the speedup  once the mipmapped integral images are loaded
+into gpu memory  the fragment shader is invoked to render an output texture that is the size of the original
+image  the fragment shader program executes independently and in parallel at each pixel location  where it
+computes h x  at that pixel  to be stored in the output texture 
+
+fifor each image resolution  the fragment shader computes the  weighted sum of the sliding
+window evaluated on the integral image at the pixel location  if any of the sums are positive  the fragment
+shader outputs one  otherwise it outputs zero  thus  we can compute h x  for an image x at every pixel
+position for every resolution in a single pass  the cpu can then read back the output texture  and wherever
+there is a one  the object detection algorithm has predicted an object  in our case  a face  
+experimental results
+we trained our object detector using the uci machine learning face image database  the source of
+the image in the diagram above  for positive training examples and non face images downloaded from
+google images as negative training examples  each image was converted to   bit grayscale  by randomly
+choosing     of the data for training and     for testing  and only choosing weak classifiers with both
+less than     false positives and less than     false negatives  we were able to achieve a test error rate of
+less than    with t     however  our cpu implementation ran at less than real time rates  just to bring
+the number of images classified per second to more than     we rescaled all of our input images to    x   
+before computing the integral images or performing any other processing  after implementing the same
+algorithm on the gpu  we achieved approximately an   x speed up at the same resolution  these results
+have been achieved on ca       consumer level hardware  we have not yet gone to any lengths to optimize
+our gpu implementation  so it is a certainty that much higher performance can be achieved 
+
+     
+     
+     
+     
+     
+     
+     
+     
+   
+
+cpu  images sec  
+gpu  images sec  
+
+   x     
+
+   x     
+
+   x          x      
+
+in conclusion  we find that gpus provide ample opportunity for the acceleration of image
+processing algorithms  and that our implementation of real time object detection would be suitable for the
+kinds of high resolution images or high framerate video streams that have become commonplace 
+
+fi

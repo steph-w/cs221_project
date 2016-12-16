@@ -1,0 +1,246 @@
+jit compilation of common kernels in
+sequoia using supervised learning
+michael bauer
+
+kushal tayal
+
+department of computer science
+stanford university
+ mebauer  ktayal   stanford edu
+ 
+
+introduction
+
+sequoia is a portable  locality aware parallel programming language designed
+to make it easier for scientists and engineers to write high performance codes
+that can easily be transported across different super computers  sequoia is
+able to achieve this goal by directly programming the memory hierarchy in a
+machine agnostic way  in order to make code independent of any one architecture  sequoia code is parametrized with tunable variables that are specified
+at compile time for a given architecture  whenever a piece of code is to be
+transferred to a new machine  it is the responsibility of the programmer to fill
+in the compile time tunables in a mapping file that is designed to map the code
+onto a given architecture  this currently requires that the problem sizes  and
+therefore the tunable variables are known statically 
+one of the future goals of sequoia is to become more dynamic in its ability
+to execute programs by off loading some of the work of the compiler onto the
+runtime for the cases where information is unknown at compile time  the need
+to off load work onto the runtime could be either a result of unknown problem
+sizes or changing machine conditions  in either case  the runtime will need to
+be able to dynamically just in time  jit  compile code based on a problem size
+and a target architecture  this will require the runtime to be able to compute
+the tunable constants to be passed to the compiler very efficiently  the need to
+do this with minimal overhead will be paramount to the ability of the runtime
+to achieve good performance 
+in order to facilitate the ability of the runtime to efficiently jit code  we propose to build models of some commonly occurring kernels in sequoia programs
+so that these models will enable the runtime to efficiently generate a mapping
+file for a given architecture  these models will be functions that will take as arguments the data size and the attributes of the target architecture  and quickly
+compute the tunable variables to be passed to the compiler  since these are commonly occurring kernels we can build the models offline using machine learning
+techniques and then embed the models in the runtime  the goal of this work
+is to discover whether or not it is feasible to build such models using various
+machine learning techniques 
+
+ 
+
+fi 
+
+problem definition
+
+the goal of this project was to be able to easily build models of common
+sequoia kernels so we can automatically generate tunable variables given a data
+size and target architecture  we therefore stated our problem to be  given a
+feature vector consisting of the input problem size and the parameters defining
+the target architecture  number of levels  number of children per level  memory
+sizes   generate the tunable variables for the associated machine 
+
+ 
+
+application kernels
+
+before we began our study of various machine learning techniques to apply
+to our problem  we first fixed our set of input kernels    our goal in this paper
+was to investigate the ability to machine learning techniques to build models for
+commonly occurring kernels in the sequoia programming language  we chose
+four kernels that tend to appear in many scientific computing applications and
+therefore would be good case studies for this project 
+ saxpy   vector times a scalar plus another vector
+ sgemv   dense matrix vector multiplication
+ matrix multiplication   dense matrix matrix multiplication
+ conv d   two dimensional convolution
+these kernels appear in many different sequoia applications and also correspond to different points in the space of computation to communication ratios   
+this therefore makes them a good set of kernels for our experiments 
+
+ 
+
+data collection
+
+the first step in our project was to generate a data set corresponding to
+various problem sizes and target architectures for our chosen kernels  we constructed a test suite by generating mapping files corresponding to   different
+problem sizes across   different machine architectures 
+ smp    a   node smp machine
+ smp     a    node smp machine
+ cmp    a   core cmp machine
+ cluster     a    node mpi cluster
+ cluster smp       a    node mpi cluster with   cores on each node
+ gpu    a machine with a single nvidia tesla c    
+ gpu    a machine with a pair of nvidia gtx    s
+  here we are referring to computational kernels and not kernels in the machine learning
+sense as applied to svms 
+  computation to communication ratios are in important factor in determining the performance of parallel codes
+
+ 
+
+fiin some cases the machines have multiple levels to the memory hierarchy 
+we modeled each level as a different input feature vector as each level has to
+generate its own output mapping parameters  for each kernel we currently have
+   different mappings in our training set  we have constructed this data set
+to demonstrate several important mapping techniques across different machines
+and problem sizes with the goal that the machine learning algorithms will be
+able to duplicate these techniques 
+we also constructed a series of three test problems for each of the different
+kernels that we were attempting to model  each kernel has a different test
+problem for the following architectures  smp  cluster  and gpu  by testing
+on different architectures we are able to observe whether or not the machine
+learning algorithms are capable of detecting the subtle differences in mapping
+techniques that can result in varying levels of performance 
+
+ 
+
+model construction
+
+based on our previous experience using an autotuner with sequoia  we felt
+that it would be necessary to have a separate model for each of the different
+kernels  the kernels themselves have vastly different performance characteristics
+and should therefore be modeled separately  however  we felt that a model for
+a given kernel should be able to represent all the potential target architectures 
+we therefore explored several different techniques for constructing models for
+our given kernels 
+
+   
+
+linear regression
+
+in order to get something running  the first technique we tested is basic linear
+regression which fits a linear curve to the set of input vectors  normalizing the
+input vector increased the training error and thus we applied linear regression to
+unnormalized data  we used the normal equation for running linear regression 
+    x t x   x t y
+
+   
+
+our experiments  see section    indicated that linear regression was insufficient
+for capturing the interesting mapping techniques to achieve good performance 
+
+   
+
+logistic regression
+
+after looking at the results of linear regression  we noticed that the features
+of the input vector have a varied range  we determined that fitting a linear
+regression to such an input may not be the optimal solution  the second method
+we tried was applying logistic regression  logistic regression fits a logistic curve
+to the input vectors and outputs a value in the range         for this purpose 
+we scaled our input and output training vectors by dividing each feature space
+by a maximum value specific to that feature  the test vectors were also scaled
+by the same maximums and the output vector was re scaled back to original
+range  we used the batch gradient descent method for minimizing the lms
+expression 
+repeat until convergence  
+j    j   
+
+m
+x
+
+ i 
+
+ y i   g t x i     g t x i        g t x i    xj
+
+i  
+
+ 
+ 
+
+fithe function g z  here is the traditional logistic equation  we used a brute force
+method to compute the optimum value of the learning rate   and the number
+of iterations based on the training error values 
+
+   
+
+svm like regression
+
+looking at the output of the previous two regression algorithms  another
+thing that we noticed was that the algorithms were having trouble dealing with
+the extreme variations in parameter ranges that existed across the various features  we then decided that it might be useful to map our vectors into a higher
+dimensional space where the higher dimensional space would include applying
+functions to the initial feature vectors  our hope was that this would enable the
+algorithm to deal better with the extreme discrepancy in the ranges of different
+features  unfortunately  our restricted training data set size prevented us from
+actually mapping the kernels into a higher dimensional space as we only had   
+vectors for each kernel    and we would have been unable to avoid under fitting
+in a higher dimensional space 
+since we couldnt directly map the features into a higher dimensional space
+using some kernel  we did the next best thing  apply different functions to each
+feature in order to scale each feature  we chose five different functions to apply
+to each individual feature 
+ f  x    x
+ f  x    log   x 
+ f  x    exp x 
+ f  x    sqrt x 
+ f  x    x 
+rather than attempt to be intelligent about our choice of function to apply to
+each feature  we simply tried all combinations of different functions applied to
+each feature  for matrix multiplication which has    dimensional input vectors
+we then ended up testing     different combinations  we then applied linear
+regression to each of the modified training sets and selected the set of function
+applications that minimized the difference between the output vectors 
+
+ 
+
+performance results
+
+due to the fact that our learning problem was a regression algorithm and
+not a classification problem we determined that the actual performance numbers
+attained by our generated mapping files would be a better metric than absolute
+difference between the expected output vectors and our computed vectors  we
+ran each of our three test vectors for each kernel through each of our learning
+algorithms and generated the equivalent mapping files  we then used sequoia
+to compile the generated code for each of the three target architectures  an mpi
+cluster  a    core smp  and an nvidia tesla c     gpu  the performance
+speedups attained relative to a hand coded implementation can be seen in figure
+  
+  generating training problems is very time consuming as they have to be done by hand
+currently and require expert knowledge 
+
+ 
+
+fifigure    performance results of learning algorithms on four different sequoia
+kernels across three different architectures 
+
+from these performance numbers we noticed several interesting facts  the logistic regression technique performed the best  it was able to attain similar
+performance to the hand coded version for both smp and cluster architectures
+across all four kernels  in some cases logistic was even able to exceed the performance of a hand coded implementation by discovering that the problem size was
+small enough to not make use of additional parallel resources due to runtime
+overheads  the logistic regression did not however perform as well on the gpu
+architecture  after looking at the generated mappings  we concluded that this
+is due to the fact that a gpu architecture is a four level tree of memories  as
+opposed to two levels for the smp and cluster  and the algorithm wasnt able
+to capture the interesting cross level mapping techniques 
+both the linear and svm like algorithms did not perform as well as the handcoded implementations  in some cases they were able to achieve comparable
+performance  but werent consistent enough to be able to be useful in a realworld application 
+
+ 
+
+conclusion and future work
+
+from the results of this project weve determined that using offline machine
+learning to build models of commons scientific computing kernels has the potential to be useful in a jit environment  however  before we implement this
+technology we must first discover a way to capture the interesting mapping techniques applied for deep  more than two level  memory hierarchies  this will be
+crucial to our success as most super computers that are targeted by sequoia
+consist of at least three memory levels 
+in the future we plan to continue this work by building larger training sets
+that should enable us to use svm techniques to map our problems into higher
+dimensional spaces  our hope is that this technique will capture the interesting
+mapping techniques for deep memory hierarchies 
+
+ 
+
+fi

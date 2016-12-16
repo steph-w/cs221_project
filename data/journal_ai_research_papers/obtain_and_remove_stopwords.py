@@ -3,7 +3,7 @@ import re
 import collections
 from nltk.corpus import stopwords
 '''
-remove words that occur more than M/10 times in the corpus, 
+remove words that occur more than M/10 times in the corpus,
 where M is the number of documents.
 
 remove words that occur less than 3 times in the corpus

@@ -1,0 +1,305 @@
+ecg r r interval estimation
+david zeng
+electrical engineering
+stanford university
+december        
+introduction
+magnetic resonance imaging  mri  is a biomedical imaging modality that provides high resolution images and
+excellent soft tissue contrast      this makes mri a preferable imaging modality for many applications  one limitation
+of mri is slow data acquisition  mri acquires data in the fourier domain one point at a time  usually until enough
+data has been collected to approximately satisfy nyquist sampling conditions  thus mri scans are on the order
+of minutes to tens of minutes and this makes mri particularly sensitive to motion  existing methods can robustly
+correct small amounts of motion but correcting large motions is an active area of research     
+in cardiac mri  motion comes from cardiac and respiratory motion  respiratory motion is relatively small and
+can be corrected  cardiac motion during diastole is also relatively small and correctable and thus data is usually
+collected during this period  figure     current implementations have a fixed data acquisition duration as shown
+in figure   and are triggered by the r peak  using the results of this project  we aim to modify this scheme to
+create a 
+dynamic length data acquisition sequence to maximize signal to noise ratio  snr  efficiency  snr efficiency
+ snr  t    if diastole is shorter than the acquisition length  we will end up collecting data during systole  this
+data will be too corrupted by motion to recover and all the data collected during the previous interval must be
+discarded  if diastole is longer than acquisition length  we will wasting time during diastole in which we could have
+acquired data  reducing snr efficiency 
+we would like to estimate diastole length but this is not an easy problem  instead  since we are already collecting
+ecg data during the exam and diastole length is correlated to the r r interval  the time between two consecutive
+r peaks          we estimate the r r interval 
+this project first implements several classification approaches as a proof of concept  the first approach is a
+series of classification approaches using logistic regression and support vector machines  svm  to predict if the next
+r r interval will be sufficiently long to accommodate the data acquisition  these methods use an n gram model
+of previous r r intervals as input and output a prediction of the length of the next r r interval  we then try a
+softmax classification approach to predict the largest integer number of imaging blocks  img  figure    that will fit
+in the interval  we again use an n gram model of previous r r intervals for input and output a predicted maximum
+integer 
+a nonlinear autoregressive neural network  narnn  is then implemented to estimate the length of the next r r
+interval  the input to the narnn is the ecg time series 
+
+figure    mri data acquisition sequence and partially annotated ecg 
+
+related work
+there has been one recent paper on r r interval prediction      this paper uses autoregressive moving average with
+exogenous terms  armax  and artificial neural networks  ann   they wavelet transform the time series  predict
+the wavelet coefficients  and then inverse wavelet transform the signal and compute the r r interval  the results
+from the armax are reasonable but damped compared to the range of the original signal and have about     error 
+the results from the ann are much worse  often predicting negative r r intervals  which are impossible  the ann
+results have between     and     error 
+ 
+
+fidataset and features
+the mit bih arrhythmia database is used for this project      the only annotations of the dataset are time markers
+for each r peak  figure     each ecg is sampled at     hz and each recording is    minutes  there are    recordings
+for a total of    hours of ecg data and     x    time points 
+for the classification methods  there were two approaches to create training and testing sets  one method divided
+each time series for training and testing in a       ratio respectively  another method randomly divided the data
+files in a       ratio  the r r intervals were then calculated from the annotations and grouped to construct the
+n grams 
+alternatively  the time series itself can be used as a feature vector  the feature vector is the length of the longest
+r r interval and the other intervals are zero padded to this length  this implementation allows the qrs complexes
+to be roughly aligned 
+for the neural network  no processing was performed on the time series  we divided the training and testing data
+by dividing each time series in a       ratio for input  this was prompted by the noticeably better classification
+results using this method  the expected output is a step function with height in seconds of the length of the next
+r r interval  the output has this value for the duration of the current r r interval 
+
+figure    example dataset time series with r peaks annotated 
+
+methods
+our first approaches are classification learning algorithms using n gram models  an n gram model assumes that a
+process is markov on its n previous states  this means that each feature vector x is the n previous r r intervals 
+each method classifies if the next time series will be greater than     ms  we arrive at this number by calculating
+that the minimum data acquisition time is     ms     and according to         diastole is       or       of each r r
+interval 
+the first approach is a linear classifier for a logistic regression      a linear classifier means that the input to our
+hypothesis function can be modeled as t x and we will solve for   we usually augment x such that x      and
+  rn    
+q
+ 
+for logistic regression  our hypothesis is h  x    g t x      e
+t x   where g z      ez is called the logistic or
+sigmoid function  let us assume that p  y     x      h  x  and p  y     x         h  x   furthermore  assume
+we have m training samples and let  x i    y  i    be the i th feature vector output pair  then we want to maximize the
+likelihood of
+m
+m
+y
+y
+ i 
+ i 
+l    
+p y  i   x i       
+ h  x i     y     h  x i      y  
+i  
+
+i  
+
+for a more tractable problem  we can take the log likelihood and still maintain same solution 
+      log l    
+
+m
+x
+
+y  i  log h x i        y  i    log    h x i    
+
+i  
+
+ 
+
+fiwe then find the gradient and hessian with respect to  and use newtons method to solve for    arg max      to
+calculate a prediction y from an input x and the  we have just found  we choose the maximum likelihood label of
+p  y x    
+another approach for classification is using a support vector machine  svm      a support vector machine finds
+a linear separation of two sets to maximize the margin between the two sets  let  be the margin between the two
+sets and let w  b be parameters of the separating hyperplane  then we want
+max
+
+ w b
+
+
+kwk
+
+s t  y  i   wt x i    b     i              m
+kwk     
+the problem is not convex but we can equivalently reformulate it to be 
+ 
+min kwk 
+w b  
+s t  y  i   wt x i    b      i              m
+however  this problem is infeasible for many real datasets because data is not always linearly separable  even if it
+is linearly separable  the solution may not result in the lowest generalization error  we can relax and regularize the
+problem by instead solving for
+m
+
+x
+ 
+i
+min kwk    c
+w b  
+i  
+s t  y  i   wt x i    b      i   i              m
+i     i              m 
+this allows some points to be misclassified but with a penalty i   the parameter c controls the relative weighting
+of the size of the margin and number of misclassified points  this optimization problem is solved using any modern
+quadratic problem solver  in this project  the svm is solved for by the liblinear library     
+the next approach is a softmax regression again using n gram models      we want to classify imaging blocks
+we can fit during diastole  from figure    we see that each imaging block is approximately    ms so we form bins
+of       ms          ms          ms      ms   to implement softmax regression  we first determine the empirical
+probability of each label  let p y   i x      i  
+
+exp it x 
+ 
+exp jt x 
+j  k
+
+p
+
+like before   is a parameter that we will solve for
+
+by maximizing the conditional probability  we solve for  by maximizing the log likelihood
+arg max      
+
+
+m
+x
+i  
+
+log p y  i   x i       
+
+m
+x
+i  
+
+log
+
+k 
+y
+
+  y
+exp lt x 
+t
+j  k exp l x 
+
+p
+l  
+
+ i 
+
+ l 
+
+ 
+
+now that we have learned the parameters   for a given input x  we can compute the conditional probability p y  
+i x    and choose the maximum likelihood label  softmax was calculated using the matlab  mathworks  natick 
+ma  function mnrfit 
+the final approach is a nonlinear autoregressive neural network       a neural network is made up of neurons 
+let p be a vector of inputs to a neuron and q the output  q   f  p  where  is a set of parameters to be found and
+f is nonlinear in p  we connect many layers of neurons in a feed forward network to successively combine outputs
+ k 
+ k  
+ k  
+of each layer such that the i th neuron of the k th layer outputs qi   fi k  q 
+          qn
+   to solve for the
+p  i 
+    
+      
+parameters  in a network with   layers  we minimize mean square error  y  fi    q 
+          qn
+    
+in this project  we use the levenberg marquardt algorithm to solve the problem and use the matlab neural
+network framework to implement the neural network  we choose delays of   and    hidden layers of   neurons each
+and one output layer of   neuron  figure    
+the output of the narnn is quite noisy because the expected output is a series of step functions and the trained
+response usually overshoots the steady state level  thus we must process the signal to extract a final value  we first
+filter the signal with a   tap low pass filter                     we then take the arithmetic mean of the filtered signal
+from      to      of each normalized interval  we choose this interval because the signal is approximately steady
+during this time 
+ 
+
+fifigure    narnn topology 
+
+results and discussion
+the results for the classification problems are shown in figure    the results are from the average of    trials  we
+see that as n gram length increases  the errors asymptotically reach the values shown in figure  c   a    gram looks
+like a reasonable input feature length as a tradeoff of error and computation  further analyzing figure  c   we notice
+that by training on the dataset split by time series  both logistic regression and svm perform significantly better
+than the yes hypothesis  in contrast  training on the dataset split by data file resulted in much worse or only slightly
+better performance 
+this significant difference in performance is interesting because intuitively  by randomly dividing the data using
+either method  a representative pattern should have emerged  one possible explanation is that certain files have
+unique arrhythmic patterns that are not seen in the other files and thus if these patterns are not in the training set 
+the learned model performs poorly 
+time series were also used as a feature vector for both logistic regression and svm  the results are shown in
+figure  d   from the results  we can see that we are barely doing better than the yes hypothesis  this shows that
+the time series in these models add very little information 
+
+a 
+
+b 
+
+c 
+
+d 
+
+figure    classification results  a  error when training data is split by time series  b  error when training data is
+split by data file  c  tabulated asymptotic error results  d  errors from using time series data as feature vector 
+softmax has an asymptotic generalization error of       and an empirical error of        the empirical frequency
+of each bin is                               these results are quite poor in this context and by examining the actual
+frequency of each bin  we see that almost     of the data are in three bins  both errors are close to     so we are
+not performing much better than randomly assigning a label from one of these three bins  such poor performance
+
+ 
+
+fifrom this algorithm given its n gram input feature vectors is not unreasonable because we are almost asking for a
+true regression 
+a representative output from the narnn is shown in figure  a   figure  b  shows the output after processing
+and we see that the network performs quite well  there are some cases when the narnn fails  usually when the
+r r interval jumps to a large value  this might be a result of the dampening during training  trying to filter out
+noise  the output is a series of step functions by implementation and thus has very high frequency transitions  it
+makes sense that the narnn may be filtering out these particularly large discontinuities  mean l  error is      ms 
+mean l  error is      ms  and mean square error is      ms        does not specify how it calculated its error but this
+project performs better by all common metrics 
+
+a 
+
+b 
+
+figure    narnn output  a  raw narnn output  b  processed narnn output 
+
+conclusion
+the classification approaches did not perform that well  only the division of data by time series produced results
+significantly better than the yes hypothesis  in the context of this project  this is fine because they were more for
+exploration of the capabilities of the methods than for accurate prediction 
+nevertheless  there is still an interesting application of the classification approach in cardiac mri  ecg is a
+complex setup that requires several wires and significant patient interaction  this can increase patient apprehension
+in an already stressful environment as well as require more time in the scanner  decreasing scanner utilization  an
+alternative approach is to use a plethysmograph as the cardiac trigger  which only involves a clip on the patients
+index finger  the plethysmograph waveform is much simpler than an ecg and each peak is a constant delay behind
+an r peak  thus  although our feature vector is simple  it is applicable in this situation  a further extension could
+be to train a narnn on the n gram feature vectors or to repeat this project on the plethysmograph time series 
+the narnn has small errors and produces results that are accurate on the order of milliseconds  our mri
+acquisition sequence can be adjusted by units of   ms so the results of this project are accurate enough to make
+practical improvements in snr efficiency  this allows us to reduce scan time and improve the patient experience
+with no tradeoff in image quality 
+
+ 
+
+fireferences
+    nishimura d g   principles of magnetic resonance imaging  stanford university       
+    wang h  and amini a   cardiac motion and deformation recovery from mri  a review  medical imaging  ieee
+transactions                    
+    bombardini et al   diastolic time frequency relation in the stress echo lab  filling timing and flow at different
+heart rates  cardiovascular ultrasound            
+    singh k  systolic and diastolic ratio and rate pressure product in anemia  cardiology                    
+    german sallo z  and calin c   rr interval prediction in ecg signals  electrical and power engineering  epe  
+     international conference and exposition on  ieee       
+    goldberger et al   physiobank  physiotoolkit  and physionet components of a new research resource for complex
+physiologic signals  circulation              e    e    
+    luo j  et al   combined outer volume suppression and t  preparation sequence for coronary angiography 
+magnetic resonance in medicine      
+    ng a y   cs    lecture notes       
+    fan r e  et al   liblinear  a library for large linear classification journal of machine learning research
+                 
+     dietz d k  s   autoregressive neural network processes       
+
+ 
+
+fi

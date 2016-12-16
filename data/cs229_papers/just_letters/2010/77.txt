@@ -1,0 +1,120 @@
+parallelizing the sparse autoencoder
+by tom jiang
+
+summary
+the objective of this project is to take the spase autoencoder algorithm  as presented at 
+http   www stanford edu class archive cs cs   a cs   a      handouts html   and develop
+methods for parallelizing  and possibly distributing the computation  in addition  the language
+go  was chosen as the language to implement the algorithm  because it is a language designed
+with parallel computation as one of the goals 
+one specific non goal  however  is to match the c   implementation of the algorithm  the c  
+compiler is far more mature  and has a highly optimized matrix library  the primary goal is to
+evaluate the potential speed up of using parallel computation 
+the findings in some respects are promising  go can be nearly as fast as c   or even faster
+depending on the circumstances  however  parallelizing the algorithm proved to be more
+difficult  as the basic algorithm is very difficult to make parallel efficiently  an improved algorithm
+with fewer data dependencies would allow for better speedups 
+
+background on go
+go is a systems language developed by engineers at google designed for high performance
+systems computing  one of its aims is to make it easy to perform parallel computation  in fact 
+the way to call any function in parallel is to use the statement  go f   instead of just f   
+running code using go is called running a goroutine 
+in addition  the language uses channels as the primary means of synchronization instead of
+mutexes or other constructs  which makes it easy to synchronize progress  instead of waiting
+on  and updating condition variables  which is unwieldy and error prone  the statement    c
+waits for something to arrive at the channel  while another thread calls c      to signal it  it is a
+powerful generalization of semaphores  mutexes are still supported  though i elected not to use
+them for this project 
+finally  the language has built in support of closures  and combining these three features makes
+it very easy to perform any sort of parallel computation 
+
+challenges
+the sparse autoencoder as given is very difficult to make parallel  the forwards and then
+backwards propagation of values prevents effective overlapping of the computation of the two
+layers  the next input cannot be processed until the current output is forward computed  the
+
+fierror terms backpropogated  and finally the weight matrices updated 
+however  as few as   synchronization points is possible per iteration 
+   perform layer weight matrix updates  perform layer   activation output computation for
+the next input  synchronize 
+   compute layer   output computation based on layer   activation  compute error terms
+for layers   and    update weight matrix  synchronize   the other weight matrix is then
+updated at the next iteration  
+
+the go implementation
+to parallelize the algorithm  each of the functions that computes an aspect of the algorithm  e g 
+the activation function  or the deltas  takes as parameters the start and end indices into the
+array on which it operations  e g  if start and end are       then the function operates on nodes
+      inclusive  in the layer it updates  some care was taken to ensure things that should be
+updated simultaneously  the weight matrices  for example  stored copies of the previous values 
+in addition  i call the smaller functions from larger functions that represent all the computation
+associated with a layer  e g  computelayer  performs the l  delta  l  updates  and l  activation
+calculations for a subset of the layer   nodes  once done  the compute function sends a value
+to a channel to signal that its done 
+i implemented two methods of parallizing the algorithm  the first is the recommended way of
+using goroutines    the parallelcompute functions call the compute functions using go  and
+wait on the results  i actually opted to implement the model where the caller thread also works
+on a piece of the matrix  though there were very little difference between doing that and just
+calling go for everything 
+the second method uses something similar to a thread pool    there are several worker
+goroutines that run in a loop  each of them attempts to read from a channel  which blocks until
+there is something to read  the main thread sends messages to each of the threads to begin
+the next piece of computation  each worker is in charge of a subset of the layer   nodes the
+layer   nodes  it works on one or the other depending on the value it receives on its channel 
+one thing to note is that the parallelization portion of the code is relatively easy to read  there
+are no confusing condition variables or mutexes  and in fact  both implementations share almost
+all the code  with the only difference being how the work is divided and executed 
+
+other attempts
+i also tried several other techniques  including breaking down the work into even smaller
+chunks  and calling go on all of them  i also attempted a more traditional thread pool model 
+where the main thread enqueues work on a single channel  and any thread can take that work
+from the shared channel  in all cases  it made the code run slower  which is not too surprising 
+
+fibreaking the work down into even smaller chunks or enqueuing lots of work performs well by
+keeping all processors busy when little no synchronization is necessary  and the computation
+is cpu bound  when synchronization is required however  it is best to carefully divide the work 
+and ensure that every processor finishes at about the same time 
+
+the go compiler
+there are currently two go compilers available  first one  g is the recommended compiler 
+while the second one is gccgo  which is based on gcc   g includes the go runtime  which
+manages the lightweight goroutines  while gccgo creates a thread per goroutine  but can take
+advantage of the gcc optimizer  my results used both compilers  and in general  gccgo was
+faster despite the inefficiencies of using goroutines there 
+
+results
+the compiler optimized c   implementation using the eigen matrix library is fast  very fast  in
+fact  it can perform over        iterations per second with the default network size of  x  pixels 
+and    intermediate nodes  it is therefore not surprising that the go implementation cannot beat
+this  and in fact  runs slower when multi threaded than when not 
+however  if we move to a very large network of   x   pixels      intermediate nodes  go
+performs much better  perhaps surprisingly  the gccgo compiled version runs faster than the
+c   implementation  even in single threaded mode  this may be due to my implementation in
+go  i took care to make sure that all matrices are accessed row by row  and never column by
+column  to take maximum advantage of cache locality 
+in either case  both implementations on both compilers beat the c   version when a second
+thread is added  and the speedup is fairly good up to   threads  in terms of pure running time 
+the gccgo version is the fastest  even though the goroutine version of that code creates many
+threads  however  from a pure speedup perspective  it is not surprsing that while the gccgo
+thread pool version had the greatest speedup at   threads  the  g goroutine version had the
+second best speedup 
+
+conclusions
+the go language shows promise for this type of computation  it is both fast and easy to use for
+parallel computation  one thing that was not explored in this project was using go for a truly
+distributed computation  since it was hard enough to parallelize on just one machine  however 
+by using channels  it would not be very difficult to implement a master and worker model of
+computation 
+finally  effort in developing an improved algorithm that reduces data dependencies would
+greatly improve the speedup and easily allow for massive amounts of parallelism 
+
+fiappendix
+          iterations on  x  input with    intermediate nodes
+
+fi        iterations on   x   input with     intermediate nodes
+
+        iterations on   x   input with     intermediate nodes
+
+fi

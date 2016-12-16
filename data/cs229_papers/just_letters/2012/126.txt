@@ -1,0 +1,1225 @@
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+
+arun  kejariwal  
+  
+cs     
+project  report  
+
+  
+
+fiabstract  
+
+elasticity  of  cloud  assists  in  achieving  availability  of  web  applications  by  scaling  up  a  cluster  as  incoming  traffic  increases  
+and  keep  operational  costs  under  check  by  scaling  down  a  cluster  when  incoming  traffic  decreases   the  elasticity  of  cloud  
+makes  performance  modeling  and  analysis  non trivial   in  the  context  of  java based  web  applications   a  key  aspect  is  the  
+performance  of  the  garbage  collector   gc    existing  tools  for  analyzing  the  performance  of  a  gc  are  tailored  for  a  single  
+java  process   hence  not  suitable  for  comparative  garbage  collector  performance  analysis  across  all  the  nodes  in  a  cluster  
+in  the  cloud   the  variation  in  gc  performance  stems  from  a  multitude  of  sources   for  example   but  not  limited  to   multi   
+tenancy    non uniform   arrival   traffic   and   other   systemic   factors    the   objective   of   the   project   is   to   employ   unsupervised  
+learning   techniques   to   detect   bad   nodes    where    for   example    full   gc   time   on   a   bad   node   would   be   much   higher   than  
+the  healthy  nodes    
+  
+
+introduction  
+
+netflix migrated its infrastructure from a traditional data center to aws   ec    to   leverage    amongst   other   benefits    elasticity  
+and  support  for  multiple  availability  zones   migration  to  the  cloud  eliminated  the  cycles  spent  on  hardware  procurement   
+datacenter  maintenance  and  resulted  in  higher  development  agility   having  said  that   the  elasticity  of  aws    a  cluster  can  
+be  scaled  up  or  down    makes  performance  characterization  and  tuning  of   in  the  current  context   java based  applications  
+in   the   cloud   non trivial    tuning   the   java   hotspot   virtual   machine   garbage   collection    gc    is   key   to   performance  
+optimization  of  web  applications   for  instance   zhao  et  al    oopsla     demonstrated  that  gc  has  material  impact  on  the  
+performance   and   scalability   of   java   applications   on   multi core   platforms    at   netflix    and   in   general    the   following   factors   
+in  part   mandate  the  need  for  a  tool  for  advanced  analysis  and  tuning  gc  performance  in  the  cloud   
+  
+ performance   evaluation   of   a   new   jvm    recently    java       was   announced    several   new   optimizations   such   as  
+compressed   oops    escape   analysis   are   supported   in   java        the   new   optimizations   can   potentially   impact   gc  
+performance    for   example    escape   analysis   can   result   in   elimination   of   certain   object   allocations    figure       shows  
+the  time  series  of  heap  usage   in  jconsole  of one of the netflix applications  the time series does not throw light on
+the distribution of heap usage that is needed to characterize the garbage collector performance 
+
+figure  
+
+
+application driven selection of garbage collector type  compare the performance of the g  gc  first introduced in
+java          and the concurrent mark and sweep cms  default in java    gc   
+
+the focus of this project is to detect outlier  with respect to gc performance  nodes in a given cluster 
+
+fibrief  background  
+in   this   section    we   present   an   overview   of   the   jvm   heap   layout   and   the   associated   terminology    figure       depicts   the  
+layout  of  the  hotspot  vm  heap   from  the  figure  we  note  that  java  heap  consists  of  three  spaces   young  generation   yg    
+old  generation   og   and  the  permanent  generation   
+  
+
+  
+figure    
+  
+in  java   objects  are  first  allocated  to  the  young  generation  space   objects  are  promoted  to   the  old  generation  whose  age    
+the   age   of   an   object   is   the   number   of   minor   gcs   it   has   survived      is   more   than   the   internally   determined    by   the   vm   
+threshold      vm    java   class   metadata   and   interned   strings   and   class   static   variables   are   stored   in   the   permanent  
+generation   
+  
+  
+
+input  data  
+
+  
+figure     presents  a  bar  plot  of  the  size  of  gc  logs  for  the  various  nodes       in  total   in  the  cluster  chosen  for  analysis   
+note  that  the  chosen  cluster  corresponds  to  a  production  cluster  for  a  netflix  application     
+  
+
+figure    
+
+  
+
+                                                                                                                
+   the hotspot vm command line option   xx maxtenuringthreshold  n   can be used to set the threshold for tenuring objects to the old
+generation   
+
+fithe   gc   log   corresponding   to   node   i    ceee    has   only       lines   as   the   node   came   online   close   to   when   the   data   was  
+captured   computation  of   say   standard  deviation  promotion  size  for  the  node  results  in  an  invalid  value   hence   the  node  
+is  excluded  from  outlier  detection  analysis   
+
+  
+
+data  pre processing  
+
+the  format  of  a  gc  log  varies  from  one  type  of  gc  to  another   further   given  a  gc  type   the  format  of  the  gc  log  varies  
+based   on   the   jvm   flags   specified   at   run   time    the   netflix   application   chosen   uses   cms    concurrent mark sweep    gc       the  
+gc   log   analysis   engine   developed   for   this   project   supports   various   gc   log   formats   corresponding   to   the   different   jvm  
+options   the  following  shows  an  excerpt  of  a  gc  log  from  one  of  the  nodes    lines  highlighted  in  blue  corresponding  to  gc  
+events  at  different  time  stamps     
+  
+example  gc  log  excerpt  
+          t                            gc          parnew
+desired survivor size           bytes  new threshold    max   
+  age
+             bytes            total
+  age
+  
+         bytes            total
+  age
+  
+         bytes            total
+         k        k        k             secs         k        k         k             secs 
+ times  user      sys       real      secs 
+          t                             gc           parnew
+desired survivor size           bytes  new threshold    max   
+  age
+             bytes            total
+         k        k        k             secs         k        k         k             secs 
+ times  user      sys       real      secs 
+          t                             gc           parnew
+desired survivor size           bytes  new threshold    max   
+  age
+             bytes            total
+         k        k        k             secs         k         k         k             secs 
+ times  user      sys       real      secs 
+          t                             gc    cms initial mark         k         k  
+       k         k             secs   times  user      sys       real      secs 
+          t                             cms concurrent mark start 
+          t                             cms concurrent mark              secs   times 
+user      sys       real      secs 
+          t                             cms concurrent preclean start 
+          t                             cms concurrent preclean              secs   times 
+user      sys       real      secs 
+          t                             cms concurrent abortable preclean start 
+
+  
+
+the   numbers   before   and   after   the   arrow   of          k        k   indicate   the   size   of   the   young   generation   before   and  
+after  garbage  collection   respectively   after  minor  collections  the  size  includes  some  objects  that  are  garbage   no  longer  
+alive    but   that   cannot   be   reclaimed    these   objects   are   either   contained   in   the   tenured   generation    or   referenced   from   the  
+tenured  or  permanent  generations   the  numbers  before  and  after  the  arrow  of          k        k  indicate  the  size  of  
+the  heap  before  and  after  garbage  collection   
+  
+references  mentioned  in  the  last  section  throw  further  light  on  the  how  to  read  the  other  details  of  a  cms  gc  log   
+  
+  
+
+mining  gc  logs  
+
+  
+time  series  analysis  
+owing   to   agile   product   development    which   was   one   of   the   factors   to   move   to   the   cloud   from   the   datacenter     new  
+applications   and   features   are   pushed   to   the   cloud   with   high   frequency    this    at   times    results   in   introduction   of  
+performance   regressions   in   gc   performance    one   of   the   ways   to   detect   the   time   and   extent   of   such   regression   is   analysis  
+
+fiof  time  series  of  the  various  gc  metrics  such  as  young  generation  usage  over  time   multi tenancy  and  hardware  failure   
+can  lead  to  a  degradation  in  performance  to  end users  due  to  service  unavailability  and  can  potentially  result  in  losses  to  
+the   business      in   both   revenue   as   well   as   long   term   reputation    thus    detecting   bad    nodes   in   a   cluster    asg   in   the  
+current  context   is  key  to  maintain  low  latency  and  high  throughput   comparative  time  series  analysis  of  gc  performance  
+across   the   entire   cluster   is   one   of   the   ways   to   detect   bad    nodes    the   data plots   presented   in   this   section   were  
+generated  using  r     
+  
+heap  usage  summary  
+  
+heap   usage   may   across   nodes   for   a   multitude   of   reasons    for   example    owing   to   non perfect   load   balancer    higher  
+number   of   requests   may   be   directed   to   a   particular   node   that   would   result   in   higher   heap   usage   and   consequently  
+increase  gc  pressure     as  a  first  cut   we  plotted  the  time  series  of  heap  usage  for  all  the  nodes  to  obtain  a  birds  eye  view  of  
+the  entire  cluster   any  obvious  outlier  can  be  detected  from  such  a  plot   figure     presents  the  time  series  of  heap  usage  of  
+the  chosen  cluster     
+
+     
+
+time series of heap usage for stats   
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+
+     
+
+     
+
+node 
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+
+ 
+
+    
+
+     
+
+heap usage  mb 
+
+     
+
+node 
+node 
+node 
+node 
+node 
+node 
+node 
+node 
+node 
+
+ 
+
+     
+
+     
+
+     
+
+     
+
+time
+
+figure    
+
+  
+
+  
+from  the  time  series  above  we  note  that  there  are  no  obvious  outliers   next   for  each  time  series  we  compute  the  first  and  
+second  moment    mean  and  standard  deviation  respectively   the  data  is  presented  below   
+  
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+
+          standard deviation          
+         standard deviation          
+          standard deviation          
+          standard deviation          
+         standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation         
+          standard deviation          
+          standard deviation          
+          standard deviation          
+
+                                                                                                                
+   hoelzle   and   barroso   point   out   that   hardware   failure   in   the   cloud   is   more   of   a   norm   than   exception    dai   et   al    list   the   various   types   of  
+
+failures  in  the  cloud   vishwanath  and  nagappan  reported  that      of  all  servers  can  expect  to  see  at  least     hardware  incident  in  a  given  
+year  and  that  this  number  is  higher  for  machines  with  lots  of  hard  disks   
+
+fimean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+heap
+
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+
+          standard deviation 
+         standard deviation 
+          standard deviation 
+         standard deviation 
+          standard deviation 
+          standard deviation 
+          standard deviation 
+         standard deviation 
+          standard deviation 
+          standard deviation 
+          standard deviation 
+          standard deviation 
+         standard deviation 
+          standard deviation 
+
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+
+  
+for   best   performance    one   like   to   minimize   both   the   mean   heap   usage    h    and   the   standard   deviation    h     in   other  
+words   one  would  like  to  maximize  the  following  metric   
+  
+ 
+  
+  
+
+  
+the  metric  is  similar  to  sharpe  ratio   used  in  finance   but  in  the  current  case  the  mean   h   is  the  denominator  as  we  
+would  like  to  have  lower  mean  heap  usage    
+  
+anomaly  detection  
+  
+we  computed  the  above  metric  for  each  node  and  plotted  a  scatter  plot  using  r   figure     shows  the  scatter  plot  for  the  
+metric   
+
+  
+
+     
+     
+
+     
+
+     
+
+     
+
+     
+     
+
+     
+     
+
+     
+
+     
+
+     
+
+   
+
+     
+
+           
+     
+
+     
+
+     
+
+    
+
+     
+
+    
+     
+
+     
+
+    
+
+    
+
+     
+     
+     
+
+     
+
+     
+
+ 
+
+ 
+
+     
+
+ 
+
+ 
+
+     avg heap us   std dev 
+
+ 
+
+     
+
+ 
+
+ 
+
+  
+
+  
+
+  
+
+  
+
+  
+
+node
+
+  
+
+figure    
+  
+next   we  used  k means  to  determine  outlier  nodes   we  tried  different  values  of  k        and  narrowed  down  to  k    as  it  
+clustered  the  nodes  with  low  values  of  the  metric   a  scatter  plot  with  clustering based  color  coding  is  shown  in  figure      
+  
+
+                                                                                                                
+
+   a  high  heap  usage  increases  memory  pressure  which  in  turn  adversely  impacts  performance     
+
+fi  
+
+     
+     
+     
+
+     
+
+     
+
+     
+     
+
+     
+
+     
+     
+
+     
+
+     
+
+   
+
+     
+
+           
+     
+
+ 
+
+     
+
+     
+
+     
+
+    
+
+     
+
+    
+     
+    
+
+    
+
+     
+     
+     
+
+     
+
+     
+
+ 
+
+ 
+
+     
+
+ 
+
+ 
+
+     avg heap us   std dev 
+
+     
+
+ 
+
+ 
+
+  
+
+  
+
+  
+
+  
+
+  
+
+node
+
+  
+figure    
+
+  
+
+  
+from  figure     we  see  that  there  are  set  of      nodes  which  have  a  low   relative  to  others   of  the  metric     
+  
+  
+young  gen  usage  summary
+  
+akin   to   overall   heap   usage    we   extracted   the   time   series   for   young   gen   for   each   node   and   computed   the   mean   and  
+standard  deviation  for  each  time  series   the  data  is  presented  below   
+  
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+young
+
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+on
+
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+node
+
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+node  
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+
+          standard deviation          
+          standard deviation          
+         standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+         standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation         
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation         
+          standard deviation         
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+
+fimean
+mean
+mean
+mean
+mean
+mean
+mean
+mean
+
+young
+young
+young
+young
+young
+young
+young
+young
+
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+gen
+
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+usage
+
+on
+on
+on
+on
+on
+on
+on
+on
+
+node
+node
+node
+node
+node
+node
+node
+node
+
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+node   
+
+         standard deviation         
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+          standard deviation          
+         standard deviation          
+          standard deviation          
+
+  
+anomaly  detection
+we  computed  the  above  metric  for  each  node  and  plotted  a  scatter  plot  using  r   figure     shows  the  scatter  plot  for  the  
+metric   
+
+ 
+
+          
+
+     
+     
+     
+
+     
+
+     
+
+     
+
+           
+
+     
+     
+
+     
+
+     
+
+           
+
+    
+
+     
+
+ 
+
+     
+
+     
+    
+
+ 
+
+    
+     
+
+     
+     
+     
+
+     
+
+     
+     
+     
+
+ 
+
+     avg young generation use   std dev 
+
+     
+
+     
+
+ 
+
+     
+
+ 
+
+ 
+
+  
+
+  
+
+  
+
+  
+
+  
+
+node
+
+figure    
+  
+next    we   used   k means   to   determine   outlier   nodes    akin   to   anomaly   detection   based   on   heap   usage    for   anomaly  
+detection  based  on  young  gen  usage   we  tried  different  values  of  k        and  narrowed  down  to  k     a  scatter  plot  with  
+clustering based  color  coding  is  shown  in  figure      
+
+fi 
+
+          
+
+     
+     
+     
+
+     
+
+     
+
+     
+
+           
+
+     
+     
+
+     
+
+     
+
+           
+
+    
+
+     
+
+ 
+
+     
+
+     
+    
+
+ 
+
+    
+     
+
+     
+     
+     
+
+     
+
+     
+     
+     
+
+ 
+
+     avg young generation use   std dev 
+
+     
+
+     
+
+ 
+
+     
+
+ 
+
+ 
+
+  
+
+  
+
+  
+
+  
+
+  
+
+node
+
+figure  
+  
+unlike  clustering  for  heap  usage   from  figure     we  note  that  k    is  probably  not  the  ideal  choice  as  node      and  nodes      
+form   a   natural   separate   cluster    based   on   figure        nodes        and        can   be   regarded   as   outliers    however    based   on  
+figure      node      is  not  an  outlier   as  a  first  approximation   one  can  potentially  take  an  intersection  of  the  two  outlier  
+sets   obtained  based  clustering  of  overall  heap  usage  and  young  gen  usage      consequently   node      would  be  considered  
+as  an  outlier  in  the  current  context   
+
+  
+references  
+   
+   
+   
+   
+   
+   
+
+http   www oracle com technetwork java javase gc tuning          html cms measurements
+https   blogs oracle com poonam entry understanding cms gc logs
+http   blog ragozin info         java cg hotspots cms and heap html
+https   blogs oracle com poonam entry understanding g  gc logs
+https   blogs oracle com jonthecollector 
+http   www oracle com technetwork java gc tuning          html       measurement  coutline
+
+fi

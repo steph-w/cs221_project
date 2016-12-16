@@ -1,0 +1,176 @@
+reinforcement learning for scheduling threads on a multi core processor
+saurabh shrivastava
+
+introduction
+with the advent of multi core processors  the complexity of scheduling threads has gone up considerably 
+most schedulers look only at the priority of threads that are ready to run to make a scheduling decision 
+because multi core processors have shared resources e g  the l  cache  the behavior of a thread
+running on one core can affect the performance of thread running on other cores e g  two threads which
+hog the l  cache if scheduled together on different cores can have worse performance than if they were
+co scheduled with some other threads which did not hog the cache      the situation is more complicated
+because the same thread can change its behavior over time e g  it could be memory bound for some time
+and then become computationally bound later on  it usually also is the case that the threads communicate
+with each other to perform a task  this pattern also changes over time  and it makes sense to co schedule
+these threads on different cores so that they can share data through the l  cache 
+there is a need for a scheduler which can learn about which threads can be co scheduled  which should
+not be co scheduled  which threads need to be grouped together to run on the same core  keeping in
+mind that the same thread can behave differently at different times  a scheduler with a fixed algorithm will
+not be able to achieve good performance in all scenarios 
+reinforcement learning  rl  can be used here because we have a way of giving feedback to the
+algorithm to say if it is doing a good job or not by monitoring progress by looking at the core utilization
+for each thread e g    scheduled  more the better     ready  the less the better     blocked  the less
+the better  and or processor performance counters e g    of instructions retired in an interval  the more
+the better     of cache misses  the less the better      of synchronization instructions failed  the less the
+better   these goals cannot be achieved all at the same time e g    of synchronization failures can be
+brought down by running all threads on the same core but this would lead to decrease in the aggregate
+instructions execution rate  this problem calls for auto tuning which can be achieved by rl 
+
+related work
+in      performance counters and address tracing facility  not available on all processors  was used to find
+out cache sharing patterns  threads were clustered based on these patterns and then threads in the same
+cluster were run on the same core  in      an analytical model of cache  memory hierarchy and cpu was
+developed which was then used along with hardware performance counters to make determinations of
+when to move threads  in any of the above schemes rl was not used nor did they model inter process
+communications  in      which comes closest to our approach  a benefit function  the parameters of which
+were the hardware performance counters and other ones learnt using rl  was computed  this function
+was run on each thread to find which thread move would bring the most benefit to the whole system 
+
+fithe parameters of the rl scheduling algorithm
+to make rl work  generally we need to define the state s of the system  the value function v for each
+state  the actions a which can be taken  the rules of transitions t between states  the model of the
+environment psa and the reward function r which indicates the reward received from the environment
+after each transition  since it is difficult to model a processor and operating system dynamics and there
+is the need to learn online  we resort to q learning where q  state action  values are learnt directly online
+without learning psa with the caveat that learning will take longer 
+in our experiment  the state s of the system is determined by the core utilization 
+readiness  blockingness and the core assignment of each thread all of which is available from the
+cpu profiler  for more precise modeling  we could also include the behavior of each thread i e  the
+interaction pattern with other threads  the behavior could be inferred from the scheduler statistics by
+tracking the use of synchronization primitives but as this would require changing the os kernel  we didnt
+use the behavior feature 
+the reward r is the fraction of time each thread was scheduled vs not scheduled i e   scheduled   ready
+  blocked time     scheduled   ready   blocked time   indicating that we would like the scheduler to learn
+that we prefer running threads over blocked threads  we could also use the performance counters on the
+processor to generate the reward  but for this experiment we didnt choose to 
+when the rl algorithm is delivered the reward for its last action  it is given an opportunity to perform
+further action  in our case the action is limited to moving a thread from one core to another or do
+nothing at all  the rl scheduling algorithm behaves like a meta scheduler by pinning the threads to
+specific cores by using an os api to set the coremask for each thread  the os scheduler then makes
+scheduling decisions respecting this affinity  ideally we would like to create thread groups and let the os
+scheduler schedule groups on any core it wants  but in our os we dont have this flexibility 
+
+representing q values  state action
+
+the state of each thread is represented as  core     ready   blocked  where core   is the core to
+which the thread is assigned indicated by two bits   ready and  blocked is the quartile of time the thread
+was ready to run or was blocked on other threads encoded by two bits each  the action is represented as
+
+fitwo bits of thread   and two bits of the core   to which this thread should be assigned  the q state action
+is thus    bits in size consisting of    bits of environment state and   bits of action 
+keeping a table of     q values will take a lot of space and will not generalize  so cmac  cerebellar
+model articulation controller      hashing is used to reduce space requirements and at the same time also
+enable generalization  unexplored values can be approximated  by hashing similar states to the same
+bucket  the cmac scheme utilizes multiple hash tables with different hash functions for different table
+and allows q values for a yet unknown state action be approximated by the q values of several nearby
+state actions  points which are nearby affect values of other nearby points by hashing into the same
+bucket whereas far away points which hash to different buckets have no effect 
+in our implementation we use five hash tables of size     where each hash functions extracts different set
+of    bits of the    bit state action to come up with a bucket  in the figure  q s a  is hashed to locations
+h   h   h  in the cmac tables q   q   q  respectively and so q s a    q  q  q   if we have  s  a  
+which is close to  s a   it could be that it hashes to locations h   h   h  and so q s  a     q  q  q  
+whereas if we had  s  a   which was far away from  s a  then it would hash to entirely different locations
+and not share any values with  s a  
+
+q learning
+we use sarsa  statet  actiont  rewardt    statet    actiont    updates to the q learning algorithm which
+is a on policy learning algorithm where the q value of the previous state is updated based on the
+reward and the action actually taken  see rlqsarsa below   we use the parameter alpha          which
+determines the learning rate and gamma          the discount factor  actions are chosen using the egreedy method with parameter epsilon          to exploit learning     of the time but also do exploration
+by randomly choosing actions    of the time  see rlgetaction below   the algorithm rlq  see below 
+is invoked every one second to get the new state  reward  perform learning and take action 
+void rlgetstateandreward      
+ 
+newstate      from cpu utilization for previous interval
+   reward scheduled time over un scheduled time
+reward    ussched usready usblocked  
+ ussched usready usblocked 
+ 
+void rlgetaction  newstate     get the next e greedy action
+ 
+if  rand     epsilon 
+   take a legal random action
+else
+   lookup q tables for the newstate
+   and choose action with max q value
+ 
+void rlqsarsa          perform sarsa update
+ 
+h    h  s a       s a  are the old state action values
+h     h  s  a        s  a   are the new state action values
+q  h        alpha  q  h     alpha  reward   gamma q  h     
+q  h      
+   
+ 
+
+fivoid rlq  tcpuusage  pcpuusage     perform q learning
+ 
+rlgetstateandreward  pcpuusage   newstate   reward  
+newaction   rlgetaction   newstate  
+rlperformaction   newaction      move a thread if needed
+rlqsarsa   prevstate   prevaction  reward 
+ newstate   newaction  
+prevstate   newstate 
+prevaction   newaction 
+ 
+
+results
+
+the rl scheduling algorithm was used on a repeatable test running ip routing protocols on a   core
+processor  four busiest threads were identified and four cores were reserved for them  the rest of the
+threads were free to run on the remaining cores  we limited our experiment to only four threads to reduce
+the state space 
+even though the state space is huge  it usually is the case that the algorithm walks around in some small
+portion of the state space i e  there are no totally random jumps from one portion of the state space
+to other  even when we do random exploration  it is to a nearby state   this can be seen by dumping
+the cmac tables  most of the values are unchanged from initialization time and the values which are
+changed are usually seen in clusters  in the our experiment  the rl algorithm ran every one second
+and it could get only     samples per test  so the q tables were saved and restored across consecutive
+tests      tests were performed over a period of    hours and    k learning opportunities presented
+themselves 
+it can be seen from the above figure that the downward spikes increase over time indicating that the
+algorithm made better scheduling decisions as time progressed  it is known that sarsa takes a long time
+to converge because the environment is not modeled and so it can also be seen that the rl scheduler is
+still exploring because sometimes it takes actions which lead to worse completion times 
+
+ficonclusion
+the main hurdle for using q learning is the large state space which needs to be learnt online  with just
+three features per thread the state action space became    bits  it is known that q learning is slow  but if
+the threads are long lived e g  for several hundreds days which is the case with ip routers  then there is
+enough opportunity to learn and using q learning makes sense 
+here we only looked at cpu utilization for generating rewards  in the future  we could also look at
+processor performance counters e g  greater rewards for greater dram bandwidth used  if it is known
+that in some multi core environment scalability is limited due to threads blocking on each other  we
+could also model degree of interactions between the threads e g  for four threads  by six combinations of
+interactions with two bits per interaction 
+the scheduling algorithm as presented includes the core   as part of the state and so can handle
+heterogeneous cores for which regular os schedulers face difficulty  this rl scheduler algorithm can
+also be used to place vms  virtual machines  across servers in a data center where we can treat vms as
+threads and cores as servers 
+
+references
+    operating system scheduling on heterogeneous core systems by alexandra fedorova  david
+vengerov  daniel doucette
+    adaptive utility based scheduling in resource constrained systems by david vengerov
+    workstation capacity tuning using reinforcement learning by aharon bar hillel  amir di nur  liat
+ein dor  ran gilad bachrach  yossi ittach
+    thread clustering  sharing aware scheduling on smp cmp smt multiprocessors by david tam 
+reza azimi  michael stumm
+    pam  a novel performance power aware meta scheduler for multi core systems by mohammad
+banikazemi  dan poff  bulent abali
+    self optimizing memory controllers  a reinforcement learning approach by engin ipek  onur mutlu 
+jose f  martnez  rich caruana
+    reinforcement learning  an introduction by richard s  sutton  andrew g  barto
+    cache fair thread scheduling for multicore processors by ra fedorova and margo seltzer and michael
+d  smith
+
+fi

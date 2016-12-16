@@ -1,0 +1,533 @@
+fast tree structured
+recursive neural tensor networks
+anand avati  nai chia chen
+stanford university
+avati cs stanford edu  ncchen stanford edu
+project ta  youssef ahres
+
+ 
+
+introduction
+
+in this project we explore different ways in which we can optimize the computation of training a
+tree structured rntn  in particular batching techniques in combining many matrix vector multiplications into matrix matrix multiplications  and many tensor vector operations into tensor matrix
+operations  we assume that training is performed using mini batch adagrad algorithm  and explore
+how we can exploit the presence of multiple examples and batch computation across the set as a
+whole  we explore how we can apply our optimization techniques to the forward propagation phase 
+the back propagation phase  and run the batched operations on gpus  our goal is to speed up the
+execution of tree structured rnns so that its runtime performance is no more a limiting factor for
+adoption 
+we use the stanford corenlp project that has an implementation of rntn in java as our baseline 
+all our implementation and experiments are performed over this 
+
+ 
+
+background   recursive neural tensor networks
+
+recursive neural tensor network  rntn  is a model for semantic compositionality  proposed by
+socher et al      this network has been successfully applied to sentiment analysis  where the input
+is a sentence in its parse tree structure  and the output is the classification for the input sentence  i e  
+whether the meaning is very negative  negative  neutral  positive  or very positive 
+   
+
+forward propagation
+
+in the forward phase  each input is a sentence in its parse tree structure   see figure       each word
+in the input sentence is converted to a d dimensional word vector through a word embedding matrix
+l  rd v     where  v   is the size of the vocabulary  further more  each word vector is converted
+to a d dimensional node vector through the element wise tanh function and stored in the leaf node
+of the tree  the node vectors of internal nodes are then computed in a bottom up fashion as follows 
+let xi be the parent node of its left and right children nodes xil   xir   then the node vector at xi is
+defined as
+ i t  i 
+ i
+x
+x
+x
+xi   tanh  il v il   w il    rd  
+   
+xr
+xr
+xr
+where w  r dd is the weight matrix  v  r d dd is the weight tensor  and tanh applies on
+vectors element wise 
+each node in the tree is now a d dimensional vector  the network predicts the meaning  very
+negative  negative  neutral  positive  or very positive  of every node by producing a probability
+vector y i  r  defined as
+y i   softmax ws xi    r   
+   
+ 
+
+fiwhere ws  r d is the sentiment classification matrix  moreover  each node xi is associated with
+a ground truth  or target vector  ti  r    which is a binary vector whose j th component is   if j is
+the correct label and is   in all other components  in order to minimize the kl divergence between
+the predicted distribution y i and the true distribution ti   the error function with regularization is
+defined as
+x
+e     
+  ti   log y i           
+i
+
+where the model parameters are     l  w  ws   v    and the log function applies on y i elementwise 
+
+the
+
+movie
+is
+
+ 
+fantastic
+
+figure    each training example is a sentence 
+   
+
+backpropagation    
+
+the formulae for errors at the node xi are as follows  let  i s denote the softmax error and  i com
+denote the complete incoming error  then
+ i s   wst  y i  ti   
+ i s
+i
+   if x is the root
+ i com    i s    p i  down      d   if xi is the left child of xp i 
+ i s
+    p i  down  d        d   if xi is the right child of xp i 
+ i down    w t  i com   s i    f    xi   
+
+   
+
+where  denotes the hadamard product  f    x       x   
+
+ i 
+d
+x
+xl
+i com
+   
+    t
+i
+s  
+ 
+v    v  
+ 
+xir
+   
+
+the gradients of the error with respect to w   ws   v     are
+ i t
+x
+x
+x i com xi  xi t
+e
+e
+e
+i com xl
+i
+i it
+l
+l
+ 
+
+ 
+ 
+ y  t  x  
+ 
+ 
+ 
+   
+xir
+xir xir
+w
+w
+v
+s
+i
+i
+i
+
+ 
+
+   
+
+techniques for batching computation
+
+the existing code in stanford corenlp trains rntn with mini batch adaptive gradient descent
+ adagrad       where the gradients are computed one training example at a time  and the forward backward propagation are computed one node at a time  for these computations  we observe
+that in the formulae            the parameters  w  ws   v   are shared across training examples in a
+mini batch and across nodes 
+for foward propagation  we say a node xi is ready to compute if both xil and xir have been computed  for backward propagation  we say  i is ready to compute if the errors of its parent node  i e  
+ p i  s    p i  com   and  p i  down   have been computed 
+ 
+
+fiwe may group ready nodes across trees and compute them all together at once by using the following
+formulae 
+   
+
+group matrix vector multiplications
+
+after a rearrangement of indices  let xi   i         k  be the nodes that are ready to compute and we
+have
+ 
+ 
+ i
+ 
+ 
+ 
+xl
+ui   i   u   u  u     uk  
+xr
+ 
+ 
+ 
+to compute the matrix vector multiplication part of     over all ready nodes  we have
+ wu  wu     wuk     w  u  u     uk    
+   
+
+group bilinear operations
+
+to compute the tensor part of     over all ready nodes  we have
+ t
+
+
+u  vu  ut  vu     utk vuk   flatten   v  u fi u  
+ 
+
+where fi is the khatri rao product  defined in the appendix   and the matrix flatten   v   rd d
+is obtained by taking lateral slices of the tensor v and ordering these slices from left to right  see
+figure   b  
+
+ a  horizontal
+
+ b  lateral
+
+ c  frontal
+
+figure    slice of a  rd order tensor
+   
+
+group errors  i com and  i down respectively
+
+to compute the  i com over all ready nodes using      let
+
+
+ 
+ 
+ 
+com      com    com     k com   rdk  
+ 
+ 
+ 
+then we have
+
+
+ 
+ 
+
+s      s k    a   
+ 
+ 
+
+
+
+   com
+ 
+u 
+   com u 
+
+  
+a d  
+  
+
+ 
+
+
+
+  
+ 
+
+
+ k com uk
+ k com uk 
+
+   flatten   a  com fi u   
+  
+
+ 
+
+d  com u 
+
+
+
+dk com uk
+ 
+
+where a      v       v      t   and the matrix flatten   a   r d d is obtained by taking horizontal
+slices of the tensor a and ordering these slices from left to right  see figure   a  
+as for  i down   we have
+
+
+ 
+
+   down
+ 
+
+ 
+   down
+ 
+
+
+
+ 
+ k down    wt com  s  
+ 
+ 
+ 
+
+
+
+
+
+ 
+
+ 
+s 
+ 
+
+
+
+
+
+  
+  
+s k   f   x 
+ 
+ 
+
+ 
+x 
+ 
+
+
+
+
+  
+xk   
+ 
+
+fi   
+
+group gradients
+
+we rewrite equations     as follows 
+
+
+ i t x
+ 
+x
+e
+i com xl
+ 
+
+ 
+ i com uti      com
+i
+xr
+w
+ 
+i
+i
+
+
+
+ 
+ ut
+ 
+ 
+
+ut
+ 
+
+ k com        com ut  
+    
+ 
+ut
+k
+
+x
+t
+e
+ 
+ y i  ti  xi    y  t  x t  
+ws
+i
+as for the gradients of the tensor v   we have
+
+
+ x i com
+e
+ 
+ui uti
+
+ v      i
+    com
+    
+  
+  
+     
+ u 
+
+    x  
+ e  
+i com
+t
+d
+ui ui
+v d 
+i
+
+ 
+
+
+
+ t
+u 
+ut  
+
+ 
+ k com  uk        com fi u  u t  
+    
+utk
+
+experiments and results
+
+we have implemented the above batching techniques as modifications to the sentiment module in
+the stanford corenlp project  we use indarray    s from the nd j     project to represent matrices
+and tensors  this way it is easy to run the batched operations on a gpu  we ran similar workloads on
+the three configurations   unmodified corenlp baseline  batched implementation on cpu  batched
+implementation on gpu and we share the results below 
+
+the specifics of our experiments are as follows 
+ we have used git commit id   bbcb of corenlp git as our baseline 
+ 
+
+fi nd j version     rc   
+ cuda jcublas version    
+ cpu  intel r  xeon r  cpu e               ghz    cores 
+ ram     gb ddr 
+ gpu  geforce gtx    
+ dataset  stanford sentiment treebank
+ workload    epoch of training on the dataset varying batch size               and wordvector dimensions               in each of the three modes  cpu  cpu batch  gpu  
+ code  all our code is at http   github com avati corenlp commits rntn gpu
+
+ 
+
+conclusion and future work
+
+based on the results shown above  we conclude the following 
+ batching computation is always better 
+ gpus offer significant speed up  up to  x in our tests  when word vector dimensions and
+batch sizes are large enough 
+ at lower batch and word vector dimensions  the overheads of managing data on gpu surpass the benefits of faster computation 
+testing with larger word vector sizes was interrupted due to a known bug in nd j  we are eager to
+resume testing once the bug is fixed as we expect greater speed up 
+
+ 
+
+appendix
+
+in this section  we review the definitions of three matrix products     
+definitions  let a    aij    b    bij   be m by n matrices  c    cij   be a p by q matrix  and
+d    dij   be a r by n matrix  then
+   hadamard product 
+a   b  
+ a   b  
+a  b 
+  
+
+ 
+
+
+am  bm 
+
+a   b  
+a   b  
+  
+ 
+
+
+
+  
+ 
+
+am  bm 
+
+
+
+
+a n b n
+a n b n 
+  rmn  
+  
+
+ 
+amn bmn
+
+   kronecker product 
+a   c
+ a   c
+a  c 
+    
+
+
+a   c
+a   c
+  
+ 
+
+
+
+  
+ 
+
+am  c am  c   
+
+
+a n c
+a n c 
+ rmpnq  
+   
+
+ 
+amn c
+
+   khatri rao product 
+a fi d    a   d 
+
+a   d 
+
+
+
+an  dn    rmrn  
+
+acknowledgement
+we thank sam bowman for introducing the problem and many helpful discussions  youssef ahres
+for mentoring us and offering his expertise when we needed  and finally prof  andrew ng for the
+education and conducting this wonderful course 
+
+ 
+
+fireferences
+    richard socher  alex perelygin  jean y  wu  jason chuang  christopher d  manning  andrew
+y  ng  and christopher potts  recursive deep models for semantic compositionality over a
+sentiment treebank  emnlp       
+    christoph goller and andreas kchler  learning task dependent distributed representations
+by backpropagation through structure  icnn       
+    john duchi  elad hazan  and yoram singer  adaptive subgradient methods for online learning and stochastic optimization  jmlr       
+    shuangzhe liu and gotz trenkler  hadamard  khatri rao  kronecker and other matrix
+products  int  j  inform  syst  sci       
+    http   nd j org apidocs org nd j linalg api ndarray indarray html
+    nd j http   nd j org
+
+ 
+
+fi
