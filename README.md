@@ -1,10 +1,16 @@
 # CS 221: Latent Dirichlet Allocation for Detecting Topics in AI Research
 #### Max Drach (mdrach) Stephanie Wang (steph17)
 ## Commands we Ran
+Start here if you want to simply run LDA on a preprocessed dataset:  
+
+1. Run <code> lda_with_visual.py </code>, modifying **line 213** to point to a pre-existing preprocessed dataset from the <code>/data</code> folder
+
+Alternatively to run data preprocessing before LDA:  
+
 1. To obtain the pdf files from [JAIR.ORG](https://www.jair.org/contents.html), run <code>extract_pdfs.py</code> in utils
 2. To clean the pdf files, run <code>clean_raw_pdf_files.py</code> and <code>remove_non_letters.py</code> and in utils
 3. Run <code>obtain_and_remove_stopwords.py</code> to remove the stopwords and most frequent and unfrequent terms in the text documents
-4. At this point we have a folder of documents that we want to perform LDA on. We run <code> lda_with_visual.py </code> on the path containing the documents to obtain the assignments for the documents to a topic.  
+4. At this point we have a folder of documents that we want to perform LDA on. We run <code> lda_with_visual.py </code>, modifying **line 213** to point to the path containing the documents to obtain the assignments for the documents to a topic as well as result visuals.  
 
 ## Code Documentation
 ### /data
@@ -15,8 +21,10 @@ This folder contains the dataset of all AI research paper abstracts.
 ##### /journal_ai_research_papers
 This folder contains the dataset of all AI research papers. 
 ***
-### /kmeans
-
+### /kmeans.py
+This python program runs our K-means baseline on a collection of text documents in the specified folder. Change the path at **line 8** to point to the path containing the documents. 
+To change the number of clusters, *k*, change <code>n_clusters</code> at **line 21**.
+The output of this program is the top words associated with each cluster topic. 
 ***
 ### /lda
 
