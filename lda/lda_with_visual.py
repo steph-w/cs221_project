@@ -20,7 +20,7 @@ def read_data(data_directory):
     data = OrderedDict()  # Need to remember the order in which items were inserted
 
     for r, ds, fs in os.walk(data_directory):
-        # weird hacky thing to get all the files 
+        # weird hacky thing to get all the files
         if not fs:
             for d in ds:
                 path = os.path.join(r,d)
@@ -208,7 +208,8 @@ class LDA:
 
 if __name__ == "__main__":
     print
-    data = read_data("../data/journal_ai_research_papers/articles_no_stopwords")
+    data = read_data("../data/journal_ai_research_papers/split_by_article_clean")
+    raw_input()
     lda = LDA(data, num_topics=10, alpha_init=3, beta_init=0.01)
     lda.inference(iterations=10)
     assignments, phi_kt, terms = lda.output_paper_topic_dist()

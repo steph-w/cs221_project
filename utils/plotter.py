@@ -19,6 +19,37 @@ def plot_trends_over_time(assignments, timelist):
     plt.show() #block=False)
     #raw_input("<Enter to close>")
 
+def plot_trends_over_time_lda(assignments, timelist):
+    print assignments
+    print timelist
+    plt.yticks(range(max(assignments)+1))
+    x = range(len(assignments))
+    plt.scatter(x, assignments, marker='o')
+    #  plt.xticks(x, timelist, rotation=30)
+    plt.margins(0.1, 0.1)
+    plt.xlabel("Documents from 57 volumes, Chronological Order")
+    plt.ylabel("Topic Category")
+    plt.title("Topic Categories Over Time")
+    #  plt.grid(True)
+    plt.show() #block=False)
+    #raw_input("<Enter to close>")
+
+def plot_trends_over_time_kmeans(assignments, timelist):
+    print assignments
+    print timelist
+    plt.yticks(range(max(assignments)+1))
+    x = range(len(assignments))
+    plt.scatter(x, assignments, marker='o')
+    #  plt.xticks(x, timelist, rotation=30)
+    #  plt.locator_params(axis='x',nbins=10)
+    plt.margins(0.1, 0.1)
+    plt.xlabel("Documents from 57 volumes, Chronological Order")
+    plt.ylabel("Topic Category")
+    plt.title("Topic Categories Over Time")
+    #  plt.grid(True)
+    plt.show() #block=False)
+    #raw_input("<Enter to close>")
+
 def plot_topic_top_terms(topic_top_terms):
     for k in range(len(topic_top_terms)):
         terms = sorted(topic_top_terms[k], key=topic_top_terms[k].get)[::-1]
