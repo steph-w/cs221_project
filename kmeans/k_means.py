@@ -16,8 +16,6 @@ plotter = imp.load_source('plotter', '../utils/plotter.py')
 CLUSTERS = 10
 
 FILE_DIRECTORY = '../data/journal_ai_research_papers/split_by_article_clean/'
-#  FILE_DIRECTORY = '../data/journal_ai_research_abstracts/papers_no_stopwords/'
-#  TEST_FILE_DIRECTORY = 'test_data_clean/'
 
 plt.close('all')
 if True:
@@ -43,27 +41,7 @@ if True:
     prediction = kmeans.predict(file_transform)
 
     # Visulize results
-    names = []
-    for file in files:
-        _, name = file.split(FILE_DIRECTORY)
-        names.append(name)
-    plt.figure(10)
-    plt.grid(False)
-    plotter.plot_trends_over_time_kmeans(prediction, range(len(names)))
     print prediction
-
-    ## Get Categories for each Mean ##
-    # Determine top words of each cluster
-    #  cluster_top_words = {}
-    #  for i in range(len(centers)):
-        #  c = centers[i]
-        #  max_indexes = np.argpartition(-c, len(c)-1)[:]
-        #  max_words = [feature_names[index] for index in max_indexes]
-        #  cluster_top_words[i] = set(max_words)
-
-    #  for i, word_set in cluster_top_words.iteritems():
-        #  print word_set
-
 
 
 ## Get Categories for each Mean ##
@@ -91,13 +69,3 @@ if True:
         plt.xticks(range(len(word_dict)), labels, rotation=30)
         plt.grid(True)
         plt.show(block=False)
-        #  print word_dict
-
-
-
-#perform prediction
-#  test_files = sorted([os.path.join(TEST_FILE_DIRECTORY, f) for f in os.listdir(TEST_FILE_DIRECTORY)])
-#  test_file_transform = vectorizer.transform(test_files)
-#  test_prediction = kmeans.predict(test_file_transform)
-#  print test_prediction
-
